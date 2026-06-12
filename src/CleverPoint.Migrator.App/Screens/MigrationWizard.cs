@@ -32,9 +32,18 @@ public class MigrationWizard : Form
     private readonly DataGridView _log = new();
     private readonly ProgressBar _progress = new() { Style = ProgressBarStyle.Marquee, Width = 420, Visible = false };
     private readonly Label _status = new() { AutoSize = true, ForeColor = Brand.TextSecondary };
-    private readonly Button _run = new() { Text = "Copy structure + content", AutoSize = true, Padding = new Padding(16, 9, 16, 9), BackColor = Brand.Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
-    private readonly Button _runContent = new() { Text = "Copy content only", AutoSize = true, Padding = new Padding(16, 9, 16, 9), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 0, 0, 0) };
-    private readonly Button _cancel = new() { Text = "Cancel run", Width = 110, Height = 40, Visible = false, FlatStyle = FlatStyle.Flat };
+    // The three action buttons share one size/spacing recipe so they line up.
+    private readonly Button _run = new() { Text = "Copy structure + content", AutoSize = true, Padding = new Padding(18, 9, 18, 9), BackColor = Brand.Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
+    private readonly Button _runContent = new() { Text = "Copy content only", AutoSize = true, Padding = new Padding(18, 9, 18, 9), FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
+    private readonly Button _cancel = new() { Text = "Cancel run", AutoSize = true, Padding = new Padding(18, 9, 18, 9), Visible = false, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
+    private readonly Button _export = new() { Text = "Export results (CSV)", AutoSize = true, Padding = new Padding(10, 4, 10, 4), Visible = false, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
+    private readonly ComboBox _versions = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Button _mapping = new() { Text = "User mapping: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(16, 0, 0, 0) };
+    private readonly Button _dateFilter = new() { Text = "Date filter: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 0, 0, 0) };
+    private string? _mappingCsvPath;
+    private DateTime? _modifiedSinceUtc;
+    private DateTime? _modifiedBeforeUtc;
+    private long? _lastRunId;
     private CancellationTokenSource? _cts;
 
     /// <summary>Prefills the wizard from the explorer (drag-drop or selection).</summary>
@@ -154,11 +163,24 @@ public class MigrationWizard : Form
         layout.Controls.Add(opts, 1, 4);
         layout.SetColumnSpan(opts, 3);
 
+        // Per-task choices: version depth, identity mapping, advanced date filter.
+        _versions.Items.AddRange(new object[]
+            { "Latest version only", "Last 5 versions", "Last 10 versions", "All versions (up to 50)" });
+        _versions.SelectedIndex = 0;
+        var opts2 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
+        var versionsLbl = new Label { Text = "File versions:", AutoSize = true, ForeColor = Brand.TextPrimary, Padding = new Padding(0, 6, 6, 0) };
+        opts2.Controls.AddRange(new Control[] { versionsLbl, _versions, _mapping, _dateFilter });
+        layout.Controls.Add(opts2, 1, 5);
+        layout.SetColumnSpan(opts2, 3);
+        _mapping.Click += (_, _) => PickUserMapping();
+        _dateFilter.Click += (_, _) => EditDateFilter();
+        _export.Click += (_, _) => ExportResults();
+
         var actions = new FlowLayoutPanel { AutoSize = true };
-        actions.Controls.AddRange(new Control[] { _run, _runContent, _cancel, _progress });
-        layout.Controls.Add(actions, 1, 5);
+        actions.Controls.AddRange(new Control[] { _run, _runContent, _cancel, _export, _progress });
+        layout.Controls.Add(actions, 1, 6);
         layout.SetColumnSpan(actions, 3);
-        layout.Controls.Add(_status, 1, 6);
+        layout.Controls.Add(_status, 1, 7);
         layout.SetColumnSpan(_status, 3);
 
         ConfigureLogGrid();
@@ -175,6 +197,13 @@ public class MigrationWizard : Form
         });
         _engine.SelectedIndex = 0;
         _run.FlatAppearance.BorderSize = 0;
+        // Secondary buttons share one subtle border so nothing looks heavier
+        // than its neighbors.
+        foreach (var secondary in new[] { _runContent, _cancel, _export, _mapping, _dateFilter })
+        {
+            secondary.FlatAppearance.BorderColor = Color.FromArgb(0xC6, 0xCE, 0xD6);
+            secondary.FlatAppearance.BorderSize = 1;
+        }
         _run.Click += async (_, _) => await RunAsync(contentOnly: false);
         _runContent.Click += async (_, _) => await RunAsync(contentOnly: true);
         _cancel.Click += (_, _) => ConfirmCancel();
@@ -306,8 +335,21 @@ public class MigrationWizard : Form
             SourceFolderServerRelativeUrl = _sourceFolderScope,
             SelectedPaths = _selectedPaths,
             ItemIds = _itemIds,
-            ModifiedSinceUtc = _deltaBaselineUtc,
+            MaxVersions = SelectedMaxVersions(),
+            // Delta baseline and the manual date filter compose: the later
+            // "since" wins, "before" is the manual filter's alone.
+            ModifiedSinceUtc = (_deltaBaselineUtc, _modifiedSinceUtc) switch
+            {
+                (null, var m) => m,
+                (var d, null) => d,
+                ({ } d, { } m) => d > m ? d : m,
+            },
+            ModifiedBeforeUtc = _modifiedBeforeUtc,
         };
+
+        Dictionary<string, string>? userMap = null, groupMap = null;
+        if (_mappingCsvPath != null)
+            (userMap, groupMap) = UserMappingStore.LoadCsv(_mappingCsvPath);
 
         // Any re-run over a pair we've copied before updates in place instead
         // of duplicating: the persisted source->target item map drives upserts.
@@ -351,7 +393,7 @@ public class MigrationWizard : Form
                 }
                 else
                 {
-                    await CopyEngine.CopyListAsync(source, target, _sourceList.Text, options, null, _cts.Token, result);
+                    await CopyEngine.CopyListAsync(source, target, _sourceList.Text, options, userMap, _cts.Token, result, groupMap);
                 }
             }, _cts.Token);
             if (result.Failed > 0) status = "CompletedWithIssues";
@@ -381,6 +423,8 @@ public class MigrationWizard : Form
         {
             store.SaveItemMap(pairKey, result.ItemMappings);
             store.FinishRun(runId, result, status);
+            _lastRunId = runId;
+            _export.Visible = true;
             _run.Enabled = true;
             _runContent.Enabled = true;
             _cancel.Visible = false;
@@ -391,6 +435,84 @@ public class MigrationWizard : Form
                 $"{_sourceList.Text} -> {targetTitle}: {result.Summary()}");
         }
     }
+
+    /// <summary>Pick (or clear) the identity-mapping CSV: Type,Source,Target with User and Group rows.</summary>
+    private void PickUserMapping()
+    {
+        if (_mappingCsvPath != null && MessageBox.Show(this,
+                $"A mapping file is set:\n{_mappingCsvPath}\n\nYes = choose a different file, No = remove the mapping.",
+                "User mapping", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.No)
+        {
+            _mappingCsvPath = null;
+            _mapping.Text = "User mapping: none";
+            return;
+        }
+        using var dialog = new OpenFileDialog { Filter = "CSV files|*.csv|All files|*.*", Title = "Choose the identity mapping CSV (Type,Source,Target)" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            var (users, groups) = UserMappingStore.LoadCsv(dialog.FileName);
+            _mappingCsvPath = dialog.FileName;
+            _mapping.Text = $"User mapping: {users.Count} users, {groups.Count} groups";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"That file could not be read as a mapping CSV: {ex.Message}",
+                "User mapping", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    /// <summary>Advanced: copy only items modified in a date window.</summary>
+    private void EditDateFilter()
+    {
+        using var dlg = new Form
+        {
+            Text = "Date filter",
+            ClientSize = new Size(380, 190),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false,
+            BackColor = Brand.Surface, Font = Brand.Body,
+        };
+        var sinceCheck = new CheckBox { Text = "Only items modified on/after", AutoSize = true, Location = new Point(16, 14), Checked = _modifiedSinceUtc != null };
+        var sincePick = new DateTimePicker { Location = new Point(36, 38), Width = 200, Format = DateTimePickerFormat.Short, Enabled = sinceCheck.Checked };
+        if (_modifiedSinceUtc != null) sincePick.Value = _modifiedSinceUtc.Value.ToLocalTime();
+        var beforeCheck = new CheckBox { Text = "Only items modified before", AutoSize = true, Location = new Point(16, 72), Checked = _modifiedBeforeUtc != null };
+        var beforePick = new DateTimePicker { Location = new Point(36, 96), Width = 200, Format = DateTimePickerFormat.Short, Enabled = beforeCheck.Checked };
+        if (_modifiedBeforeUtc != null) beforePick.Value = _modifiedBeforeUtc.Value.ToLocalTime();
+        sinceCheck.CheckedChanged += (_, _) => sincePick.Enabled = sinceCheck.Checked;
+        beforeCheck.CheckedChanged += (_, _) => beforePick.Enabled = beforeCheck.Checked;
+        var ok = new Button { Text = "Apply", DialogResult = DialogResult.OK, AutoSize = true, Padding = new Padding(14, 4, 14, 4), FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White, Location = new Point(196, 140) };
+        ok.FlatAppearance.BorderSize = 0;
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Padding = new Padding(14, 4, 14, 4), FlatStyle = FlatStyle.Flat, Location = new Point(288, 140) };
+        dlg.Controls.AddRange(new Control[] { sinceCheck, sincePick, beforeCheck, beforePick, ok, cancel });
+        dlg.AcceptButton = ok;
+        dlg.CancelButton = cancel;
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        _modifiedSinceUtc = sinceCheck.Checked ? sincePick.Value.Date.ToUniversalTime() : null;
+        _modifiedBeforeUtc = beforeCheck.Checked ? beforePick.Value.Date.AddDays(1).ToUniversalTime() : null;
+        _dateFilter.Text = (_modifiedSinceUtc, _modifiedBeforeUtc) switch
+        {
+            (null, null) => "Date filter: none",
+            ({ } s, null) => $"Date filter: after {s.ToLocalTime():d}",
+            (null, { } b) => $"Date filter: before {b.ToLocalTime():d}",
+            ({ } s, { } b) => $"Date filter: {s.ToLocalTime():d} - {b.ToLocalTime():d}",
+        };
+    }
+
+    /// <summary>Full results of the last run, straight from this screen.</summary>
+    private void ExportResults()
+    {
+        if (_lastRunId is not { } id) return;
+        using var dialog = new SaveFileDialog { Filter = "CSV files|*.csv", FileName = $"migration-log-{id}.csv" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        using var store = new HistoryStore(AppSettings.HistoryDbPath);
+        store.ExportRunCsv(id, dialog.FileName);
+        _status.Text = $"Results exported to {dialog.FileName}";
+    }
+
+    private int SelectedMaxVersions() => _versions.SelectedIndex switch { 1 => 5, 2 => 10, 3 => 50, _ => 1 };
 
     private static async Task<bool> TargetListExistsAsync(SpConnection target, string title)
     {

@@ -121,30 +121,126 @@ public static class FileTypeIcons
 
     private static ImageList Build()
     {
+        // Real pictograms, drawn at runtime (no licensed assets): folders look
+        // like folders, PDFs are the red-label page, images show a tiny photo.
         var list = new ImageList { ImageSize = new Size(20, 20), ColorDepth = ColorDepth.Depth32Bit };
-        void Add(string key, Color color, string glyph)
+        var pageBorder = Color.FromArgb(0x9A, 0xA3, 0xAD);
+
+        void Add(string key, Action<Graphics> draw)
         {
             var bmp = new Bitmap(20, 20);
             using var g = Graphics.FromImage(bmp);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var brush = new SolidBrush(color);
-            g.FillRectangle(brush, 2, 2, 16, 16);
-            using var font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            var size = g.MeasureString(glyph, font);
-            g.DrawString(glyph, font, Brushes.White, (20 - size.Width) / 2, (20 - size.Height) / 2);
+            draw(g);
             list.Images.Add(key, bmp);
         }
-        Add("site", Color.FromArgb(0x1F, 0x4E, 0x79), "S");
-        Add("library", Color.FromArgb(0x17, 0x9C, 0x8E), "L");
-        Add("list", Color.FromArgb(0x6f, 0x42, 0xc1), "=");
-        Add("folder", Color.FromArgb(0xD4, 0xA0, 0x17), "F");
-        Add("docx", Color.FromArgb(0x2B, 0x57, 0x9A), "W");
-        Add("xlsx", Color.FromArgb(0x21, 0x73, 0x46), "X");
-        Add("pptx", Color.FromArgb(0xC2, 0x4F, 0x1C), "P");
-        Add("pdf", Color.FromArgb(0xB0, 0x2A, 0x37), "A");
-        Add("image", Color.FromArgb(0x88, 0x44, 0xAA), "i");
-        Add("txt", Color.FromArgb(0x5A, 0x64, 0x6E), "t");
-        Add("file", Color.FromArgb(0x8A, 0x94, 0x9E), "·");
+
+        // White sheet with a folded top-right corner.
+        void Page(Graphics g)
+        {
+            var sheet = new[] { new Point(4, 1), new Point(12, 1), new Point(16, 5), new Point(16, 18), new Point(4, 18) };
+            using var border = new Pen(pageBorder);
+            g.FillPolygon(Brushes.White, sheet);
+            g.DrawPolygon(border, sheet);
+            g.DrawLines(border, new[] { new Point(12, 1), new Point(12, 5), new Point(16, 5) });
+        }
+
+        void TextLines(Graphics g, Color color)
+        {
+            using var pen = new Pen(color, 1.4f);
+            for (var y = 7; y <= 15; y += 3)
+                g.DrawLine(pen, 7, y, 13, y);
+        }
+
+        // Office-style: page with a colored letter chip in the lower left.
+        void OfficePage(Graphics g, Color color, string letter)
+        {
+            Page(g);
+            using var brush = new SolidBrush(color);
+            g.FillRectangle(brush, 2, 9, 10, 9);
+            using var font = new Font("Segoe UI", 5.8f, FontStyle.Bold);
+            var size = g.MeasureString(letter, font);
+            g.DrawString(letter, font, Brushes.White, 2 + (10 - size.Width) / 2, 9 + (9 - size.Height) / 2);
+        }
+
+        Add("site", g =>
+        {
+            using var brush = new SolidBrush(Color.FromArgb(0x1F, 0x4E, 0x79));
+            g.FillRectangle(brush, 2, 2, 16, 16);
+            using var pen = new Pen(Color.White, 1.5f);
+            g.DrawLine(pen, 3, 7, 17, 7);    // header band
+            g.DrawLine(pen, 10, 7, 10, 17);  // two web-part tiles
+        });
+        Add("library", g =>
+        {
+            // Two stacked sheets in the brand teal.
+            using var back = new SolidBrush(Color.FromArgb(0x10, 0x6E, 0x64));
+            using var front = new SolidBrush(Color.FromArgb(0x17, 0x9C, 0x8E));
+            g.FillRectangle(back, 6, 2, 11, 13);
+            g.FillRectangle(front, 3, 5, 11, 13);
+            using var pen = new Pen(Color.White, 1.2f);
+            g.DrawLine(pen, 5, 9, 12, 9);
+            g.DrawLine(pen, 5, 12, 12, 12);
+            g.DrawLine(pen, 5, 15, 12, 15);
+        });
+        Add("list", g =>
+        {
+            using var brush = new SolidBrush(Color.FromArgb(0x6f, 0x42, 0xc1));
+            g.FillRectangle(brush, 2, 2, 16, 16);
+            using var pen = new Pen(Color.White, 1.4f);
+            foreach (var y in new[] { 6, 10, 14 })
+            {
+                g.FillEllipse(Brushes.White, 5, y - 1, 2, 2);
+                g.DrawLine(pen, 9, y, 15, y);
+            }
+        });
+        Add("folder", g =>
+        {
+            var dark = Color.FromArgb(0xD4, 0xA0, 0x17);
+            using var tab = new SolidBrush(dark);
+            g.FillRectangle(tab, 2, 4, 7, 4);
+            using var body = new SolidBrush(Color.FromArgb(0xF6, 0xC2, 0x44));
+            g.FillRectangle(body, 2, 6, 16, 10);
+            using var pen = new Pen(dark);
+            g.DrawRectangle(pen, 2, 6, 16, 10);
+        });
+        Add("docx", g => OfficePage(g, Color.FromArgb(0x2B, 0x57, 0x9A), "W"));
+        Add("xlsx", g => OfficePage(g, Color.FromArgb(0x21, 0x73, 0x46), "X"));
+        Add("pptx", g => OfficePage(g, Color.FromArgb(0xC2, 0x4F, 0x1C), "P"));
+        Add("pdf", g =>
+        {
+            // The classic red-label document.
+            Page(g);
+            using var brush = new SolidBrush(Color.FromArgb(0xC4, 0x2B, 0x1F));
+            g.FillRectangle(brush, 2, 9, 14, 7);
+            using var font = new Font("Segoe UI", 4.8f, FontStyle.Bold);
+            var size = g.MeasureString("PDF", font);
+            g.DrawString("PDF", font, Brushes.White, 2 + (14 - size.Width) / 2, 9 + (7 - size.Height) / 2);
+        });
+        Add("image", g =>
+        {
+            // Page with a tiny photo: sky, hills, sun.
+            Page(g);
+            using var sky = new SolidBrush(Color.FromArgb(0xD6, 0xEA, 0xF8));
+            g.FillRectangle(sky, 6, 7, 9, 8);
+            using var hill = new SolidBrush(Color.FromArgb(0x3E, 0x8E, 0x4E));
+            g.FillPolygon(hill, new[] { new Point(6, 15), new Point(9, 10), new Point(12, 15) });
+            g.FillPolygon(hill, new[] { new Point(10, 15), new Point(13, 12), new Point(15, 15) });
+            using var sun = new SolidBrush(Color.FromArgb(0xF2, 0xA9, 0x1E));
+            g.FillEllipse(sun, 12f, 7.8f, 2.6f, 2.6f);
+            using var frame = new Pen(pageBorder);
+            g.DrawRectangle(frame, 6, 7, 9, 8);
+        });
+        Add("txt", g =>
+        {
+            Page(g);
+            TextLines(g, Color.FromArgb(0x5A, 0x64, 0x6E));
+        });
+        Add("file", g =>
+        {
+            Page(g);
+            TextLines(g, Color.FromArgb(0xC2, 0xC9, 0xD0));
+        });
         return list;
     }
 

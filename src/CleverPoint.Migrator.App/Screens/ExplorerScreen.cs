@@ -157,7 +157,7 @@ public class ExplorerPane : UserControl
         header.Controls.Add(new Label { Text = role, Font = Brand.Heading, ForeColor = Brand.Primary, AutoSize = true }, 0, 0);
         header.Controls.Add(_siteUrl, 0, 1);
         header.Controls.Add(_connect, 1, 1);
-        var refresh = new Button { Text = "Refresh", AutoSize = true, FlatStyle = FlatStyle.Flat, Margin = new Padding(6, 0, 0, 0) };
+        var refresh = new Button { Text = "Refresh", AutoSize = true, FlatStyle = FlatStyle.Flat, Margin = new Padding(6, 3, 3, 3) };
         refresh.Click += async (_, _) => await RefreshAsync();
         header.Controls.Add(refresh, 2, 1);
         Controls.Add(header);
@@ -191,6 +191,13 @@ public class ExplorerPane : UserControl
         _items.Columns.Add("Name", 320);
         _items.Columns.Add("Details", 160);
         _items.DoubleClick += async (_, _) => await DrillAsync();
+        // Backspace = up one level, like the file explorer.
+        _items.KeyDown += async (_, e) =>
+        {
+            if (e.KeyCode != Keys.Back || Connection == null || CurrentList == null) return;
+            try { await GoUpAsync(); }
+            catch (Exception ex) { _status.Text = $"Could not go up: {Short(ex.Message)}"; }
+        };
         Controls.Add(_items);
         _items.BringToFront();
         Controls.Add(_status);
@@ -302,9 +309,7 @@ public class ExplorerPane : UserControl
         switch (_items.SelectedItems[0].Tag)
         {
             case null:   // ".." row
-                CurrentList = null;
-                _currentFolder = null;
-                await ShowSiteAsync();
+                await GoUpAsync();
                 break;
             case SpWebInfo web:
                 Connection = Connection.ForWeb(web.Url);
@@ -321,6 +326,22 @@ public class ExplorerPane : UserControl
             case SpFolderEntry { IsFolder: true } folder:
                 await ShowFolderAsync(folder.ServerRelativeUrl);
                 break;
+        }
+    }
+
+    /// <summary>One level up: subfolder -> parent folder -> list root -> site.</summary>
+    private async Task GoUpAsync()
+    {
+        if (CurrentList != null && _currentFolder != null
+            && !_currentFolder.Equals(CurrentList.ServerRelativeUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            await ShowFolderAsync(_currentFolder[.._currentFolder.LastIndexOf('/')]);
+        }
+        else
+        {
+            CurrentList = null;
+            _currentFolder = null;
+            await ShowSiteAsync();
         }
     }
 
@@ -346,7 +367,8 @@ public class ExplorerPane : UserControl
         _currentFolder = folderUrl;
         var entries = await Task.Run(() => _browser.GetFolderAsync(Connection, folderUrl, CurrentList?.ServerRelativeUrl));
         _items.Items.Clear();
-        _items.Items.Add(new ListViewItem(new[] { "..", "Back to site" }));
+        var atRoot = CurrentList == null || folderUrl.Equals(CurrentList.ServerRelativeUrl, StringComparison.OrdinalIgnoreCase);
+        _items.Items.Add(new ListViewItem(new[] { "..", atRoot ? "Back to site" : "Up one level" }));
         foreach (var entry in entries)
         {
             var row = new ListViewItem(new[]
