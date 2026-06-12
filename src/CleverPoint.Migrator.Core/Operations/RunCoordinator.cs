@@ -78,7 +78,7 @@ public static class RunCoordinator
                 {
                     try
                     {
-                        targetCtx.Web.GetFileByServerRelativeUrl(targetRef).DeleteObject();
+                        targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetRef)).DeleteObject();
                         await targetCtx.ExecuteQueryAsync();
                         onProgress?.Invoke($"healing: deleted corrupt target {targetRef.Split('/')[^1]}");
                     }

@@ -146,7 +146,7 @@ public class MigrationApiEngine
                 var rel = fileRef[(sourceRoot.Length + 1)..];
                 var blobName = $"{Guid.NewGuid()}.dat";
 
-                var file = sourceCtx.Web.GetFileByServerRelativeUrl(fileRef);
+                var file = sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(fileRef));
                 var stream = file.OpenBinaryStream();
                 await sourceCtx.ExecuteQueryAsync();
                 byte[] cipher;

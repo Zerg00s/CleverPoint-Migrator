@@ -67,6 +67,7 @@ public class MainForm : Form
             Padding = new Padding(8, 16, 8, 8),
         };
         nav.Controls.Add(NavButton("Home", () => ShowScreen(new HomeScreen(_settings, ShowScreen))));
+        nav.Controls.Add(NavButton("Explore && copy", () => ShowScreen(new ExplorerScreen(_settings))));
         nav.Controls.Add(NavButton("History", () => ShowScreen(new HistoryScreen(_settings, ShowScreen))));
         nav.Controls.Add(NavButton("Settings", () => ShowScreen(new SettingsScreen(_settings))));
         return nav;

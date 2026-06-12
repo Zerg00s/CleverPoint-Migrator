@@ -34,6 +34,18 @@ public class MigrationWizard : Form
     private readonly Button _cancel = new() { Text = "Cancel run", Width = 110, Height = 40, Visible = false, FlatStyle = FlatStyle.Flat };
     private CancellationTokenSource? _cts;
 
+    /// <summary>Prefills the wizard from the explorer (drag-drop or selection).</summary>
+    public void Preset(string sourceSite, string sourceList, string targetSite, string targetList, string? sourceFolder = null)
+    {
+        _sourceSite.Text = sourceSite;
+        _sourceList.Text = sourceList;
+        _targetSite.Text = targetSite;
+        _targetList.Text = targetList;
+        _sourceFolderScope = sourceFolder;
+    }
+
+    private string? _sourceFolderScope;
+
     public MigrationWizard(AppSettings settings)
     {
         _settings = settings;
@@ -70,7 +82,11 @@ public class MigrationWizard : Form
         Controls.Add(layout);
         layout.Dock = DockStyle.Top;
 
-        _engine.Items.AddRange(new object[] { "Classic copy (recommended)", "Migration API (Azure blob)" });
+        _engine.Items.AddRange(new object[]
+        {
+            "Classic copy - recommended for most migrations",
+            "Migration API - best for very large libraries (1,000+ files)",
+        });
         _engine.SelectedIndex = 0;
         _run.FlatAppearance.BorderSize = 0;
         _run.Click += async (_, _) => await RunAsync();
@@ -165,6 +181,7 @@ public class MigrationWizard : Form
             CopyAttachments = _attachments.Checked,
             CopyPermissions = _permissions.Checked,
             CopyContent = !_contentOnly.Checked,
+            SourceFolderServerRelativeUrl = _sourceFolderScope,
         };
 
         var status = "Completed";

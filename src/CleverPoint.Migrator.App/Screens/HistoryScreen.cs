@@ -11,8 +11,9 @@ namespace CleverPoint.Migrator.App.Screens;
 public class HistoryScreen : UserControl
 {
     private readonly DataGridView _grid = new();
-    private readonly TextBox _search = new() { Width = 240, PlaceholderText = "Search name, site, list..." };
-    private readonly ComboBox _statusFilter = new() { Width = 170, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly TextBox _search = new() { Width = 240, PlaceholderText = "Search name, site, list...", Margin = new Padding(0, 2, 12, 0) };
+    private readonly MultiSelectFilter _statusFilter = new(
+        new[] { "Completed", "CompletedWithIssues", "Interrupted", "Failed", "Running" });
     private List<MigrationRun> _runs = new();
 
     public HistoryScreen(AppSettings settings, Action<Control> navigate)
@@ -21,10 +22,8 @@ public class HistoryScreen : UserControl
         Padding = new Padding(24);
 
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 44, Padding = new Padding(0, 6, 0, 0) };
-        _statusFilter.Items.AddRange(new object[] { "All statuses", "Completed", "CompletedWithIssues", "Interrupted", "Failed", "Running" });
-        _statusFilter.SelectedIndex = 0;
-        var export = new Button { Text = "Export log (CSV)", Width = 140, FlatStyle = FlatStyle.Flat };
-        var rename = new Button { Text = "Rename", Width = 90, FlatStyle = FlatStyle.Flat };
+        var export = new Button { Text = "Export log (CSV)", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0) };
+        var rename = new Button { Text = "Rename", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0) };
         bar.Controls.AddRange(new Control[] { _search, _statusFilter, rename, export });
         Controls.Add(bar);
 
@@ -47,7 +46,7 @@ public class HistoryScreen : UserControl
         _grid.BringToFront();
 
         _search.TextChanged += (_, _) => Render();
-        _statusFilter.SelectedIndexChanged += (_, _) => Render();
+        _statusFilter.SelectionChanged += Render;
         rename.Click += (_, _) => RenameSelected();
         export.Click += (_, _) => ExportSelected();
 
@@ -70,12 +69,12 @@ public class HistoryScreen : UserControl
 
     private void Render()
     {
-        var filter = _statusFilter.SelectedIndex <= 0 ? null : _statusFilter.SelectedItem!.ToString();
+        var selected = _statusFilter.SelectedValues;
         var query = _search.Text.Trim();
         _grid.Rows.Clear();
         foreach (var run in _runs)
         {
-            if (filter != null && run.Status != filter) continue;
+            if (selected.Count > 0 && !selected.Contains(run.Status)) continue;
             if (query.Length > 0
                 && !run.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                 && !run.SourceUrl.Contains(query, StringComparison.OrdinalIgnoreCase)
@@ -115,6 +114,58 @@ public class HistoryScreen : UserControl
     }
 }
 
+/// <summary>
+/// A combobox-looking button that drops a checkbox list: multi-select
+/// filtering ("Completed, Failed") in one compact control.
+/// </summary>
+public class MultiSelectFilter : Button
+{
+    private readonly CheckedListBox _list = new() { CheckOnClick = true, BorderStyle = BorderStyle.None, IntegralHeight = true };
+    private readonly ToolStripDropDown _drop = new() { Padding = Padding.Empty };
+
+    public event Action? SelectionChanged;
+
+    public HashSet<string> SelectedValues { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public MultiSelectFilter(string[] options)
+    {
+        AutoSize = true;
+        Padding = new Padding(10, 2, 24, 2);
+        FlatStyle = FlatStyle.Flat;
+        TextAlign = ContentAlignment.MiddleLeft;
+        Margin = new Padding(0, 0, 0, 0);
+        UpdateLabel();
+
+        _list.Items.AddRange(options);
+        _list.Height = options.Length * 22 + 8;
+        _list.Width = 220;
+        var host = new ToolStripControlHost(_list) { Padding = Padding.Empty, Margin = Padding.Empty };
+        _drop.Items.Add(host);
+
+        Click += (_, _) => _drop.Show(this, new Point(0, Height));
+        _list.ItemCheck += (_, e) => BeginInvoke(() =>
+        {
+            SelectedValues.Clear();
+            foreach (var item in _list.CheckedItems) SelectedValues.Add(item.ToString()!);
+            UpdateLabel();
+            SelectionChanged?.Invoke();
+        });
+    }
+
+    private void UpdateLabel() =>
+        Text = SelectedValues.Count == 0 ? "All statuses" : string.Join(", ", SelectedValues);
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        // Dropdown chevron.
+        var x = Width - 16;
+        var y = Height / 2 - 2;
+        using var pen = new Pen(Theme.Brand.TextSecondary, 1.6f);
+        e.Graphics.DrawLines(pen, new[] { new Point(x, y), new Point(x + 4, y + 4), new Point(x + 8, y) });
+    }
+}
+
 /// <summary>Small friendly text prompt (no harsh system dialogs).</summary>
 public static class PromptDialog
 {
@@ -133,8 +184,8 @@ public static class PromptDialog
         };
         var prompt = new Label { Text = label, AutoSize = true, Location = new Point(16, 16) };
         var input = new TextBox { Text = initial, Width = 370, Location = new Point(16, 44) };
-        var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, Location = new Point(222, 84), Width = 80, FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(308, 84), Width = 80, FlatStyle = FlatStyle.Flat };
+        var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, Location = new Point(216, 84), AutoSize = true, Padding = new Padding(12, 2, 12, 2), FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(308, 84), AutoSize = true, Padding = new Padding(12, 2, 12, 2), FlatStyle = FlatStyle.Flat };
         ok.FlatAppearance.BorderSize = 0;
         form.Controls.AddRange(new Control[] { prompt, input, ok, cancel });
         form.AcceptButton = ok;

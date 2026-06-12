@@ -255,7 +255,7 @@ public class ItemCopier
             var copied = 0;
             foreach (var att in sourceFiles)
             {
-                var file = _sourceCtx.Web.GetFileByServerRelativeUrl(att.ServerRelativeUrl);
+                var file = _sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(att.ServerRelativeUrl));
                 var stream = file.OpenBinaryStream();
                 await _sourceCtx.ExecuteQueryAsync();
                 using var ms = new MemoryStream();

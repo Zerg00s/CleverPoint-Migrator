@@ -114,8 +114,16 @@ public class FileCopier
                     continue;
                 }
 
+                var targetFolder = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(parentDir));
+
+                // Older versions first (oldest -> newest) when requested, so
+                // the target accumulates real version history.
+                var versionsUploaded = 0;
+                if (options.MaxVersions > 1 && _sourceRest != null)
+                    versionsUploaded = await UploadOlderVersionsAsync(fileRef, targetFolder, relativePath, options, result);
+
                 // Normal path: download (buffered, small files) and hash.
-                var file = _sourceCtx.Web.GetFileByServerRelativeUrl(fileRef);
+                var file = _sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(fileRef));
                 var streamResult = file.OpenBinaryStream();
                 await _sourceCtx.ExecuteQueryAsync();
                 byte[] bytes;
@@ -125,8 +133,6 @@ public class FileCopier
                     bytes = ms.ToArray();
                 }
                 SourceHashes[fileRef] = Convert.ToHexString(SHA256.HashData(bytes));
-
-                var targetFolder = targetWeb.GetFolderByServerRelativeUrl(parentDir);
                 var uploaded = targetFolder.Files.Add(new FileCreationInformation
                 {
                     Url = relativePath[(relativePath.LastIndexOf('/') + 1)..],
@@ -141,7 +147,8 @@ public class FileCopier
                 await _itemCopier.ApplyFieldValuesAsync(sourceItem, targetItem, copyFields, result, fileRef);
                 await ApplyDocumentMetadataAsync(sourceItem, targetItem, options, result, fileRef);
 
-                var rec = result.Add("File", fileRef, targetPath, ItemCopyStatus.Copied);
+                var rec = result.Add("File", fileRef, targetPath, ItemCopyStatus.Copied,
+                    versionsUploaded > 0 ? $"with {versionsUploaded + 1} versions" : null);
                 rec.SizeBytes = bytes.Length;
                 rec.Duration = DateTime.UtcNow - started;
             }
@@ -169,7 +176,7 @@ public class FileCopier
 
         // 0-byte stub, then an upload session against it.
         await _targetRest!.PostAsync(
-            $"{targetWebUrl}/_api/web/GetFolderByServerRelativeUrl('{Esc(targetFolderServerRel)}')/Files/add(url='{Esc(name)}',overwrite=true)");
+            $"{targetWebUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{Esc(targetFolderServerRel)}')/Files/add(url='{Esc(name)}',overwrite=true)");
 
         var uploadId = Guid.NewGuid();
         var slice = new byte[options.UploadSliceBytes];
@@ -178,7 +185,7 @@ public class FileCopier
         using var hash = SHA256.Create();
 
         await using (var download = await _sourceRest!.GetStreamAsync(
-            $"{sourceWebUrl}/_api/web/GetFileByServerRelativeUrl('{Esc(fileRef)}')/$value"))
+            $"{sourceWebUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='{Esc(fileRef)}')/$value"))
         {
             var filled = 0;
             var first = true;
@@ -191,7 +198,7 @@ public class FileCopier
                 if (filled > 0)
                 {
                     hash.TransformBlock(slice, 0, filled, null, 0);
-                    var fileEndpoint = $"{targetWebUrl}/_api/web/GetFileByServerRelativeUrl('{Esc(targetFileRel)}')";
+                    var fileEndpoint = $"{targetWebUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='{Esc(targetFileRel)}')";
                     if (first && endOfStream)
                         await _targetRest.PostBinaryAsync($"{fileEndpoint}/FinishUpload(uploadId=guid'{uploadId}',fileOffset=0)", slice, filled);
                     else if (first)
@@ -221,7 +228,51 @@ public class FileCopier
         return rec;
     }
 
-    private static string Esc(string s) => s.Replace("'", "''");
+    private static string Esc(string s) => Uri.EscapeDataString(s.Replace("'", "''"));
+
+    /// <summary>
+    /// Uploads the last (MaxVersions - 1) OLDER versions of a file to the
+    /// target, oldest first, so the final current-version upload lands on a
+    /// real version trail. Version timestamps become migration time (SPO has
+    /// no app-only way to back-date individual versions); contents are exact.
+    /// </summary>
+    private async Task<int> UploadOlderVersionsAsync(string fileRef, Folder targetFolder,
+        string relativePath, CopyOptions options, Model.CopyResult result)
+    {
+        try
+        {
+            var sourceWebUrl = _sourceCtx.Url.TrimEnd('/');
+            using var versionsDoc = await _sourceRest!.GetJsonAsync(
+                $"{sourceWebUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='{Esc(fileRef)}')/versions?$select=ID,VersionLabel,Size&$orderby=ID asc");
+            var versions = versionsDoc.RootElement.GetProperty("value").EnumerateArray().ToList();
+            if (versions.Count == 0) return 0;
+
+            // Last N-1 older versions (the current content uploads after us).
+            var wanted = versions.Skip(Math.Max(0, versions.Count - (options.MaxVersions - 1))).ToList();
+            var name = relativePath.Contains('/') ? relativePath[(relativePath.LastIndexOf('/') + 1)..] : relativePath;
+            var uploaded = 0;
+            foreach (var version in wanted)
+            {
+                var versionId = version.GetProperty("ID").GetInt32();
+                var bytes = await _sourceRest.GetBytesAsync(
+                    $"{sourceWebUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='{Esc(fileRef)}')/versions({versionId})/$value");
+                targetFolder.Files.Add(new FileCreationInformation
+                {
+                    Url = name,
+                    ContentStream = new MemoryStream(bytes),
+                    Overwrite = true,
+                });
+                await _targetCtx.ExecuteQueryAsync();
+                uploaded++;
+            }
+            return uploaded;
+        }
+        catch (Exception ex)
+        {
+            result.Add("File", fileRef, "", Model.ItemCopyStatus.Warning, $"version history copy failed: {ex.Message}");
+            return 0;
+        }
+    }
 
     private async Task ApplyDocumentMetadataAsync(ListItem sourceItem, ListItem targetItem,
         CopyOptions options, CopyResult result, string fileRef)
@@ -259,7 +310,7 @@ public class FileCopier
                 var exists = true;
                 try
                 {
-                    var folder = targetWeb.GetFolderByServerRelativeUrl(next);
+                    var folder = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(next));
                     _targetCtx.Load(folder, f => f.Exists);
                     await _targetCtx.ExecuteQueryAsync();
                     exists = folder.Exists;
@@ -271,7 +322,7 @@ public class FileCopier
 
                 if (!exists)
                 {
-                    var parent = targetWeb.GetFolderByServerRelativeUrl(current);
+                    var parent = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(current));
                     parent.Folders.Add(next);
                     await _targetCtx.ExecuteQueryAsync();
                 }
@@ -289,12 +340,12 @@ public class FileCopier
             ListItem item;
             if (isFolder)
             {
-                var folder = ctx.Web.GetFolderByServerRelativeUrl(serverRelativePath);
+                var folder = ctx.Web.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativePath));
                 item = folder.ListItemAllFields;
             }
             else
             {
-                var file = ctx.Web.GetFileByServerRelativeUrl(serverRelativePath);
+                var file = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativePath));
                 item = file.ListItemAllFields;
             }
             ctx.Load(item);

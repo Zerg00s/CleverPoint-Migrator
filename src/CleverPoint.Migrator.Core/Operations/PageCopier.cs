@@ -93,7 +93,7 @@ public class PageCopier
                 if (_overwrite)
                     await TryDeleteFileAsync(targetCtx, targetUrl);
 
-                var stub = targetCtx.Web.GetFolderByServerRelativeUrl(targetList.RootFolder.ServerRelativeUrl)
+                var stub = targetCtx.Web.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(targetList.RootFolder.ServerRelativeUrl))
                     .Files.AddTemplateFile(targetUrl, TemplateFileType.ClientSidePage);
                 targetCtx.Load(stub, f => f.ServerRelativeUrl);
                 await targetCtx.ExecuteQueryAsync();
@@ -107,7 +107,7 @@ public class PageCopier
                     continue;
                 }
 
-                var stubItem = targetCtx.Web.GetFileByServerRelativeUrl(targetUrl).ListItemAllFields;
+                var stubItem = targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetUrl)).ListItemAllFields;
                 targetCtx.Load(stubItem, i => i.Id);
                 await targetCtx.ExecuteQueryAsync();
                 var targetWebUrl = targetCtx.Web.Url.TrimEnd('/');
@@ -135,7 +135,7 @@ public class PageCopier
 
                 // Authors and dates next (any write after publish leaves a
                 // draft minor version behind), then publish LAST.
-                var item = targetCtx.Web.GetFileByServerRelativeUrl(targetUrl).ListItemAllFields;
+                var item = targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetUrl)).ListItemAllFields;
                 targetCtx.Load(item, i => i.Id);
                 await targetCtx.ExecuteQueryAsync();
                 var authorId = page.FieldValues.GetValueOrDefault("Author") is FieldUserValue av
@@ -178,7 +178,7 @@ public class PageCopier
         var actualRef = (string)item["FileRef"];
         if (!actualRef.Equals(intendedUrl, StringComparison.OrdinalIgnoreCase))
         {
-            ctx.Web.GetFileByServerRelativeUrl(actualRef).MoveTo(intendedUrl, MoveOperations.Overwrite);
+            ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(actualRef)).MoveTo(intendedUrl, MoveOperations.Overwrite);
             await ctx.ExecuteQueryAsync();
         }
     }
@@ -194,7 +194,7 @@ public class PageCopier
     {
         try
         {
-            ctx.Web.GetFileByServerRelativeUrl(serverRelativeUrl).DeleteObject();
+            ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativeUrl)).DeleteObject();
             await ctx.ExecuteQueryAsync();
             return "deleted";
         }
@@ -206,7 +206,7 @@ public class PageCopier
                 return "absent";
             try
             {
-                var file = ctx.Web.GetFileByServerRelativeUrl(serverRelativeUrl);
+                var file = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativeUrl));
                 file.UndoCheckOut();
                 file.DeleteObject();
                 await ctx.ExecuteQueryAsync();

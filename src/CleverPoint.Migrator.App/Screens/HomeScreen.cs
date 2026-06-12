@@ -15,11 +15,18 @@ public class HomeScreen : UserControl
         BackColor = Brand.Surface;
         Padding = new Padding(24);
 
+        // First-run empty state: the one thing to do is add a connection.
+        if (settings.Connections.Count == 0)
+        {
+            BuildWelcomeState(settings, navigate);
+            return;
+        }
+
         var newMigration = new Button
         {
             Text = "New migration",
-            Width = 200,
-            Height = 52,
+            AutoSize = true,
+            Padding = new Padding(28, 14, 28, 14),
             BackColor = Brand.Accent,
             ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
@@ -34,18 +41,6 @@ public class HomeScreen : UserControl
             wizard.ShowDialog(FindForm());
         };
         Controls.Add(newMigration);
-
-        var hint = new Label
-        {
-            Text = "Copy lists, libraries, files and folders between SharePoint sites.\n" +
-                   "Pick a source, pick a target, go. Defaults are safe: metadata,\n" +
-                   "attachments and structure are preserved.",
-            Font = Brand.Body,
-            ForeColor = Brand.TextSecondary,
-            AutoSize = true,
-            Location = new Point(250, 30),
-        };
-        Controls.Add(hint);
 
         Controls.Add(new Label
         {
@@ -102,5 +97,68 @@ public class HomeScreen : UserControl
         {
             Controls.Add(recent);
         }
+    }
+
+    /// <summary>Large friendly first-run state: an illustration and one call to action.</summary>
+    private void BuildWelcomeState(AppSettings settings, Action<Control> navigate)
+    {
+        var canvas = new Panel { Dock = DockStyle.Fill };
+        canvas.Paint += (_, e) =>
+        {
+            // Simple hand-drawn-style illustration: two sites and an arc.
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var cx = canvas.Width / 2;
+            using var panelBrush = new SolidBrush(Color.FromArgb(40, Brand.Primary));
+            using var border = new Pen(Brand.Primary, 2);
+            g.FillRectangle(panelBrush, cx - 180, 90, 120, 150);
+            g.DrawRectangle(border, cx - 180, 90, 120, 150);
+            g.FillRectangle(panelBrush, cx + 60, 90, 120, 150);
+            g.DrawRectangle(border, cx + 60, 90, 120, 150);
+            using var arc = new Pen(Brand.Accent, 5) { EndCap = System.Drawing.Drawing2D.LineCap.ArrowAnchor };
+            g.DrawArc(arc, cx - 120, 30, 240, 120, 200, 140);
+            for (var i = 0; i < 3; i++)
+            {
+                g.DrawLine(border, cx - 162, 120 + i * 34, cx - 78, 120 + i * 34);
+                g.DrawLine(border, cx + 78, 120 + i * 34, cx + 162, 120 + i * 34);
+            }
+        };
+
+        var welcome = new Label
+        {
+            Text = "Welcome to CleverPoint Migrator",
+            Font = Brand.Title,
+            ForeColor = Brand.TextPrimary,
+            AutoSize = true,
+        };
+        var prompt = new Label
+        {
+            Text = "Connect a SharePoint tenant to start copying lists, libraries and files.",
+            Font = Brand.Body,
+            ForeColor = Brand.TextSecondary,
+            AutoSize = true,
+        };
+        var addConnection = new Button
+        {
+            Text = "Add your first connection",
+            AutoSize = true,
+            Padding = new Padding(28, 14, 28, 14),
+            BackColor = Brand.Accent,
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Font = Brand.Heading,
+            Cursor = Cursors.Hand,
+        };
+        addConnection.FlatAppearance.BorderSize = 0;
+        addConnection.Click += (_, _) => navigate(new SettingsScreen(settings));
+
+        canvas.Controls.AddRange(new Control[] { welcome, prompt, addConnection });
+        canvas.Resize += (_, _) =>
+        {
+            welcome.Location = new Point((canvas.Width - welcome.Width) / 2, 270);
+            prompt.Location = new Point((canvas.Width - prompt.Width) / 2, 310);
+            addConnection.Location = new Point((canvas.Width - addConnection.Width) / 2, 348);
+        };
+        Controls.Add(canvas);
     }
 }

@@ -19,6 +19,7 @@ public static class CopyEngine
         // A caller-supplied result receives records LIVE (RecordAdded fires
         // per item), so history persists even when a run is cancelled mid-way.
         var result = liveResult ?? new CopyResult();
+        Diagnostics.TraceLog.Write("Copy", $"start '{sourceListTitle}' {source.SiteUrl} -> '{options.TargetListTitle}' {target.SiteUrl}");
         using var sourceCtx = source.CreateContext();
         using var targetCtx = target.CreateContext();
 
@@ -99,6 +100,7 @@ public static class CopyEngine
             result.Add("User", login, options.UnresolvedUserFallback ?? "(dropped)", ItemCopyStatus.Warning, $"unresolved user: {reason}");
 
         result.FinishedUtc = DateTime.UtcNow;
+        Diagnostics.TraceLog.Write("Copy", $"done '{sourceListTitle}': {result.Summary()}");
         return result;
     }
 

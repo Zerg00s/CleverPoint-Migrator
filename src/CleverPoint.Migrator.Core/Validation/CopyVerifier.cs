@@ -113,7 +113,7 @@ public class CopyVerifier
 
     public static async Task<string> HashFileAsync(ClientContext ctx, string serverRelativeUrl)
     {
-        var file = ctx.Web.GetFileByServerRelativeUrl(serverRelativeUrl);
+        var file = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativeUrl));
         var stream = file.OpenBinaryStream();
         await ctx.ExecuteQueryAsync();
         using var ms = new MemoryStream();

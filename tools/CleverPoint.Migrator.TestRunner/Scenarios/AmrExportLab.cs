@@ -21,7 +21,7 @@ public static class AmrExportLab
         var azure = new AzureStorageRestClient();
 
         using var ctx = site.CreateContext();
-        var list = ctx.Web.Lists.GetByTitle(TestAssets.SourceLibTitle);
+        var list = ctx.Web.Lists.GetByTitle(Environment.GetEnvironmentVariable("AMR_LIST") ?? TestAssets.SourceLibTitle);
         ctx.Load(list.RootFolder, f => f.ServerRelativeUrl);
         ctx.Load(ctx.Web, w => w.Url);
         await ctx.ExecuteQueryAsync();

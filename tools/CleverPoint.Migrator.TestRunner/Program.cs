@@ -56,6 +56,9 @@ public static class Program
             ["throttle"] = Scenarios.FilterThrottleTests.ThrottleAsync,
             ["healing"] = Scenarios.HealingTests.RunAsync,
             ["pages"] = Scenarios.PageTests.RunAsync,
+            ["chars"] = Scenarios.SpecialCharTests.RunAsync,
+            ["versions"] = Scenarios.VersionTests.RunAsync,
+            ["bench"] = Scenarios.BenchmarkTests.RunAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();
