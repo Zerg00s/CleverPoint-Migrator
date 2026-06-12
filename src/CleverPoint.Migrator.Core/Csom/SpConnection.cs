@@ -13,8 +13,9 @@ public class SpConnection
 {
     public string SiteUrl { get; }
     public string Host { get; }
-    public ITokenProvider Tokens { get; }
+    public ITokenProvider? Tokens { get; }
     public SpRestClient Rest { get; }
+    private readonly (string FedAuth, string RtFa)? _cookies;
 
     public SpConnection(string siteUrl, ITokenProvider tokens, SpRestClient? rest = null)
     {
@@ -24,21 +25,39 @@ public class SpConnection
         Rest = rest ?? new SpRestClient(tokens);
     }
 
-    /// <summary>New CSOM context with Bearer injection and traffic decoration.</summary>
+    /// <summary>Browser-session auth (FedAuth/rtFa cookies from an interactive sign-in).</summary>
+    public SpConnection(string siteUrl, string fedAuth, string rtFa, SpRestClient? rest = null)
+    {
+        SiteUrl = siteUrl.TrimEnd('/');
+        Host = new Uri(siteUrl).Host;
+        _cookies = (fedAuth, rtFa);
+        Rest = rest ?? new SpRestClient(fedAuth, rtFa);
+    }
+
+    /// <summary>New CSOM context with auth injection and traffic decoration.</summary>
     public ClientContext CreateContext()
     {
         var ctx = new ClientContext(SiteUrl);
         ctx.ExecutingWebRequest += (_, e) =>
         {
-            var token = Tokens.GetTokenAsync(Host).GetAwaiter().GetResult();
-            e.WebRequestExecutor.RequestHeaders["Authorization"] = "Bearer " + token;
+            if (Tokens != null)
+            {
+                var token = Tokens.GetTokenAsync(Host).GetAwaiter().GetResult();
+                e.WebRequestExecutor.RequestHeaders["Authorization"] = "Bearer " + token;
+            }
+            else if (_cookies is { } c)
+            {
+                e.WebRequestExecutor.RequestHeaders["Cookie"] = $"FedAuth={c.FedAuth}; rtFa={c.RtFa}";
+            }
             e.WebRequestExecutor.RequestHeaders["User-Agent"] = SpRestClient.UserAgent;
         };
         return ctx;
     }
 
-    /// <summary>A connection to a different web on the same host (re-uses tokens and REST client).</summary>
-    public SpConnection ForWeb(string siteUrl) => new(siteUrl, Tokens, Rest);
+    /// <summary>A connection to a different web on the same host (re-uses auth and REST client).</summary>
+    public SpConnection ForWeb(string siteUrl) =>
+        Tokens != null ? new SpConnection(siteUrl, Tokens, Rest)
+            : new SpConnection(siteUrl, _cookies!.Value.FedAuth, _cookies.Value.RtFa, Rest);
 }
 
 public static class CsomExtensions

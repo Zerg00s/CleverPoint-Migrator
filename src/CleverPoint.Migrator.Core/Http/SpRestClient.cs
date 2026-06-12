@@ -17,7 +17,8 @@ public class SpRestClient
     public const string UserAgent = "NONISV|CleverPoint|Migrator/1.0";
 
     private readonly HttpClient _http;
-    private readonly Auth.ITokenProvider _tokens;
+    private readonly Auth.ITokenProvider? _tokens;
+    private readonly string? _cookieHeader;
     private readonly int _maxRetries;
 
     /// <summary>Raised when a request was throttled: (url, retryAfterSeconds, attempt).</summary>
@@ -27,6 +28,14 @@ public class SpRestClient
     {
         _tokens = tokens;
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        _maxRetries = maxRetries;
+    }
+
+    /// <summary>Browser-session auth: FedAuth/rtFa cookies instead of a Bearer token.</summary>
+    public SpRestClient(string fedAuth, string rtFa, HttpClient? http = null, int maxRetries = 6)
+    {
+        _cookieHeader = $"FedAuth={fedAuth}; rtFa={rtFa}";
+        _http = http ?? new HttpClient(new HttpClientHandler { UseCookies = false }) { Timeout = TimeSpan.FromMinutes(10) };
         _maxRetries = maxRetries;
     }
 
@@ -145,7 +154,10 @@ public class SpRestClient
         var host = new Uri(url).Host;
         await RequestThrottle.WaitTurnAsync(host);
         var request = new HttpRequestMessage(method, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await _tokens.GetTokenAsync(host));
+        if (_tokens != null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await _tokens.GetTokenAsync(host));
+        else if (_cookieHeader != null)
+            request.Headers.TryAddWithoutValidation("Cookie", _cookieHeader);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json") { Parameters = { new NameValueHeaderValue("odata", "nometadata") } });
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
         if (extraHeaders != null)

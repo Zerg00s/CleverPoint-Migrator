@@ -56,11 +56,15 @@ public class MigrationWizard : Form
         BackColor = Brand.Surface;
         Font = Brand.Body;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, Padding = new Padding(16), AutoSize = true };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, Padding = new Padding(16), AutoSize = true };
         layout.Controls.Add(Lbl("Source site URL"), 0, 0); layout.Controls.Add(_sourceSite, 1, 0);
         layout.Controls.Add(Lbl("List / library"), 2, 0); layout.Controls.Add(_sourceList, 3, 0);
+        var browseSource = BrowseButton("source", _sourceSite, _sourceList);
+        layout.Controls.Add(browseSource, 4, 0);
         layout.Controls.Add(Lbl("Target site URL"), 0, 1); layout.Controls.Add(_targetSite, 1, 1);
         layout.Controls.Add(Lbl("Target list name"), 2, 1); layout.Controls.Add(_targetList, 3, 1);
+        var browseTarget = BrowseButton("target", _targetSite, _targetList);
+        layout.Controls.Add(browseTarget, 4, 1);
         layout.Controls.Add(Lbl("Engine"), 0, 2); layout.Controls.Add(_engine, 1, 2);
 
         var opts = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
@@ -93,6 +97,21 @@ public class MigrationWizard : Form
         _cancel.Click += (_, _) => ConfirmCancel();
     }
 
+    private Button BrowseButton(string role, TextBox site, TextBox list)
+    {
+        var button = new Button { Text = "Browse...", AutoSize = true, Padding = new Padding(8, 0, 8, 0), FlatStyle = FlatStyle.Flat, Margin = new Padding(8, 2, 0, 0) };
+        button.Click += (_, _) =>
+        {
+            using var picker = new ListPickerDialog(_settings, role, site.Text.Length > 0 ? site.Text : null);
+            if (picker.ShowDialog(this) == DialogResult.OK)
+            {
+                site.Text = picker.SelectedSiteUrl;
+                list.Text = picker.SelectedListTitle;
+            }
+        };
+        return button;
+    }
+
     private static Label Lbl(string text) => new()
     {
         Text = text, AutoSize = true, ForeColor = Brand.TextPrimary,
@@ -119,28 +138,7 @@ public class MigrationWizard : Form
         _log.Columns[3].FillWeight = 30;
     }
 
-    private SpConnection Connect(string siteUrl)
-    {
-        // App+certificate connections come from saved connections; browser
-        // auth flows are wired through the connection manager screen.
-        var match = _settings.Connections.FirstOrDefault(c =>
-            c.AuthMode == "AppCertificate" && siteUrl.StartsWith(GetHostPrefix(c.SiteUrl), StringComparison.OrdinalIgnoreCase));
-        if (match == null)
-            throw new InvalidOperationException(
-                "No saved app+certificate connection covers this site yet. Add one under Settings > Connections.");
-        var creds = new AppCredentials
-        {
-            TenantId = match.TenantId,
-            AppId = match.AppId,
-            CertPfxPath = match.CertPfxPath,
-            CertPassword = string.IsNullOrEmpty(match.CertPasswordProtected) ? "" : AppSettings.Unprotect(match.CertPasswordProtected),
-        };
-        // The configured request budget applies per tenant host.
-        Core.Http.RequestThrottle.Configure(new Uri(siteUrl).Host, _settings.MaxRequestsPerSecond);
-        return new SpConnection(siteUrl, new CertTokenProvider(creds));
-    }
-
-    private static string GetHostPrefix(string url) => new Uri(url).GetLeftPart(UriPartial.Authority);
+    private SpConnection Connect(string siteUrl) => ConnectionResolver.Resolve(this, _settings, siteUrl);
 
     private async Task RunAsync()
     {
@@ -168,12 +166,23 @@ public class MigrationWizard : Form
         });
 
         var result = new CopyResult();
+        var runStart = DateTime.UtcNow;
+        var copiedCount = 0;
         result.RecordAdded += rec => BeginInvoke(() =>
         {
             store.RecordItem(runId, rec);
             var row = _log.Rows[_log.Rows.Add(rec.ItemType, rec.SourcePath, rec.Status.ToString(), rec.Message ?? "")];
             row.Cells[2].Style.ForeColor = Brand.StatusColor(rec.Status.ToString());
             if (_log.Rows.Count % 25 == 0) _log.FirstDisplayedScrollingRowIndex = _log.Rows.Count - 1;
+
+            // Live throughput + rough time remaining once the scan total is known.
+            if (rec.Status == ItemCopyStatus.Copied) copiedCount++;
+            var elapsed = (DateTime.UtcNow - runStart).TotalSeconds;
+            if (elapsed > 5 && copiedCount > 0)
+            {
+                var rate = copiedCount / elapsed;
+                _status.Text = $"Running... {copiedCount} copied, {rate * 60:F0} items/min, {TimeSpan.FromSeconds(elapsed):mm\\:ss} elapsed";
+            }
         });
 
         var options = new CopyOptions
@@ -196,11 +205,12 @@ public class MigrationWizard : Form
             using var slot = await RunQueue.EnterAsync();
             _status.Text = "Running...";
 
-            // Engine work stays off the UI thread; the UI only receives events.
+            // Connections resolve on the UI thread (browser sign-in may pop);
+            // engine work stays off it and the UI only receives events.
+            var source = Connect(_sourceSite.Text);
+            var target = Connect(_targetSite.Text);
             await Task.Run(async () =>
             {
-                var source = Connect(_sourceSite.Text);
-                var target = Connect(_targetSite.Text);
                 if (_engine.SelectedIndex == 1)
                 {
                     var engine = new MigrationApiEngine(source, target);

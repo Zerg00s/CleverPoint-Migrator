@@ -49,8 +49,17 @@ public class HistoryScreen : UserControl
         _statusFilter.SelectionChanged += Render;
         rename.Click += (_, _) => RenameSelected();
         export.Click += (_, _) => ExportSelected();
+        _grid.CellDoubleClick += (_, _) => OpenDetail();
 
         Reload();
+    }
+
+    /// <summary>Per-run detail drawer: every item row, filter chips, clickable links.</summary>
+    private void OpenDetail()
+    {
+        if (SelectedRunId() is not { } id) return;
+        using var detail = new RunDetailDialog(id);
+        detail.ShowDialog(FindForm());
     }
 
     private void Reload()
@@ -111,6 +120,79 @@ public class HistoryScreen : UserControl
         if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
         using var store = new HistoryStore(AppSettings.HistoryDbPath);
         store.ExportRunCsv(id, dialog.FileName);
+    }
+}
+
+/// <summary>
+/// Per-run item log: filter chips by status, sortable columns, and
+/// double-click opens the item in the browser.
+/// </summary>
+public class RunDetailDialog : Form
+{
+    private readonly DataGridView _grid = new();
+    private readonly List<(string Type, string Source, string Target, string Status, string? Message, string? Url)> _rows;
+    private readonly MultiSelectFilter _filter = new(new[] { "Copied", "Skipped", "Warning", "Failed" });
+
+    public RunDetailDialog(long runId)
+    {
+        Text = $"Migration log - run #{runId}";
+        Size = new Size(1040, 640);
+        MinimumSize = new Size(820, 480);
+        StartPosition = FormStartPosition.CenterParent;
+        BackColor = Brand.Surface;
+        Font = Brand.Body;
+        Icon = AppIcon.Create();
+
+        using (var store = new HistoryStore(AppSettings.HistoryDbPath))
+        {
+            _rows = store.GetItems(runId)
+                .Select(i => (i.ItemType, i.SourcePath, i.TargetPath, i.Status, i.Message, i.ItemUrl))
+                .ToList();
+        }
+
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 42, Padding = new Padding(10, 8, 0, 0) };
+        bar.Controls.Add(_filter);
+        var hint = new Label { Text = "Double-click a row to open the item in your browser", AutoSize = true, ForeColor = Brand.TextSecondary, Margin = new Padding(16, 6, 0, 0) };
+        bar.Controls.Add(hint);
+        Controls.Add(bar);
+
+        _grid.Dock = DockStyle.Fill;
+        _grid.ReadOnly = true;
+        _grid.AllowUserToAddRows = false;
+        _grid.RowHeadersVisible = false;
+        _grid.BackgroundColor = Brand.SurfaceAlt;
+        _grid.BorderStyle = BorderStyle.None;
+        _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        foreach (var (name, title, weight) in new[] { ("type", "Type", 10), ("source", "Item", 40), ("status", "Status", 10), ("message", "Detail", 40) })
+            _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = title, FillWeight = weight, SortMode = DataGridViewColumnSortMode.Automatic });
+        Controls.Add(_grid);
+        _grid.BringToFront();
+
+        _filter.SelectionChanged += Render;
+        _grid.CellDoubleClick += (_, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            var url = _grid.Rows[e.RowIndex].Tag as string;
+            if (!string.IsNullOrEmpty(url))
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        };
+        Render();
+    }
+
+    private void Render()
+    {
+        var selected = _filter.SelectedValues;
+        _grid.Rows.Clear();
+        foreach (var row in _rows)
+        {
+            if (selected.Count > 0 && !selected.Contains(row.Status)) continue;
+            var gridRow = _grid.Rows[_grid.Rows.Add(row.Type, row.Source, row.Status, row.Message ?? "")];
+            gridRow.Cells["status"].Style.ForeColor = Brand.StatusColor(row.Status);
+            // The clickable link: explicit item URL when recorded, else the target path.
+            gridRow.Tag = row.Url ?? (row.Target.StartsWith("/") ? null : row.Target);
+        }
+        Text = $"Migration log - {_grid.Rows.Count} of {_rows.Count} rows";
     }
 }
 

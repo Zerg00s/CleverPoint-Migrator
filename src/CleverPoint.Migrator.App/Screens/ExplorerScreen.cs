@@ -106,6 +106,7 @@ public class ExplorerPane : UserControl
         _items.FullRowSelect = true;
         _items.MultiSelect = !isTarget;
         _items.BorderStyle = BorderStyle.None;
+        _items.SmallImageList = FileTypeIcons.Shared;
         _items.Columns.Add("Name", 320);
         _items.Columns.Add("Details", 160);
         _items.DoubleClick += async (_, _) => await DrillAsync();
@@ -143,21 +144,8 @@ public class ExplorerPane : UserControl
         try
         {
             _status.Text = "Connecting...";
-            var saved = _settings.Connections.FirstOrDefault(c =>
-                c.AuthMode == "AppCertificate" && url.StartsWith(new Uri(c.SiteUrl).GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase));
-            if (saved == null)
-            {
-                _status.Text = "No saved connection covers this site (Settings > Connections).";
-                return;
-            }
-            var creds = new Core.Auth.AppCredentials
-            {
-                TenantId = saved.TenantId,
-                AppId = saved.AppId,
-                CertPfxPath = saved.CertPfxPath,
-                CertPassword = string.IsNullOrEmpty(saved.CertPasswordProtected) ? "" : AppSettings.Unprotect(saved.CertPasswordProtected),
-            };
-            Connection = new SpConnection(url, new Core.Auth.CertTokenProvider(creds));
+            // Saved app+cert connects silently; browser mode pops the sign-in.
+            Connection = ConnectionResolver.Resolve(FindForm()!, _settings, url);
             CurrentList = null;
             _currentFolder = null;
             await ShowSiteAsync();
@@ -177,13 +165,14 @@ public class ExplorerPane : UserControl
         _items.Items.Clear();
         foreach (var web in webs)
         {
-            var row = new ListViewItem(new[] { web.Title, "Subsite" }) { Tag = web };
+            var row = new ListViewItem(new[] { web.Title, "Subsite" }, "site") { Tag = web };
             row.ForeColor = Brand.Primary;
             _items.Items.Add(row);
         }
         foreach (var list in lists)
         {
-            var row = new ListViewItem(new[] { list.Title, $"{(list.IsLibrary ? "Library" : "List")}, {list.ItemCount} items" }) { Tag = list };
+            var row = new ListViewItem(new[] { list.Title, $"{(list.IsLibrary ? "Library" : "List")}, {list.ItemCount} items" },
+                list.IsLibrary ? "library" : "list") { Tag = list };
             _items.Items.Add(row);
         }
         _status.Text = $"{webs.Count} subsites, {lists.Count} lists and libraries";
@@ -229,7 +218,7 @@ public class ExplorerPane : UserControl
             {
                 entry.Name,
                 entry.IsFolder ? "Folder" : $"{entry.Size / 1024.0:F0} KB",
-            }) { Tag = entry };
+            }, FileTypeIcons.KeyFor(entry.Name, entry.IsFolder)) { Tag = entry };
             _items.Items.Add(row);
         }
         _status.Text = $"{CurrentList?.Title}: {entries.Count(e => e.IsFolder)} folders, {entries.Count(e => !e.IsFolder)} files"

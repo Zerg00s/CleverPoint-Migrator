@@ -316,10 +316,12 @@ public static class StartupRegistration
 /// <summary>Minimal app+certificate connection editor.</summary>
 public class ConnectionEditor : Form
 {
+    private readonly ComboBox _authMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 350 };
+
     public ConnectionEditor(AppSettings settings)
     {
         Text = "Add connection";
-        Size = new Size(520, 320);
+        Size = new Size(520, 360);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false; MaximizeBox = false;
@@ -335,15 +337,30 @@ public class ConnectionEditor : Form
             ("PFX path", new TextBox()),
             ("PFX password", new TextBox { UseSystemPasswordChar = true }),
         };
+        // Auth mode decides which fields apply: browser sign-in needs only
+        // the name and URL; unattended app+certificate needs everything.
+        Controls.Add(new Label { Text = "Authentication", AutoSize = true, Location = new Point(16, 20) });
+        _authMode.Items.AddRange(new object[] { "Browser sign-in (interactive)", "App + certificate (unattended)" });
+        _authMode.SelectedIndex = 0;
+        _authMode.Location = new Point(130, 16);
+        Controls.Add(_authMode);
+
         for (var i = 0; i < fields.Length; i++)
         {
-            Controls.Add(new Label { Text = fields[i].Label, AutoSize = true, Location = new Point(16, 20 + i * 36) });
-            fields[i].Box.SetBounds(130, 16 + i * 36, i == 4 ? 300 : 350, 26);
+            Controls.Add(new Label { Text = fields[i].Label, AutoSize = true, Location = new Point(16, 56 + i * 36) });
+            fields[i].Box.SetBounds(130, 52 + i * 36, i == 4 ? 300 : 350, 26);
             Controls.Add(fields[i].Box);
         }
+        void ApplyMode()
+        {
+            var cert = _authMode.SelectedIndex == 1;
+            for (var i = 2; i < fields.Length; i++) fields[i].Box.Enabled = cert;
+        }
+        _authMode.SelectedIndexChanged += (_, _) => ApplyMode();
+        ApplyMode();
 
         // PFX path gets a real file browser.
-        var browse = new Button { Text = "Browse...", AutoSize = true, FlatStyle = FlatStyle.Flat, Location = new Point(436, 14 + 4 * 36) };
+        var browse = new Button { Text = "Browse...", AutoSize = true, FlatStyle = FlatStyle.Flat, Location = new Point(436, 50 + 4 * 36) };
         browse.Click += (_, _) =>
         {
             using var dialog = new OpenFileDialog { Filter = "Certificate files (*.pfx)|*.pfx|All files|*.*" };
@@ -355,8 +372,8 @@ public class ConnectionEditor : Form
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true, Padding = new Padding(14, 4, 14, 4), FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White };
         ok.FlatAppearance.BorderSize = 0;
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Padding = new Padding(14, 4, 14, 4), FlatStyle = FlatStyle.Flat };
-        ok.Location = new Point(300, 240);
-        cancel.Location = new Point(396, 240);
+        ok.Location = new Point(290, 280);
+        cancel.Location = new Point(386, 280);
         Controls.AddRange(new Control[] { ok, cancel });
         AcceptButton = ok; CancelButton = cancel;
 
@@ -366,7 +383,7 @@ public class ConnectionEditor : Form
             {
                 Name = fields[0].Box.Text,
                 SiteUrl = fields[1].Box.Text,
-                AuthMode = "AppCertificate",
+                AuthMode = _authMode.SelectedIndex == 1 ? "AppCertificate" : "Browser",
                 TenantId = fields[2].Box.Text,
                 AppId = fields[3].Box.Text,
                 CertPfxPath = fields[4].Box.Text,
