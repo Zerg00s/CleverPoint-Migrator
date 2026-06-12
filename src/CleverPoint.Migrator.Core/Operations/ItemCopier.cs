@@ -341,8 +341,12 @@ public class ItemCopier
                 if (LastScanMaxModifiedUtc == null || itemModified > LastScanMaxModifiedUtc)
                     LastScanMaxModifiedUtc = itemModified;
 
-                if (nameRegexes != null && item.FileSystemObjectType != FileSystemObjectType.Folder)
+                if (nameRegexes != null)
                 {
+                    // Folders are skipped when filtering by name: parents of
+                    // matched files are recreated on demand by the copier, so
+                    // no empty shells appear for unselected folders.
+                    if (item.FileSystemObjectType == FileSystemObjectType.Folder) continue;
                     var leaf = ((string)item["FileRef"]).Split('/')[^1];
                     if (!nameRegexes.Any(r => r.IsMatch(leaf)))
                     {

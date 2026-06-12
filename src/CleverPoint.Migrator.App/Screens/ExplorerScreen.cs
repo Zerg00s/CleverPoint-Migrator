@@ -42,24 +42,49 @@ public class ExplorerScreen : UserControl
 
     private void OnDropMigration(List<SpFolderEntry> items)
     {
-        if (_source.Connection == null || _target.Connection == null || _source.CurrentList == null || _target.CurrentList == null)
+        // The source side needs at least an open list (or a selected one);
+        // the target only needs a connected SITE - copying to a site with a
+        // new title creates a brand-new list there.
+        var sourceList = _source.CurrentList ?? _source.SelectedList;
+        if (_source.Connection == null || _target.Connection == null || sourceList == null)
         {
-            MessageBox.Show(FindForm(), "Open a list or library on both sides first, then drag items across.",
+            MessageBox.Show(FindForm(),
+                "Open (or select) a list or library on the LEFT and connect a site on the RIGHT, then copy.",
                 "Almost there", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        var summary = items.Count == 0
-            ? $"Copy everything in '{_source.CurrentList.Title}' to '{_target.CurrentList.Title}'?"
-            : $"Copy {items.Count} selected item(s) from '{_source.CurrentList.Title}' to '{_target.CurrentList.Title}'?";
-        if (MessageBox.Show(FindForm(), summary + "\n\nMetadata, structure and attachments are preserved.",
+        // Selected files become name filters; one selected folder becomes the scope.
+        var folders = items.Where(i => i.IsFolder).ToList();
+        var files = items.Where(i => !i.IsFolder).ToList();
+        if (folders.Count > 1)
+        {
+            MessageBox.Show(FindForm(),
+                "Copy one folder at a time (or the whole list). Multiple-folder selections aren't supported yet.",
+                "One folder at a time", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var folderScope = folders.Count == 1 ? folders[0].ServerRelativeUrl
+            : files.Count > 0 ? _source.CurrentFolder : null;
+        var patterns = files.Select(f => f.Name).ToList();
+
+        // New list on the SAME site gets " - Copy" so it never collides with the source.
+        var sameSite = string.Equals(_source.Connection.SiteUrl.TrimEnd('/'), _target.Connection.SiteUrl.TrimEnd('/'),
+            StringComparison.OrdinalIgnoreCase);
+        var targetName = _target.CurrentList?.Title ?? (sameSite ? $"{sourceList.Title} - Copy" : sourceList.Title);
+        var what = items.Count == 0 ? $"everything in '{sourceList.Title}'"
+            : folders.Count == 1 ? $"folder '{folders[0].Name}'"
+            : $"{files.Count} selected file(s)";
+        var destination = _target.CurrentList != null
+            ? $"'{_target.CurrentList.Title}'"
+            : $"a new list '{targetName}' on {_target.Connection.SiteUrl}";
+        if (MessageBox.Show(FindForm(), $"Copy {what} to {destination}?\n\nMetadata, structure and attachments are preserved.",
                 "Start migration", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
 
         using var wizard = new MigrationWizard(_settings);
-        wizard.Preset(_source.Connection.SiteUrl, _source.CurrentList.Title,
-            _target.Connection.SiteUrl, _target.CurrentList.Title,
-            items.Where(i => i.IsFolder).Select(i => i.ServerRelativeUrl).FirstOrDefault());
+        wizard.Preset(_source.Connection.SiteUrl, sourceList.Title,
+            _target.Connection.SiteUrl, targetName, folderScope, patterns);
         wizard.ShowDialog(FindForm());
     }
 }
@@ -79,6 +104,14 @@ public class ExplorerPane : UserControl
 
     public SpConnection? Connection { get; private set; }
     public SpListInfo? CurrentList { get; private set; }
+
+    /// <summary>The folder currently open in this pane (null at site level).</summary>
+    public string? CurrentFolder => _currentFolder;
+
+    /// <summary>A list/library ROW selected in the site view (whole-list copy without drilling in).</summary>
+    public SpListInfo? SelectedList =>
+        _items.SelectedItems.Count > 0 ? _items.SelectedItems[0].Tag as SpListInfo : null;
+
     public event Action<List<SpFolderEntry>>? DropReceived;
     public event Action<List<SpFolderEntry>>? CopyRequested;
 

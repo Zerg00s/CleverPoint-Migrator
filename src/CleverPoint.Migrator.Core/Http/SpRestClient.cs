@@ -155,15 +155,47 @@ public class SpRestClient
         await RequestThrottle.WaitTurnAsync(host);
         var request = new HttpRequestMessage(method, url);
         if (_tokens != null)
+        {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await _tokens.GetTokenAsync(host));
+        }
         else if (_cookieHeader != null)
+        {
             request.Headers.TryAddWithoutValidation("Cookie", _cookieHeader);
+            // Cookie-auth WRITES need the form digest (Bearer auth does not);
+            // without it SharePoint answers 403.
+            if (method != HttpMethod.Get)
+                request.Headers.TryAddWithoutValidation("X-RequestDigest", await GetDigestAsync(url));
+        }
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json") { Parameters = { new NameValueHeaderValue("odata", "nometadata") } });
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
         if (extraHeaders != null)
             foreach (var (k, v) in extraHeaders)
                 request.Headers.TryAddWithoutValidation(k, v);
         return request;
+    }
+
+    private readonly Dictionary<string, (string Digest, DateTime ExpiresUtc)> _digests = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Form digest for cookie-auth writes, cached per site (~20 min).</summary>
+    private async Task<string> GetDigestAsync(string requestUrl)
+    {
+        var apiIndex = requestUrl.IndexOf("/_api/", StringComparison.OrdinalIgnoreCase);
+        var siteUrl = apiIndex > 0 ? requestUrl[..apiIndex] : new Uri(requestUrl).GetLeftPart(UriPartial.Authority);
+        if (_digests.TryGetValue(siteUrl, out var cached) && cached.ExpiresUtc > DateTime.UtcNow.AddMinutes(2))
+            return cached.Digest;
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{siteUrl}/_api/contextinfo");
+        request.Headers.TryAddWithoutValidation("Cookie", _cookieHeader);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json") { Parameters = { new NameValueHeaderValue("odata", "nometadata") } });
+        var response = await _http.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+            throw new SpRestException((int)response.StatusCode, $"{siteUrl}/_api/contextinfo", body.Length > 800 ? body[..800] : body);
+        using var doc = JsonDocument.Parse(body);
+        var digest = doc.RootElement.GetProperty("FormDigestValue").GetString()!;
+        var seconds = doc.RootElement.TryGetProperty("FormDigestTimeoutSeconds", out var t) ? t.GetInt32() : 1800;
+        _digests[siteUrl] = (digest, DateTime.UtcNow.AddSeconds(seconds));
+        return digest;
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, string url)

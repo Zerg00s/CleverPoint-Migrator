@@ -22,6 +22,7 @@ public class MigrationWizard : Form
     private readonly TextBox _sourceList = new() { Width = 250 };
     private readonly TextBox _targetSite = new() { Width = 420 };
     private readonly TextBox _targetList = new() { Width = 250 };
+    private readonly TextBox _targetUrl = new() { Width = 250 };
     private readonly ComboBox _engine = new() { Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly CheckBox _preserve = new() { Text = "Preserve authors and dates", Checked = true, AutoSize = true };
     private readonly CheckBox _attachments = new() { Text = "Copy attachments", Checked = true, AutoSize = true };
@@ -30,21 +31,30 @@ public class MigrationWizard : Form
     private readonly DataGridView _log = new();
     private readonly ProgressBar _progress = new() { Style = ProgressBarStyle.Marquee, Width = 420, Visible = false };
     private readonly Label _status = new() { AutoSize = true, ForeColor = Brand.TextSecondary };
-    private readonly Button _run = new() { Text = "Start migration", Width = 160, Height = 40, BackColor = Brand.Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+    private readonly Button _run = new() { Text = "Copy structure + content", AutoSize = true, Padding = new Padding(16, 9, 16, 9), BackColor = Brand.Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+    private readonly Button _runContent = new() { Text = "Copy content only", AutoSize = true, Padding = new Padding(16, 9, 16, 9), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 0, 0, 0) };
     private readonly Button _cancel = new() { Text = "Cancel run", Width = 110, Height = 40, Visible = false, FlatStyle = FlatStyle.Flat };
     private CancellationTokenSource? _cts;
 
     /// <summary>Prefills the wizard from the explorer (drag-drop or selection).</summary>
-    public void Preset(string sourceSite, string sourceList, string targetSite, string targetList, string? sourceFolder = null)
+    public void Preset(string sourceSite, string sourceList, string targetSite, string targetList,
+        string? sourceFolder = null, List<string>? namePatterns = null)
     {
         _sourceSite.Text = sourceSite;
         _sourceList.Text = sourceList;
         _targetSite.Text = targetSite;
         _targetList.Text = targetList;
         _sourceFolderScope = sourceFolder;
+        _namePatterns = namePatterns ?? new List<string>();
+        var scope = new List<string>();
+        if (sourceFolder != null) scope.Add($"folder {sourceFolder.Split('/')[^1]}");
+        if (_namePatterns.Count > 0) scope.Add($"only: {string.Join(", ", _namePatterns.Take(5))}{(_namePatterns.Count > 5 ? "..." : "")}");
+        _scopeInfo.Text = scope.Count > 0 ? "Scope: " + string.Join("; ", scope) : "";
     }
 
     private string? _sourceFolderScope;
+    private List<string> _namePatterns = new();
+    private readonly Label _scopeInfo = new() { AutoSize = true, ForeColor = Brand.TextSecondary };
 
     public MigrationWizard(AppSettings settings)
     {
@@ -62,21 +72,34 @@ public class MigrationWizard : Form
         var browseSource = BrowseButton("source", _sourceSite, _sourceList);
         layout.Controls.Add(browseSource, 4, 0);
         layout.Controls.Add(Lbl("Target site URL"), 0, 1); layout.Controls.Add(_targetSite, 1, 1);
-        layout.Controls.Add(Lbl("Target list name"), 2, 1); layout.Controls.Add(_targetList, 3, 1);
+        layout.Controls.Add(Lbl("Target list title"), 2, 1); layout.Controls.Add(_targetList, 3, 1);
         var browseTarget = BrowseButton("target", _targetSite, _targetList);
         layout.Controls.Add(browseTarget, 4, 1);
+        // New lists get both a Title and a URL; existing targets ignore the URL.
+        layout.Controls.Add(Lbl("Target list URL"), 2, 2); layout.Controls.Add(_targetUrl, 3, 2);
         layout.Controls.Add(Lbl("Engine"), 0, 2); layout.Controls.Add(_engine, 1, 2);
+        layout.Controls.Add(_scopeInfo, 1, 3);
+        layout.SetColumnSpan(_scopeInfo, 3);
+
+        // Suggest a URL leaf from the title until the user edits the URL.
+        var urlTouched = false;
+        _targetUrl.TextChanged += (_, _) => { if (_targetUrl.Focused) urlTouched = true; };
+        _targetList.TextChanged += (_, _) =>
+        {
+            if (!urlTouched)
+                _targetUrl.Text = string.Concat(_targetList.Text.Where(char.IsLetterOrDigit));
+        };
 
         var opts = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
         opts.Controls.AddRange(new Control[] { _preserve, _attachments, _permissions, _contentOnly });
-        layout.Controls.Add(opts, 1, 3);
+        layout.Controls.Add(opts, 1, 4);
         layout.SetColumnSpan(opts, 3);
 
         var actions = new FlowLayoutPanel { AutoSize = true };
-        actions.Controls.AddRange(new Control[] { _run, _cancel, _progress });
-        layout.Controls.Add(actions, 1, 4);
+        actions.Controls.AddRange(new Control[] { _run, _runContent, _cancel, _progress });
+        layout.Controls.Add(actions, 1, 5);
         layout.SetColumnSpan(actions, 3);
-        layout.Controls.Add(_status, 1, 5);
+        layout.Controls.Add(_status, 1, 6);
         layout.SetColumnSpan(_status, 3);
 
         ConfigureLogGrid();
@@ -93,7 +116,8 @@ public class MigrationWizard : Form
         });
         _engine.SelectedIndex = 0;
         _run.FlatAppearance.BorderSize = 0;
-        _run.Click += async (_, _) => await RunAsync();
+        _run.Click += async (_, _) => await RunAsync(contentOnly: false);
+        _runContent.Click += async (_, _) => await RunAsync(contentOnly: true);
         _cancel.Click += (_, _) => ConfirmCancel();
     }
 
@@ -107,10 +131,32 @@ public class MigrationWizard : Form
             {
                 site.Text = picker.SelectedSiteUrl;
                 list.Text = picker.SelectedListTitle;
+                if (role == "source")
+                    SuggestTargetTitle();
             }
         };
         return button;
     }
+
+    /// <summary>
+    /// Saves typing: once a source is picked, the target title (and via the
+    /// auto-suggest, the URL) follows it. Same-site copies get " - Copy" so the
+    /// new list never collides with the source.
+    /// </summary>
+    private void SuggestTargetTitle()
+    {
+        if (_sourceList.Text.Length == 0) return;
+        var sameSite = string.Equals(_sourceSite.Text.TrimEnd('/'), _targetSite.Text.TrimEnd('/'),
+            StringComparison.OrdinalIgnoreCase);
+        var suggestion = sameSite ? $"{_sourceList.Text} - Copy" : _sourceList.Text;
+        if (_targetList.Text.Length == 0 || _targetList.Text == _lastSuggestedTitle)
+        {
+            _targetList.Text = suggestion;
+            _lastSuggestedTitle = suggestion;
+        }
+    }
+
+    private string? _lastSuggestedTitle;
 
     private static Label Lbl(string text) => new()
     {
@@ -140,7 +186,7 @@ public class MigrationWizard : Form
 
     private SpConnection Connect(string siteUrl) => ConnectionResolver.Resolve(this, _settings, siteUrl);
 
-    private async Task RunAsync()
+    private async Task RunAsync(bool contentOnly)
     {
         if (_sourceSite.Text.Length == 0 || _sourceList.Text.Length == 0 || _targetSite.Text.Length == 0)
         {
@@ -188,11 +234,17 @@ public class MigrationWizard : Form
         var options = new CopyOptions
         {
             TargetListTitle = targetTitle,
+            TargetListUrl = _targetUrl.Text.Trim().Length > 0 ? _targetUrl.Text.Trim() : null,
             PreserveAuthorsAndDates = _preserve.Checked,
             CopyAttachments = _attachments.Checked,
             CopyPermissions = _permissions.Checked,
             CopyContent = !_contentOnly.Checked,
+            // "Copy content only" leaves the target's views and settings alone;
+            // fields still merge so item values have somewhere to land.
+            CopyViews = !contentOnly,
+            CopyListSettings = !contentOnly,
             SourceFolderServerRelativeUrl = _sourceFolderScope,
+            NamePatterns = _namePatterns,
         };
 
         var status = "Completed";
@@ -229,6 +281,17 @@ public class MigrationWizard : Form
         {
             status = "Interrupted";
             _status.Text = "Run cancelled. You can resume it from History.";
+        }
+        catch (Exception ex) when (ex.Message.Contains("403") || ex.Message.Contains("401")
+            || ex.Message.Contains("Unauthorized") || ex.Message.Contains("Access denied", StringComparison.OrdinalIgnoreCase))
+        {
+            status = "Failed";
+            // A stale browser session is the usual culprit; the next run
+            // re-prompts for sign-in.
+            ConnectionResolver.InvalidateBrowserSession(_sourceSite.Text);
+            ConnectionResolver.InvalidateBrowserSession(_targetSite.Text);
+            _status.Text = "Access was denied. Your sign-in session may have expired - " +
+                "click Start again to sign in fresh. If it persists, check your permissions on both sites.";
         }
         catch (Exception ex)
         {
