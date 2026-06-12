@@ -140,7 +140,7 @@ public class HomeScreen : UserControl
         };
         var addConnection = new Button
         {
-            Text = "Add your first connection",
+            Text = "Add connection",
             AutoSize = true,
             Padding = new Padding(28, 14, 28, 14),
             BackColor = Brand.Accent,

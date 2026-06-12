@@ -139,7 +139,7 @@ public class SettingsScreen : UserControl
                    "is for unattended or scheduled copies.",
             AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(20, 252),
         });
-        var add = LinkButton("Add a connection (browser sign-in, no Azure app needed)...", 308);
+        var add = LinkButton("Add connection...", 308);
         var provision = LinkButton("Set up a NEW Azure app for me (Global Admin wizard)...", 340);
         provision.Click += (_, _) =>
         {
