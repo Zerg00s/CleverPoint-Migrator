@@ -13,6 +13,7 @@ namespace CleverPoint.Migrator.App.Services;
 public static class ConnectionResolver
 {
     private static readonly Dictionary<string, SpConnection> BrowserSessions = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> FreshSignInHosts = new(StringComparer.OrdinalIgnoreCase);
 
     public static SpConnection Resolve(IWin32Window owner, AppSettings settings, string siteUrl)
     {
@@ -37,13 +38,20 @@ public static class ConnectionResolver
         // Browser mode (explicitly saved, or no saved connection at all).
         if (BrowserSessions.TryGetValue(host, out var session))
             return session.ForWeb(siteUrl);
-        var connected = BrowserLoginForm.Connect(owner, siteUrl)
+        // After an invalidation the WebView2 cookie jar must be wiped too,
+        // or silent SSO re-captures the same dead cookies with no prompt.
+        var forceFresh = FreshSignInHosts.Remove(host);
+        var connected = BrowserLoginForm.Connect(owner, siteUrl, forceFresh)
             ?? throw new InvalidOperationException("Sign-in was cancelled.");
         BrowserSessions[host] = connected;
         return connected;
     }
 
-    /// <summary>Call when a browser session 401s mid-run; the next Resolve re-prompts.</summary>
-    public static void InvalidateBrowserSession(string siteUrl) =>
-        BrowserSessions.Remove(new Uri(siteUrl).Host);
+    /// <summary>Call when a browser session 401s mid-run; the next Resolve signs in FRESH (cookie jar wiped).</summary>
+    public static void InvalidateBrowserSession(string siteUrl)
+    {
+        var host = new Uri(siteUrl).Host;
+        BrowserSessions.Remove(host);
+        FreshSignInHosts.Add(host);
+    }
 }
