@@ -251,18 +251,31 @@ public class ExplorerPane : UserControl
     {
         var url = _siteUrl.Text.Trim().TrimEnd('/');
         if (url.Length == 0) return;
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            _status.Text = "Connecting...";
-            // Saved app+cert connects silently; browser mode pops the sign-in.
-            Connection = ConnectionResolver.Resolve(FindForm()!, _settings, url);
-            CurrentList = null;
-            _currentFolder = null;
-            await ShowSiteAsync();
-        }
-        catch (Exception ex)
-        {
-            _status.Text = $"Could not connect: {ex.Message}";
+            try
+            {
+                _status.Text = "Connecting...";
+                // Saved app+cert connects silently; browser mode pops the sign-in.
+                Connection = ConnectionResolver.Resolve(FindForm()!, _settings, url);
+                CurrentList = null;
+                _currentFolder = null;
+                await ShowSiteAsync();
+                return;
+            }
+            catch (Exception ex) when (attempt == 1
+                && (ex.Message.Contains("401") || ex.Message.Contains("403")
+                    || ex.Message.Contains("Unauthorized")))
+            {
+                // The cached browser session expired: drop it and sign in fresh.
+                ConnectionResolver.InvalidateBrowserSession(url);
+                _status.Text = "Your sign-in session expired - signing in again...";
+            }
+            catch (Exception ex)
+            {
+                _status.Text = $"Could not connect: {Short(ex.Message)}";
+                return;
+            }
         }
     }
 

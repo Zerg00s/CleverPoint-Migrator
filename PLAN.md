@@ -107,6 +107,10 @@ Windows, [ ] not done yet.
 - [x] Advanced tab has real settings now (self-healing toggles)
 - [x] Parallel-migrations setting explained inline; queueing note
 - [x] Connection test-on-add, reconnect, expiry display, launch health sweep
+- [x] Expired browser sessions recover: explorer re-prompts sign-in,
+      connection status says "Sign-in expired" instead of a raw 401
+- [x] Splash logo rendered as per-pixel alpha layered window (no pink
+      fringe, no pixely edge)
 - [x] In-app Azure app provisioning wizard
 - [x] Diagnostics Start/Stop capture (zip), DbgView trace logging
 - [x] Update check + About + GitHub Help/Issues links

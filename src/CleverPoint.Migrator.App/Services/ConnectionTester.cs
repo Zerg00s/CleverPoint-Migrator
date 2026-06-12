@@ -31,6 +31,16 @@ public static class ConnectionTester
             connection.LastVerifiedUtc = DateTime.UtcNow;
             return (true, $"Connected to '{title}'.");
         }
+        catch (Exception ex) when (connection.AuthMode == "Browser"
+            && (ex.Message.Contains("401") || ex.Message.Contains("403") || ex.Message.Contains("Unauthorized")))
+        {
+            // An expired sign-in session is normal for browser mode, not an
+            // error state. The next use (or Reconnect) pops the sign-in again.
+            ConnectionResolver.InvalidateBrowserSession(connection.SiteUrl);
+            connection.LastStatus = "Sign-in expired - you'll be asked to sign in on next use";
+            connection.LastVerifiedUtc = DateTime.UtcNow;
+            return (true, "The sign-in session expired. Use Reconnect, or just use the connection and sign in when prompted.");
+        }
         catch (Exception ex)
         {
             var brief = ex.Message.Length > 160 ? ex.Message[..160] : ex.Message;
