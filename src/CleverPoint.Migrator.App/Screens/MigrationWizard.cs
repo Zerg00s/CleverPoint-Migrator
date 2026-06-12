@@ -66,6 +66,19 @@ public class MigrationWizard : Form
     private long? _resumeRunId;
 
     /// <summary>
+    /// Copying INTO an existing target list: structure creation makes no sense
+    /// there, so content-only becomes the one primary action.
+    /// </summary>
+    public void UseContentOnly()
+    {
+        _run.Visible = false;
+        _runContent.BackColor = Brand.Accent;
+        _runContent.ForeColor = Color.White;
+        _runContent.FlatAppearance.BorderSize = 0;
+        _runContent.Text = "Start copy";
+    }
+
+    /// <summary>
     /// Reopens a history run in the wizard ("return to session"). Delta mode
     /// pre-arms the incremental baseline; an Interrupted run resumes by
     /// skipping everything its first attempt already copied.
@@ -242,6 +255,7 @@ public class MigrationWizard : Form
         var targetTitle = _targetList.Text.Length > 0 ? _targetList.Text : _sourceList.Text;
 
         _run.Enabled = false;
+        _runContent.Enabled = false;
         _cancel.Visible = true;
         _progress.Visible = true;
         _log.Rows.Clear();
@@ -368,6 +382,7 @@ public class MigrationWizard : Form
             store.SaveItemMap(pairKey, result.ItemMappings);
             store.FinishRun(runId, result, status);
             _run.Enabled = true;
+            _runContent.Enabled = true;
             _cancel.Visible = false;
             _progress.Visible = false;
             if (status is "Completed" or "CompletedWithIssues")

@@ -98,6 +98,9 @@ public class ExplorerScreen : UserControl
         using var wizard = new MigrationWizard(_settings);
         wizard.Preset(_source.Connection.SiteUrl, sourceList.Title,
             _target.Connection.SiteUrl, targetName, folderScope, selectedPaths, itemIds);
+        // An existing target list was opened: this is clearly a content copy.
+        if (_target.CurrentList != null)
+            wizard.UseContentOnly();
         wizard.ShowDialog(FindForm());
     }
 }

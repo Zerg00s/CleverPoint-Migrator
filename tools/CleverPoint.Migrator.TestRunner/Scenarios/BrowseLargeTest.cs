@@ -56,5 +56,19 @@ public static class BrowseLargeTest
         var sampleName = first.ValueKind == JsonValueKind.Object ? first.GetProperty("FileLeafRef").GetString() : "(none)";
         Program.Check("browse-large: RenderListDataAsStream returns a page", rows > 0 && rows <= 500,
             $"{rows} rows, first: {sampleName}");
+
+        // The explorer's generic-list item listing (the exact URL shape the
+        // app uses - $orderby must say ID, not Id).
+        using var listsDoc = await conn.Rest.GetJsonAsync(
+            $"{conn.SiteUrl}/_api/web/lists?$select=Title,BaseType,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder&$filter=Hidden eq false&$top=500");
+        var genericList = listsDoc.RootElement.GetProperty("value").EnumerateArray()
+            .First(e => e.GetProperty("BaseType").GetInt32() == 0);
+        var listRoot = genericList.GetProperty("RootFolder").GetProperty("ServerRelativeUrl").GetString()!;
+        var escapedGeneric = Uri.EscapeDataString(listRoot.Replace("'", "''"));
+        using var itemsDoc = await conn.Rest.GetJsonAsync(
+            $"{conn.SiteUrl}/_api/web/GetList(@a2)/items?$select=Id,Title&$orderby=ID desc&$top=500&@a2='{escapedGeneric}'");
+        var itemRows = itemsDoc.RootElement.GetProperty("value").GetArrayLength();
+        Program.Check("browse-large: generic list items listing (explorer URL shape)", true,
+            $"{genericList.GetProperty("Title").GetString()}: {itemRows} items");
     }
 }

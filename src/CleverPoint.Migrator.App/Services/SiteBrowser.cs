@@ -123,8 +123,10 @@ public class SiteBrowser
     public async Task<List<SpFolderEntry>> GetListItemsAsync(SpConnection conn, SpListInfo list)
     {
         var escaped = Uri.EscapeDataString(list.ServerRelativeUrl.Replace("'", "''"));
+        // GetList takes the path via @alias (decodedUrl= is only a folder-API
+        // parameter and 400s here); $orderby speaks FIELD internal names (ID).
         using var doc = await conn.Rest.GetJsonAsync(
-            $"{conn.SiteUrl}/_api/web/GetList(decodedUrl='{escaped}')/items?$select=Id,Title&$orderby=Id desc&$top=500");
+            $"{conn.SiteUrl}/_api/web/GetList(@a1)/items?$select=Id,Title&$orderby=ID desc&$top=500&@a1='{escaped}'");
         return doc.RootElement.GetProperty("value").EnumerateArray()
             .Select(e =>
             {
