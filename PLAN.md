@@ -113,6 +113,18 @@ Windows, [ ] not done yet.
 - [x] Field mapping per task (source internal column -> target internal
       column; values write to the mapped column)
 
+## Investigations
+
+- [x] "Create new document" server error on migrated-into libraries:
+      newdoc-lab built native vs engine-created vs engine-merged libraries
+      side by side on the affected site. Result: ZERO differing list
+      properties, identical Forms folders (template.dotx 11107 bytes),
+      identical content types, and doc.aspx renders HTTP 200 for all three.
+      The engine does not corrupt target libraries; the browser-side error
+      reproduces only under Denis's signed-in session (suspects: stale
+      session cookies, Brave shields, license/Office Online). Control test
+      with the Probe* libraries pending.
+
 ## App shell and polish
 
 - [x] Nav menu highlights the active screen

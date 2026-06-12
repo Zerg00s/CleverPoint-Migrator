@@ -40,6 +40,7 @@ public static class Program
             ["content-only"] = Scenarios.ContentOnlyTest.RunAsync,
             ["count-probe"] = Scenarios.CountProbe.RunAsync,
             ["meta-fallback"] = Scenarios.DocMetaFallbackTest.RunAsync,
+            ["newdoc-lab"] = Scenarios.NewDocLab.RunAsync,
             ["copy-lib"] = Scenarios.SameSiteCopyTests.CopyLibraryAsync,
             ["inspect"] = Scenarios.InspectScenario.RunAsync,
             ["copy-cross"] = Scenarios.CrossTenantCopyTests.RunAsync,
