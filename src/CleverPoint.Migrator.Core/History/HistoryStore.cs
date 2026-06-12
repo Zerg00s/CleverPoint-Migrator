@@ -66,6 +66,8 @@ public class HistoryStore : IDisposable
         catch (SqliteException) { /* column already there */ }
         try { Exec("ALTER TABLE runs ADD COLUMN scope_json TEXT"); }
         catch (SqliteException) { /* column already there */ }
+        try { Exec("ALTER TABLE run_items ADD COLUMN ts TEXT"); }
+        catch (SqliteException) { /* column already there */ }
     }
 
     public long StartRun(MigrationRun run)
@@ -92,9 +94,10 @@ public class HistoryStore : IDisposable
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO run_items(run_id, item_type, source_path, target_path, status, message, size_bytes, duration_ms, item_url)
-            VALUES($r, $t, $sp, $tp, $s, $m, $b, $d, $u)
+            INSERT INTO run_items(run_id, item_type, source_path, target_path, status, message, size_bytes, duration_ms, item_url, ts)
+            VALUES($r, $t, $sp, $tp, $s, $m, $b, $d, $u, $ts)
             """;
+        cmd.Parameters.AddWithValue("$ts", rec.TimestampUtc == default ? DateTime.UtcNow.ToString("o") : rec.TimestampUtc.ToString("o"));
         cmd.Parameters.AddWithValue("$r", runId);
         cmd.Parameters.AddWithValue("$t", rec.ItemType);
         cmd.Parameters.AddWithValue("$sp", rec.SourcePath);
@@ -169,33 +172,35 @@ public class HistoryStore : IDisposable
         return paths;
     }
 
-    public List<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl)> GetItems(long runId, string? status = null)
+    public List<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> GetItems(long runId, string? status = null)
     {
-        var items = new List<(string, string, string, string, string?, string?)>();
+        var items = new List<(string, string, string, string, string?, string?, DateTime?)>();
         using var cmd = _db.CreateCommand();
-        cmd.CommandText = "SELECT item_type,source_path,target_path,status,message,item_url FROM run_items WHERE run_id=$r"
+        cmd.CommandText = "SELECT item_type,source_path,target_path,status,message,item_url,ts FROM run_items WHERE run_id=$r"
             + (status != null ? " AND status=$s" : "");
         cmd.Parameters.AddWithValue("$r", runId);
         if (status != null) cmd.Parameters.AddWithValue("$s", status);
         using var r = cmd.ExecuteReader();
         while (r.Read())
             items.Add((r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3),
-                r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5)));
+                r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5),
+                r.IsDBNull(6) ? null : DateTime.Parse(r.GetString(6)).ToUniversalTime()));
         return items;
     }
 
     /// <summary>Full log export as CSV (Excel-friendly, quoted).</summary>
     public void ExportRunCsv(long runId, string path)
     {
-        var sb = new StringBuilder("ItemType,SourcePath,TargetPath,Status,Message,SizeBytes,DurationMs,ItemUrl\n");
+        var sb = new StringBuilder("ItemType,SourcePath,TargetPath,Status,Message,SizeBytes,DurationMs,ItemUrl,WhenUtc\n");
         using var cmd = _db.CreateCommand();
-        cmd.CommandText = "SELECT item_type,source_path,target_path,status,message,size_bytes,duration_ms,item_url FROM run_items WHERE run_id=$r";
+        cmd.CommandText = "SELECT item_type,source_path,target_path,status,message,size_bytes,duration_ms,item_url,ts FROM run_items WHERE run_id=$r";
         cmd.Parameters.AddWithValue("$r", runId);
         using var r = cmd.ExecuteReader();
         static string Q(string? s) => "\"" + (s ?? "").Replace("\"", "\"\"") + "\"";
         while (r.Read())
             sb.AppendLine(string.Join(',', Q(r.GetString(0)), Q(r.GetString(1)), Q(r.GetString(2)), Q(r.GetString(3)),
-                Q(r.IsDBNull(4) ? "" : r.GetString(4)), r.GetInt64(5), r.GetInt64(6), Q(r.IsDBNull(7) ? "" : r.GetString(7))));
+                Q(r.IsDBNull(4) ? "" : r.GetString(4)), r.GetInt64(5), r.GetInt64(6), Q(r.IsDBNull(7) ? "" : r.GetString(7)),
+                Q(r.FieldCount > 8 && !r.IsDBNull(8) ? r.GetString(8) : "")));
         File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
     }
 

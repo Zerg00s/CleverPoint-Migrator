@@ -180,7 +180,7 @@ public class HistoryScreen : UserControl
 public class RunDetailDialog : Form
 {
     private readonly DataGridView _grid = new();
-    private readonly List<(string Type, string Source, string Target, string Status, string? Message, string? Url)> _rows;
+    private readonly List<(string Type, string Source, string Target, string Status, string? Message, string? Url, DateTime? WhenUtc)> _rows;
     private readonly MultiSelectFilter _filter = new(new[] { "Copied", "Skipped", "Warning", "Failed" });
 
     public RunDetailDialog(long runId)
@@ -196,7 +196,7 @@ public class RunDetailDialog : Form
         using (var store = new HistoryStore(AppSettings.HistoryDbPath))
         {
             _rows = store.GetItems(runId)
-                .Select(i => (i.ItemType, i.SourcePath, i.TargetPath, i.Status, i.Message, i.ItemUrl))
+                .Select(i => (i.ItemType, i.SourcePath, i.TargetPath, i.Status, i.Message, i.ItemUrl, i.WhenUtc))
                 .ToList();
         }
 
@@ -214,7 +214,7 @@ public class RunDetailDialog : Form
         _grid.BorderStyle = BorderStyle.None;
         _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-        foreach (var (name, title, weight) in new[] { ("type", "Type", 10), ("source", "Item", 40), ("status", "Status", 10), ("message", "Detail", 40) })
+        foreach (var (name, title, weight) in new[] { ("type", "Type", 9), ("source", "Item", 36), ("when", "When", 13), ("status", "Status", 9), ("message", "Detail", 33) })
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = title, FillWeight = weight, SortMode = DataGridViewColumnSortMode.Automatic });
         Controls.Add(_grid);
         _grid.BringToFront();
@@ -238,7 +238,8 @@ public class RunDetailDialog : Form
         foreach (var row in _rows)
         {
             if (selected.Count > 0 && !selected.Contains(row.Status)) continue;
-            var gridRow = _grid.Rows[_grid.Rows.Add(row.Type, row.Source, row.Status, row.Message ?? "")];
+            var gridRow = _grid.Rows[_grid.Rows.Add(row.Type, row.Source,
+                row.WhenUtc?.ToLocalTime().ToString("g") ?? "", row.Status, row.Message ?? "")];
             gridRow.Cells["status"].Style.ForeColor = Brand.StatusColor(row.Status);
             // The clickable link: explicit item URL when recorded, else the target path.
             gridRow.Tag = row.Url ?? (row.Target.StartsWith("/") ? null : row.Target);

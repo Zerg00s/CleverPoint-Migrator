@@ -344,8 +344,10 @@ public class FileCopier
             _metadataProbeDone = true;
             var intended = ItemCopier.ToWriteDate(sourceItem["Modified"]);
             var actual = await ReadServerModifiedAsync(targetPath);
-            if (actual != null && Math.Abs((actual.Value - intended).TotalMinutes) > 2)
+            // DateTime subtraction ignores Kind: compare true instants only.
+            if (actual != null && Math.Abs((actual.Value.ToUniversalTime() - intended.ToUniversalTime()).TotalMinutes) > 2)
             {
+                System.Diagnostics.Trace.WriteLine($"[CPMigrator] metadata probe mismatch: intended={intended:o} actual={actual:o} path={targetPath}");
                 _useFormUpdateMetadata = true;
                 await _itemCopier.ApplyDocumentMetadataFormUpdateAsync(sourceItem, targetItem, result, fileRef);
                 result.Add("File", fileRef, "", Model.ItemCopyStatus.Warning,
@@ -355,7 +357,7 @@ public class FileCopier
                 // Verify the fallback actually took; if even that is refused,
                 // say so in words instead of pretending it worked.
                 var healed = await ReadServerModifiedAsync(targetPath);
-                if (healed == null || Math.Abs((healed.Value - intended).TotalMinutes) > 2)
+                if (healed == null || Math.Abs((healed.Value.ToUniversalTime() - intended.ToUniversalTime()).TotalMinutes) > 2)
                     result.Add("File", fileRef, "", Model.ItemCopyStatus.Warning,
                         "this site refuses metadata preservation under the current sign-in. "
                         + "Connect with app + certificate to preserve authors and dates.");

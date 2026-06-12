@@ -17,15 +17,22 @@ public static class ContentOnlyTest
         using (var ctx = site.CreateContext())
         {
             await TestAssets.DeleteIfExistsAsync(ctx, "MigTest-ContentOnly");
-            // A bare list with ONE custom sentinel column and nothing else.
-            var list = ctx.Web.Lists.Add(new ListCreationInformation
-            {
-                Title = "MigTest-ContentOnly", TemplateType = 100, Url = "Lists/MigTestContentOnly",
-            });
-            list.Fields.AddFieldAsXml(
-                "<Field Type='Text' DisplayName='SentinelCol' Name='SentinelCol' StaticName='SentinelCol'/>",
-                true, AddFieldOptions.AddFieldToDefaultView);
+            // Retention may block the delete (clear+reuse tenant): re-create
+            // only when truly gone, otherwise reuse the cleared list.
+            var lists = ctx.Web.Lists;
+            ctx.Load(lists, ls => ls.Include(l => l.Title));
             await ctx.ExecuteQueryAsync();
+            if (!lists.AsEnumerable().Any(l => l.Title.Equals("MigTest-ContentOnly", StringComparison.OrdinalIgnoreCase)))
+            {
+                var list = ctx.Web.Lists.Add(new ListCreationInformation
+                {
+                    Title = "MigTest-ContentOnly", TemplateType = 100, Url = "Lists/MigTestContentOnly",
+                });
+                list.Fields.AddFieldAsXml(
+                    "<Field Type='Text' DisplayName='SentinelCol' Name='SentinelCol' StaticName='SentinelCol'/>",
+                    true, AddFieldOptions.AddFieldToDefaultView);
+                await ctx.ExecuteQueryAsync();
+            }
         }
 
         int fieldsBefore;

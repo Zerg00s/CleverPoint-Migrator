@@ -85,6 +85,23 @@ public class MigrationWizard : Form
     private List<int> _itemIds = new();
     private DateTime? _deltaBaselineUtc;
     private long? _resumeRunId;
+    private readonly List<string> _batchLists = new();
+    private bool _batchMode;
+
+    /// <summary>Several lists/libraries in one task: per-list runs, shared options.</summary>
+    public void PresetBatch(string sourceSite, string targetSite, List<string> listTitles)
+    {
+        _sourceSite.Text = sourceSite;
+        _targetSite.Text = targetSite;
+        _batchLists.Clear();
+        _batchLists.AddRange(listTitles);
+        _sourceList.Text = $"{listTitles.Count} lists/libraries";
+        _sourceList.ReadOnly = true;
+        _targetList.Text = "(named per list automatically)";
+        _targetList.ReadOnly = true;
+        _targetUrl.ReadOnly = true;
+        _scopeInfo.Text = "Batch: " + string.Join(", ", listTitles.Take(6)) + (listTitles.Count > 6 ? ", ..." : "");
+    }
 
     /// <summary>
     /// Copying INTO an existing target list: structure creation makes no sense
@@ -240,8 +257,8 @@ public class MigrationWizard : Form
             secondary.FlatAppearance.BorderColor = Color.FromArgb(0xC6, 0xCE, 0xD6);
             secondary.FlatAppearance.BorderSize = 1;
         }
-        _run.Click += async (_, _) => await RunAsync(contentOnly: false);
-        _runContent.Click += async (_, _) => await RunAsync(contentOnly: true);
+        _run.Click += async (_, _) => { if (_batchLists.Count > 0) await RunBatchAsync(false); else await RunAsync(false); };
+        _runContent.Click += async (_, _) => { if (_batchLists.Count > 0) await RunBatchAsync(true); else await RunAsync(true); };
         _cancel.Click += (_, _) => ConfirmCancel();
     }
 
@@ -300,12 +317,14 @@ public class MigrationWizard : Form
         _log.VirtualMode = false;
         _log.Columns.Add("type", "Type");
         _log.Columns.Add("path", "Item");
+        _log.Columns.Add("when", "Time");
         _log.Columns.Add("status", "Status");
         _log.Columns.Add("message", "Detail");
-        _log.Columns[0].FillWeight = 12;
-        _log.Columns[1].FillWeight = 46;
-        _log.Columns[2].FillWeight = 12;
-        _log.Columns[3].FillWeight = 30;
+        _log.Columns[0].FillWeight = 11;
+        _log.Columns[1].FillWeight = 42;
+        _log.Columns[2].FillWeight = 10;
+        _log.Columns[3].FillWeight = 11;
+        _log.Columns[4].FillWeight = 26;
         GridClipboard.Attach(_log);
         // Double-click any row to open the item in the browser.
         _log.CellDoubleClick += (_, e) =>
@@ -324,7 +343,44 @@ public class MigrationWizard : Form
 
     private SpConnection Connect(string siteUrl) => ConnectionResolver.Resolve(this, _settings, siteUrl);
 
-    private async Task RunAsync(bool contentOnly)
+    /// <summary>Runs every list in the batch sequentially; one history run per list.</summary>
+    private async Task RunBatchAsync(bool contentOnly)
+    {
+        if (_sourceSite.Text.Length == 0 || _targetSite.Text.Length == 0)
+        {
+            _status.Text = "Fill in the source and target site URLs first.";
+            return;
+        }
+        _batchMode = true;
+        _run.Enabled = false;
+        _runContent.Enabled = false;
+        _log.Rows.Clear();
+        var sameSite = string.Equals(_sourceSite.Text.TrimEnd('/'), _targetSite.Text.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            for (var i = 0; i < _batchLists.Count; i++)
+            {
+                var title = _batchLists[i];
+                _sourceList.ReadOnly = false; _targetList.ReadOnly = false; _targetUrl.ReadOnly = false;
+                _sourceList.Text = title;
+                var targetTitle = sameSite ? $"{title} - Copy" : title;
+                _targetList.Text = targetTitle;
+                _targetUrl.Text = string.Concat(targetTitle.Where(char.IsLetterOrDigit));
+                _sourceList.ReadOnly = true; _targetList.ReadOnly = true; _targetUrl.ReadOnly = true;
+                _status.Text = $"Batch {i + 1}/{_batchLists.Count}: {title}...";
+                await RunAsync(contentOnly, clearLog: false);
+            }
+        }
+        finally
+        {
+            _batchMode = false;
+            _run.Enabled = true;
+            _runContent.Enabled = true;
+            _status.Text = $"Batch finished: {_batchLists.Count} lists/libraries processed. See the log above and History.";
+        }
+    }
+
+    private async Task RunAsync(bool contentOnly, bool clearLog = true)
     {
         if (_sourceSite.Text.Length == 0 || _sourceList.Text.Length == 0 || _targetSite.Text.Length == 0)
         {
@@ -337,7 +393,7 @@ public class MigrationWizard : Form
         _runContent.Enabled = false;
         _cancel.Visible = true;
         _progress.Visible = true;
-        _log.Rows.Clear();
+        if (clearLog) _log.Rows.Clear();
         _cts = new CancellationTokenSource();
         _status.Text = "Running...";
 
@@ -365,8 +421,9 @@ public class MigrationWizard : Form
             lock (storeLock) store.RecordItem(runId, rec);
             BeginInvoke(() =>
         {
-            var row = _log.Rows[_log.Rows.Add(rec.ItemType, rec.SourcePath, rec.Status.ToString(), rec.Message ?? "")];
-            row.Cells[2].Style.ForeColor = Brand.StatusColor(rec.Status.ToString());
+            var row = _log.Rows[_log.Rows.Add(rec.ItemType, rec.SourcePath,
+                rec.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), rec.Status.ToString(), rec.Message ?? "")];
+            row.Cells[3].Style.ForeColor = Brand.StatusColor(rec.Status.ToString());
             if (_log.Rows.Count % 25 == 0) _log.FirstDisplayedScrollingRowIndex = _log.Rows.Count - 1;
 
             // Live throughput, percent and ETA once the scan total is known.
@@ -460,6 +517,14 @@ public class MigrationWizard : Form
                     $"the target list '{targetTitle}' does not exist on {_targetSite.Text}. " +
                     "Use 'Copy structure + content' to create it, or pick an existing list.");
 
+            // Lists copy to lists, libraries to libraries - never across kinds.
+            var sourceKind = await GetBaseTypeAsync(source, _sourceList.Text);
+            var targetKind = await GetBaseTypeAsync(target, targetTitle);
+            if (sourceKind != null && targetKind != null && sourceKind != targetKind)
+                throw new InvalidOperationException(sourceKind == 1
+                    ? $"'{_sourceList.Text}' is a document library and '{targetTitle}' is a list - they are different kinds. Pick a library target instead."
+                    : $"'{_sourceList.Text}' is a list and '{targetTitle}' is a document library - they are different kinds. Pick a list target instead.");
+
             await Task.Run(async () =>
             {
                 if (_engine.SelectedIndex == 1)
@@ -526,8 +591,8 @@ public class MigrationWizard : Form
             _lastRunId = runId;
             _export.Visible = true;
             _compare.Visible = true;
-            _run.Enabled = true;
-            _runContent.Enabled = true;
+            _run.Enabled = !_batchMode;
+            _runContent.Enabled = !_batchMode;
             _cancel.Visible = false;
             _progress.Visible = false;
             if (status is "Completed" or "CompletedWithIssues")
@@ -684,8 +749,8 @@ public class MigrationWizard : Form
                 Array.Empty<string>(), compareContent: true));
             foreach (var m in report.Mismatches.Take(200))
             {
-                var row = _log.Rows[_log.Rows.Add("Compare", m, "Warning", "")];
-                row.Cells[2].Style.ForeColor = Brand.StatusColor("Warning");
+                var row = _log.Rows[_log.Rows.Add("Compare", m, DateTime.Now.ToString("HH:mm:ss"), "Warning", "")];
+                row.Cells[3].Style.ForeColor = Brand.StatusColor("Warning");
             }
             _status.Text = report.IsClean
                 ? $"Compare clean: {report.SourceItems} source vs {report.TargetItems} target items, no mismatches."
@@ -752,6 +817,21 @@ public class MigrationWizard : Form
         {
             MessageBox.Show(this, $"That file is not a usable template: {ex.Message}", "Apply template",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    /// <summary>0 = list, 1 = document library, null = no such list.</summary>
+    private static async Task<int?> GetBaseTypeAsync(SpConnection conn, string title)
+    {
+        try
+        {
+            using var doc = await conn.Rest.GetJsonAsync(
+                $"{conn.SiteUrl}/_api/web/lists/GetByTitle('{Uri.EscapeDataString(title.Replace("'", "''"))}')?$select=BaseType");
+            return doc.RootElement.GetProperty("BaseType").GetInt32();
+        }
+        catch (SpRestException ex) when (ex.StatusCode == 404)
+        {
+            return null;
         }
     }
 

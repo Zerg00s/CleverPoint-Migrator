@@ -12,6 +12,9 @@ public class ItemCopyRecord
     public string? Message { get; set; }
     public long SizeBytes { get; set; }
     public TimeSpan Duration { get; set; }
+
+    /// <summary>When this item was processed (UTC).</summary>
+    public DateTime TimestampUtc { get; set; }
 }
 
 /// <summary>Aggregated outcome of one copy operation.</summary>
@@ -51,7 +54,7 @@ public class CopyResult
         var rec = new ItemCopyRecord
         {
             ItemType = itemType, SourcePath = sourcePath, TargetPath = targetPath,
-            Status = status, Message = message,
+            Status = status, Message = message, TimestampUtc = DateTime.UtcNow,
         };
         Records.Add(rec);
         RecordAdded?.Invoke(rec);

@@ -49,7 +49,12 @@ public class ExplorerScreen : UserControl
             Cursor = Cursors.Hand,
         };
         copy.FlatAppearance.BorderSize = 0;
-        copy.Click += (_, _) => OnDropMigration(_source.CurrentSelection());
+        copy.Click += (_, _) =>
+        {
+            var batch = _source.CurrentList == null ? _source.SelectedLists() : new List<SpListInfo>();
+            if (batch.Count >= 2) StartBatch(batch);
+            else OnDropMigration(_source.CurrentSelection());
+        };
         var actionBar = new Panel { Dock = DockStyle.Bottom, Height = 76, BackColor = Brand.Surface };
         actionBar.Controls.Add(copy);
         actionBar.Resize += (_, _) => copy.Location = new Point((actionBar.Width - copy.Width) / 2, (actionBar.Height - copy.Height) / 2);
@@ -75,6 +80,17 @@ public class ExplorerScreen : UserControl
             MessageBox.Show(FindForm(),
                 "Open (or select) a list or library on the LEFT and connect a site on the RIGHT, then copy.",
                 "Almost there", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        // Lists copy to lists, libraries to libraries - never across kinds.
+        if (_target.CurrentList != null && _target.CurrentList.IsLibrary != sourceList.IsLibrary)
+        {
+            MessageBox.Show(FindForm(),
+                sourceList.IsLibrary
+                    ? $"'{sourceList.Title}' is a document library; it cannot be copied into the list '{_target.CurrentList.Title}'. Pick a library as the target (or just the site to create one)."
+                    : $"'{sourceList.Title}' is a list; its items cannot be copied into the document library '{_target.CurrentList.Title}'. Pick a list as the target (or just the site to create one).",
+                "Different kinds", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -106,6 +122,22 @@ public class ExplorerScreen : UserControl
         _ = _source.RefreshViewAsync();
         _ = _target.RefreshViewAsync();
     }
+
+    /// <summary>Several lists/libraries selected at site level: one batch task copies them all.</summary>
+    private void StartBatch(List<SpListInfo> lists)
+    {
+        if (_source.Connection == null || _target.Connection == null)
+        {
+            MessageBox.Show(FindForm(), "Connect a site on the RIGHT first, then copy.",
+                "Almost there", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        using var wizard = new MigrationWizard(_settings);
+        wizard.PresetBatch(_source.Connection.SiteUrl, _target.Connection.SiteUrl, lists.Select(l => l.Title).ToList());
+        wizard.ShowDialog(FindForm());
+        _ = _source.RefreshViewAsync();
+        _ = _target.RefreshViewAsync();
+    }
 }
 
 /// <summary>One pane: site URL bar, breadcrumb drill-down list, item counts.</summary>
@@ -131,6 +163,10 @@ public class ExplorerPane : UserControl
     /// <summary>A list/library ROW selected in the site view (whole-list copy without drilling in).</summary>
     public SpListInfo? SelectedList =>
         _items.SelectedItems.Count > 0 ? _items.SelectedItems[0].Tag as SpListInfo : null;
+
+    /// <summary>All list/library rows selected in the site view (batch copy).</summary>
+    public List<SpListInfo> SelectedLists() =>
+        _items.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<SpListInfo>().ToList();
 
     public event Action<List<SpFolderEntry>>? DropReceived;
 

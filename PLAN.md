@@ -24,6 +24,11 @@ Windows, [ ] not done yet.
 - [x] Hybrid large files (>100 MB streams; tested to 1 GB+; 50 GB by design)
 - [x] Special characters in names/URLs/columns/views (# % etc.)
 - [x] Throttling: shared budget, 429 pause across parallel runs, decoration
+- [x] TIMEZONE-INDEPENDENT dates: ground-truth lab (raw REST observer)
+      proved netstandard CSOM deserializes DateTimes into machine-LOCAL
+      digits and serializes Utc/Local kinds exactly while treating
+      Unspecified as local. ToWriteDate/ReadUtc now normalize both
+      directions; full sweep green on a non-UTC machine (39/39 + 5/5)
 - [x] Content-only copies NEVER touch target schema (verified: sentinel col
       survives, no leaked source columns)
 - [~] Browser cookie auth end-to-end writes (REST digest + CSOM digest both
@@ -37,6 +42,10 @@ Windows, [ ] not done yet.
 ## Selection and scoping
 
 - [x] Copy whole lists/libraries
+- [x] BATCH copy: multi-select several lists/libraries at site level,
+      one task migrates them all (per-list history runs, shared options)
+- [x] Lists copy to lists, libraries to libraries: cross-kind copies are
+      blocked in the explorer AND the wizard with a plain explanation
 - [x] Surgical selection: any mix of files AND folders (SelectedPaths)
 - [x] Selected list items by ID
 - [x] Single-folder scope
@@ -74,6 +83,8 @@ Windows, [ ] not done yet.
 - [x] Per-run item log: filter chips, colors, clickable item links
 - [x] CSV export from History AND from the task screen; exports offer to open
 - [x] Started / Finished / Duration columns; friendly status text
+- [x] Per-item "When" timestamp on every log row (live log, history
+      detail, CSV export)
 - [x] Selective delete of history entries (multi-select)
 - [x] Copy text out of any table (Ctrl+C + right-click menu)
 - [x] Compare report engine (CompareReport; scenario verified)
@@ -126,7 +137,9 @@ Windows, [ ] not done yet.
       2026-06-12: + New > Word fails on ALL THREE including the never-touched
       native ProbeNative124259 -> the engine is definitively cleared; the
       failure is environmental (browser/session/Office Online on that site).
-      Next: Edge/InPrivate test + correlation ID.
+      CLOSED 2026-06-12: Denis confirmed the entire cleverpointlab tenant
+      is broken for browser document creation (licensed user, native
+      libraries, fresh sites) - unrelated to the app.
 
 ## App shell and polish
 

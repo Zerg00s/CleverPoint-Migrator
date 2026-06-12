@@ -341,7 +341,7 @@ public class ItemCopier
 
             foreach (var item in page)
             {
-                var itemModified = DateTime.SpecifyKind((DateTime)item["Modified"], DateTimeKind.Utc);
+                var itemModified = ReadUtc(item["Modified"]);
                 if (LastScanMaxModifiedUtc == null || itemModified > LastScanMaxModifiedUtc)
                     LastScanMaxModifiedUtc = itemModified;
 
@@ -498,13 +498,15 @@ public class ItemCopier
     /// </summary>
     internal static DateTime ToWriteDate(object value)
     {
+        // Ground truth from the date-lab (raw REST observer, non-UTC machine):
+        //  - CSOM DESERIALIZES DateTimes into the machine's LOCAL wall-clock
+        //    digits with Kind=Unspecified.
+        //  - On WRITE, Utc- and Local-kind values serialize EXACTLY;
+        //    Unspecified is treated as machine-local.
+        // A read-back is therefore already the local representation: stamping
+        // Kind=Local restores the true instant, timezone-independently.
         var dt = (DateTime)value;
-        return dt.Kind switch
-        {
-            DateTimeKind.Utc => dt.ToLocalTime(),
-            DateTimeKind.Unspecified => DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime(),
-            _ => dt,
-        };
+        return dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Local) : dt;
     }
 
     /// <summary>
@@ -645,8 +647,17 @@ public class ItemCopier
         return id.HasValue ? (id.Value, login.Replace("\"", "")) : null;
     }
 
-    private static DateTime ReadUtc(object value) =>
-        DateTime.SpecifyKind((DateTime)value, DateTimeKind.Utc);
+    internal static DateTime ReadUtc(object value)
+    {
+        // CSOM read-backs are LOCAL digits (see ToWriteDate ground truth).
+        var dt = (DateTime)value;
+        return dt.Kind switch
+        {
+            DateTimeKind.Unspecified => DateTime.SpecifyKind(dt, DateTimeKind.Local).ToUniversalTime(),
+            DateTimeKind.Local => dt.ToUniversalTime(),
+            _ => dt,
+        };
+    }
 
     private Microsoft.SharePoint.Client.TimeZone? _targetTimeZone;
 

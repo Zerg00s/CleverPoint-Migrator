@@ -100,8 +100,8 @@ public class MigrationApiEngine
             folderMeta.Add(new PackageFolder
             {
                 LibraryRelativePath = rel,
-                CreatedUtc = DateTime.SpecifyKind((DateTime)item["Created"], DateTimeKind.Utc),
-                ModifiedUtc = DateTime.SpecifyKind((DateTime)item["Modified"], DateTimeKind.Utc),
+                CreatedUtc = Operations.ItemCopier.ReadUtc(item["Created"]),
+                ModifiedUtc = Operations.ItemCopier.ReadUtc(item["Modified"]),
                 AuthorMapId = await MapUserAsync(item.FieldValues.GetValueOrDefault("Author")),
                 EditorMapId = await MapUserAsync(item.FieldValues.GetValueOrDefault("Editor")),
             });
@@ -166,8 +166,8 @@ public class MigrationApiEngine
                     LibraryRelativePath = rel,
                     BlobName = blobName,
                     FileSize = size,
-                    CreatedUtc = DateTime.SpecifyKind((DateTime)item["Created"], DateTimeKind.Utc),
-                    ModifiedUtc = DateTime.SpecifyKind((DateTime)item["Modified"], DateTimeKind.Utc),
+                    CreatedUtc = Operations.ItemCopier.ReadUtc(item["Created"]),
+                    ModifiedUtc = Operations.ItemCopier.ReadUtc(item["Modified"]),
                     AuthorMapId = await MapUserAsync(item.FieldValues.GetValueOrDefault("Author")),
                     EditorMapId = await MapUserAsync(item.FieldValues.GetValueOrDefault("Editor")),
                 };
