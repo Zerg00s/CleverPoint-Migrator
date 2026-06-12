@@ -134,18 +134,19 @@ public class SettingsScreen : UserControl
         page.Controls.Add(list);
         page.Controls.Add(new Label
         {
-            Text = "Add an app+certificate connection for unattended copies, or sign in\nwith your browser when starting a migration.",
+            Text = "Browser sign-in needs no Azure setup at all: just a name and the site\n" +
+                   "URL, and you sign in like you would in SharePoint. App + certificate\n" +
+                   "is for unattended or scheduled copies.",
             AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(20, 252),
         });
-        var provision = LinkButton("Set up a NEW Azure app for me (Global Admin wizard)...", 296);
+        var add = LinkButton("Add a connection (browser sign-in, no Azure app needed)...", 308);
+        var provision = LinkButton("Set up a NEW Azure app for me (Global Admin wizard)...", 340);
         provision.Click += (_, _) =>
         {
             using var wizard = new AppRegistrationWizard(_settings);
             wizard.ShowDialog(FindForm());
         };
         page.Controls.Add(provision);
-
-        var add = LinkButton("Add an existing app + certificate connection...", 328);
         add.Click += (_, _) =>
         {
             using var editor = new ConnectionEditor(_settings);
@@ -340,7 +341,11 @@ public class ConnectionEditor : Form
         // Auth mode decides which fields apply: browser sign-in needs only
         // the name and URL; unattended app+certificate needs everything.
         Controls.Add(new Label { Text = "Authentication", AutoSize = true, Location = new Point(16, 20) });
-        _authMode.Items.AddRange(new object[] { "Browser sign-in (interactive)", "App + certificate (unattended)" });
+        _authMode.Items.AddRange(new object[]
+        {
+            "Browser sign-in - no Azure app needed (recommended)",
+            "App + certificate - unattended/scheduled copies",
+        });
         _authMode.SelectedIndex = 0;
         _authMode.Location = new Point(130, 16);
         Controls.Add(_authMode);
