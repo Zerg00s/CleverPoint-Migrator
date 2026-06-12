@@ -66,6 +66,7 @@ public class HomeScreen : UserControl
         recent.Columns.Add("when", "Started");
         recent.Columns.Add("status", "Status");
         recent.Columns.Add("counts", "Result");
+        GridClipboard.Attach(recent);
 
         try
         {
@@ -73,7 +74,7 @@ public class HomeScreen : UserControl
             foreach (var run in store.GetRuns(15))
             {
                 var row = recent.Rows[recent.Rows.Add(
-                    run.Name, run.StartedUtc.ToLocalTime().ToString("g"), run.Status,
+                    run.Name, run.StartedUtc.ToLocalTime().ToString("g"), HistoryScreen.Pretty(run.Status),
                     $"{run.Copied} copied, {run.Skipped} skipped, {run.Failed} failed")];
                 // Color by the RUN status first: a run that died before
                 // copying anything has 0 item failures but is still red.

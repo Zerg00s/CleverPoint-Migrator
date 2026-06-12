@@ -102,6 +102,9 @@ public class ExplorerScreen : UserControl
         if (_target.CurrentList != null)
             wizard.UseContentOnly();
         wizard.ShowDialog(FindForm());
+        // The run changed the server: stale cached counts confuse, refresh both.
+        _ = _source.RefreshViewAsync();
+        _ = _target.RefreshViewAsync();
     }
 }
 
@@ -114,6 +117,7 @@ public class ExplorerPane : UserControl
     private readonly bool _isTarget;
     private readonly ComboBox _siteUrl = new() { Dock = DockStyle.Fill };
     private readonly Button _connect = new() { Text = "Open", AutoSize = true, FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White };
+    private readonly Button _up = new() { Text = "<  Up", AutoSize = true, FlatStyle = FlatStyle.Flat, Visible = false, Margin = new Padding(6, 3, 3, 3) };
     private readonly ListView _items = new();
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 24, ForeColor = Brand.TextSecondary, Padding = new Padding(8, 4, 0, 0) };
     private string? _currentFolder;
@@ -150,13 +154,23 @@ public class ExplorerPane : UserControl
         Dock = DockStyle.Fill;
         Padding = new Padding(8);
 
-        var header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 64, ColumnCount = 3 };
+        var header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 64, ColumnCount = 4 };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.Controls.Add(new Label { Text = role, Font = Brand.Heading, ForeColor = Brand.Primary, AutoSize = true }, 0, 0);
         header.Controls.Add(_siteUrl, 0, 1);
         header.Controls.Add(_connect, 1, 1);
+        // An always-visible way back - many people never discover the ".." row.
+        var upTip = new ToolTip();
+        upTip.SetToolTip(_up, "Go up one level (Backspace)");
+        _up.Click += async (_, _) =>
+        {
+            try { await GoUpAsync(); }
+            catch (Exception ex) { _status.Text = $"Could not go up: {Short(ex.Message)}"; }
+        };
+        header.Controls.Add(_up, 3, 1);
         var refresh = new Button { Text = "Refresh", AutoSize = true, FlatStyle = FlatStyle.Flat, Margin = new Padding(6, 3, 3, 3) };
         refresh.Click += async (_, _) => await RefreshAsync();
         header.Controls.Add(refresh, 2, 1);
@@ -188,8 +202,12 @@ public class ExplorerPane : UserControl
         _items.MultiSelect = !isTarget;
         _items.BorderStyle = BorderStyle.None;
         _items.SmallImageList = FileTypeIcons.Shared;
-        _items.Columns.Add("Name", 320);
-        _items.Columns.Add("Details", 160);
+        _items.Columns.Add("Name", 300);
+        _items.Columns.Add("Details", 110);
+        _items.Columns.Add("Modified", 120);
+        _items.Columns.Add("Modified by", 130);
+        _items.Columns.Add("Created", 120);
+        _items.Columns.Add("Created by", 130);
         _items.DoubleClick += async (_, _) => await DrillAsync();
         // Backspace = up one level, like the file explorer.
         _items.KeyDown += async (_, e) =>
@@ -248,6 +266,9 @@ public class ExplorerPane : UserControl
         }
     }
 
+    /// <summary>Public refresh used after migrations change what's on the server.</summary>
+    public Task RefreshViewAsync() => RefreshAsync();
+
     /// <summary>Reloads whatever is on screen, bypassing the cache.</summary>
     private async Task RefreshAsync()
     {
@@ -286,6 +307,7 @@ public class ExplorerPane : UserControl
                 list.IsLibrary ? "library" : "list") { Tag = list };
             _items.Items.Add(row);
         }
+        _up.Visible = false;
         _status.Text = $"{webs.Count} subsites, {lists.Count} lists and libraries";
     }
 
@@ -354,7 +376,10 @@ public class ExplorerPane : UserControl
         _items.Items.Clear();
         _items.Items.Add(new ListViewItem(new[] { "..", "Back to site" }));
         foreach (var entry in entries)
-            _items.Items.Add(new ListViewItem(new[] { entry.Name, $"Item #{entry.ItemId}" }, "list") { Tag = entry });
+            _items.Items.Add(new ListViewItem(new[]
+                { entry.Name, $"Item #{entry.ItemId}", entry.Modified, entry.ModifiedBy, entry.Created, entry.CreatedBy },
+                "list") { Tag = entry });
+        _up.Visible = true;
         var shown = entries.Count >= 500 ? "first 500 items" : $"{entries.Count} items";
         _status.Text = $"{list.Title}: {shown}"
             + (_isTarget ? "" : "  (select items to copy just those, or copy with nothing selected for all)");
@@ -375,9 +400,11 @@ public class ExplorerPane : UserControl
             {
                 entry.Name,
                 entry.IsFolder ? "Folder" : $"{entry.Size / 1024.0:F0} KB",
+                entry.Modified, entry.ModifiedBy, entry.Created, entry.CreatedBy,
             }, FileTypeIcons.KeyFor(entry.Name, entry.IsFolder)) { Tag = entry };
             _items.Items.Add(row);
         }
+        _up.Visible = true;
         _status.Text = $"{CurrentList?.Title}: {entries.Count(e => e.IsFolder)} folders, {entries.Count(e => !e.IsFolder)} files"
             + (_isTarget ? "  (drop items here to migrate)"
                 : "  (Ctrl+click any mix of files and folders to copy just those; nothing selected = everything)");

@@ -64,8 +64,38 @@ public partial class SchemaCopier
         var existing = targetLists.AsEnumerable().FirstOrDefault(l =>
             l.Title.Equals(options.TargetListTitle, StringComparison.OrdinalIgnoreCase));
 
+        // Content-only mode: the target schema is sacred. Resolve the list,
+        // build READ-ONLY lookup maps from fields that exist on both sides,
+        // and write nothing.
+        if (!options.MergeSchema)
+        {
+            if (existing == null)
+                throw new InvalidOperationException(
+                    $"Content-only copy: target list '{options.TargetListTitle}' does not exist. " +
+                    "Create it first or run a structure + content copy.");
+            _targetCtx.Load(existing, l => l.RootFolder.ServerRelativeUrl,
+                l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString, f => f.SchemaXml));
+            await _targetCtx.ExecuteQueryAsync();
+            foreach (var sourceField in sourceList.Fields)
+            {
+                if (sourceField.TypeAsString is not ("Lookup" or "LookupMulti")) continue;
+                var match = existing.Fields.AsEnumerable().FirstOrDefault(f =>
+                    f.InternalName.Equals(sourceField.InternalName, StringComparison.OrdinalIgnoreCase));
+                if (match == null) continue;
+                var srcId = ParseListId(sourceField.SchemaXml);
+                var tgtId = ParseListId(match.SchemaXml);
+                if (srcId == null || tgtId == null) continue;
+                var show = Regex.Match(match.SchemaXml, @"ShowField=""([^""]+)""") is { Success: true } sf
+                    ? sf.Groups[1].Value : "Title";
+                LookupFields.Add((sourceField.InternalName, srcId.Value, tgtId.Value, show));
+            }
+            result.Add("List", sourceList.Title, options.TargetListTitle, ItemCopyStatus.Skipped,
+                "content-only: target schema left untouched");
+            return existing;
+        }
+
         List targetList;
-        if (existing != null)
+        if (existing != null)  // schema merge path
         {
             targetList = existing;
             result.Add("List", sourceList.Title, options.TargetListTitle, ItemCopyStatus.Skipped, "target list already exists; schema merged");
@@ -236,6 +266,11 @@ public partial class SchemaCopier
     /// web, otherwise a target list matched by the source list's TITLE.
     /// Returns null (with a warning recorded) when no equivalent exists.
     /// </summary>
+    /// <summary>The List="{guid}" attribute of a lookup field's schema, if present.</summary>
+    private static Guid? ParseListId(string schemaXml) =>
+        Regex.Match(schemaXml, @"List=""\{?([0-9a-fA-F\-]{36})\}?""") is { Success: true } m
+            ? Guid.Parse(m.Groups[1].Value) : null;
+
     private async Task<string?> RewireLookupSchemaAsync(Field field, string schema, ListCollection targetLists, CopyResult result)
     {
         var match = LookupListAttrRegex().Match(schema);

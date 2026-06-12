@@ -281,6 +281,8 @@ public class FileCopier
         }
     }
 
+    private bool _metadataProbeDone;
+
     private async Task ApplyDocumentMetadataAsync(ListItem sourceItem, ListItem targetItem,
         CopyOptions options, CopyResult result, string fileRef)
     {
@@ -299,6 +301,22 @@ public class FileCopier
         // One write persists custom fields AND (when enabled) authors/dates.
         targetItem.UpdateOverwriteVersion();
         await _targetCtx.ExecuteQueryAsync();
+
+        // Some tenants/sites silently IGNORE system-field overwrites instead
+        // of failing them (typically when the signed-in account lacks full
+        // control). Read the first file back once per run and say so loudly.
+        if (options.PreserveAuthorsAndDates && !_metadataProbeDone)
+        {
+            _metadataProbeDone = true;
+            var intended = ItemCopier.ToWriteDate(sourceItem["Modified"]);
+            _targetCtx.Load(targetItem);
+            await _targetCtx.ExecuteQueryAsync();
+            var actual = ItemCopier.ToWriteDate(targetItem["Modified"]);
+            if (Math.Abs((actual - intended).TotalMinutes) > 2)
+                result.Add("File", fileRef, "", Model.ItemCopyStatus.Warning,
+                    "This site IGNORED the preserved dates/authors on write. The signed-in account may lack "
+                    + "full control here - connect with app + certificate to preserve metadata reliably.");
+        }
     }
 
     private readonly HashSet<string> _ensuredFolders = new(StringComparer.OrdinalIgnoreCase);

@@ -12,6 +12,7 @@ public class MainForm : Form
 {
     private readonly Panel _content = new() { Dock = DockStyle.Fill, BackColor = Brand.Surface };
     private readonly NotifyIcon _tray = new();
+    private bool _reallyExit;
     private readonly AppSettings _settings = AppSettings.Load();
 
     public MainForm()
@@ -83,14 +84,16 @@ public class MainForm : Form
             FlowDirection = FlowDirection.TopDown,
             Padding = new Padding(8, 16, 8, 8),
         };
-        nav.Controls.Add(NavButton("Home", () => ShowScreen(new HomeScreen(_settings, ShowScreen))));
-        nav.Controls.Add(NavButton("Explore && copy", () => ShowScreen(new ExplorerScreen(_settings))));
-        nav.Controls.Add(NavButton("History", () => ShowScreen(new HistoryScreen(_settings, ShowScreen))));
-        nav.Controls.Add(NavButton("Settings", () => ShowScreen(new SettingsScreen(_settings))));
+        nav.Controls.Add(NavButton("Home", typeof(HomeScreen), () => ShowScreen(new HomeScreen(_settings, ShowScreen))));
+        nav.Controls.Add(NavButton("Explore && copy", typeof(ExplorerScreen), () => ShowScreen(new ExplorerScreen(_settings))));
+        nav.Controls.Add(NavButton("History", typeof(HistoryScreen), () => ShowScreen(new HistoryScreen(_settings, ShowScreen))));
+        nav.Controls.Add(NavButton("Settings", typeof(SettingsScreen), () => ShowScreen(new SettingsScreen(_settings))));
         return nav;
     }
 
-    private static Button NavButton(string text, Action onClick)
+    private readonly List<(Button Button, Type Screen)> _navButtons = new();
+
+    private Button NavButton(string text, Type screenType, Action onClick)
     {
         var button = new Button
         {
@@ -108,7 +111,19 @@ public class MainForm : Form
         button.FlatAppearance.BorderSize = 0;
         button.FlatAppearance.MouseOverBackColor = Brand.Surface;
         button.Click += (_, _) => onClick();
+        _navButtons.Add((button, screenType));
         return button;
+    }
+
+    /// <summary>The active screen's nav entry is highlighted (accent text + tinted band).</summary>
+    private void HighlightNav(Control screen)
+    {
+        foreach (var (button, screenType) in _navButtons)
+        {
+            var active = screenType.IsInstanceOfType(screen);
+            button.BackColor = active ? Color.FromArgb(0xE0, 0xF2, 0xF0) : Brand.SurfaceAlt;
+            button.ForeColor = active ? Brand.Primary : Brand.TextPrimary;
+        }
     }
 
     public void ShowScreen(Control screen)
@@ -119,6 +134,7 @@ public class MainForm : Form
         screen.Dock = DockStyle.Fill;
         _content.Controls.Add(screen);
         _content.ResumeLayout();
+        HighlightNav(screen);
     }
 
     private void SetupTray()
@@ -129,7 +145,7 @@ public class MainForm : Form
         menu.Items.Add("Open", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); });
         menu.Items.Add("Settings", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; ShowScreen(new SettingsScreen(_settings)); });
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => { _tray.Visible = false; Application.Exit(); });
+        menu.Items.Add("Exit", null, (_, _) => { _reallyExit = true; _tray.Visible = false; Application.Exit(); });
         _tray.ContextMenuStrip = menu;
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
         _tray.Visible = true;
@@ -139,6 +155,17 @@ public class MainForm : Form
         {
             if (WindowState == FormWindowState.Minimized && _settings.MinimizeToTray)
                 Hide();
+        };
+        // X hides to the tray: a migration may still be running. The app
+        // truly quits ONLY from the tray menu's Exit.
+        FormClosing += (_, e) =>
+        {
+            if (e.CloseReason != CloseReason.UserClosing || _reallyExit) return;
+            e.Cancel = true;
+            Hide();
+            _tray.ShowBalloonTip(2500, "Still here",
+                "CleverPoint Migrator keeps running in the tray so migrations can finish. Right-click the tray icon and choose Exit to quit.",
+                ToolTipIcon.Info);
         };
         FormClosed += (_, _) => _tray.Visible = false;
     }

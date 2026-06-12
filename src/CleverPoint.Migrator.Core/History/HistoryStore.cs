@@ -23,6 +23,9 @@ public class MigrationRun
 
     /// <summary>Max server-stamped Modified seen on the source during the run; the next delta's baseline.</summary>
     public DateTime? MaxSourceModifiedUtc { get; set; }
+
+    /// <summary>JSON scope (folder/selected paths/item ids) so re-runs stay scoped to what was picked.</summary>
+    public string? ScopeJson { get; set; }
 }
 
 /// <summary>
@@ -61,14 +64,16 @@ public class HistoryStore : IDisposable
         // Schema upgrades for databases created by earlier builds.
         try { Exec("ALTER TABLE runs ADD COLUMN max_modified_utc TEXT"); }
         catch (SqliteException) { /* column already there */ }
+        try { Exec("ALTER TABLE runs ADD COLUMN scope_json TEXT"); }
+        catch (SqliteException) { /* column already there */ }
     }
 
     public long StartRun(MigrationRun run)
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO runs(name, source_url, source_list, target_url, target_list, engine, started_utc, status)
-            VALUES($n, $su, $sl, $tu, $tl, $e, $st, 'Running');
+            INSERT INTO runs(name, source_url, source_list, target_url, target_list, engine, started_utc, status, scope_json)
+            VALUES($n, $su, $sl, $tu, $tl, $e, $st, 'Running', $sc);
             SELECT last_insert_rowid();
             """;
         cmd.Parameters.AddWithValue("$n", run.Name);
@@ -78,6 +83,7 @@ public class HistoryStore : IDisposable
         cmd.Parameters.AddWithValue("$tl", run.TargetList);
         cmd.Parameters.AddWithValue("$e", run.Engine);
         cmd.Parameters.AddWithValue("$st", DateTime.UtcNow.ToString("o"));
+        cmd.Parameters.AddWithValue("$sc", (object?)run.ScopeJson ?? DBNull.Value);
         return (long)cmd.ExecuteScalar()!;
     }
 
@@ -123,7 +129,7 @@ public class HistoryStore : IDisposable
     {
         var runs = new List<MigrationRun>();
         using var cmd = _db.CreateCommand();
-        cmd.CommandText = "SELECT id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc FROM runs ORDER BY id DESC LIMIT $l";
+        cmd.CommandText = "SELECT id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc,scope_json FROM runs ORDER BY id DESC LIMIT $l";
         cmd.Parameters.AddWithValue("$l", limit);
         using var r = cmd.ExecuteReader();
         while (r.Read())
@@ -137,6 +143,7 @@ public class HistoryStore : IDisposable
                 Status = r.GetString(9), Copied = r.GetInt32(10), Skipped = r.GetInt32(11),
                 Warnings = r.GetInt32(12), Failed = r.GetInt32(13),
                 MaxSourceModifiedUtc = r.IsDBNull(14) ? null : DateTime.Parse(r.GetString(14)).ToUniversalTime(),
+                ScopeJson = r.IsDBNull(15) ? null : r.GetString(15),
             });
         }
         return runs;
@@ -222,6 +229,21 @@ public class HistoryStore : IDisposable
         using var r = cmd.ExecuteReader();
         while (r.Read()) map[r.GetInt32(0)] = r.GetInt32(1);
         return map;
+    }
+
+    /// <summary>Selective cleanup: removes the chosen runs and their item logs (item maps stay - deltas need them).</summary>
+    public void DeleteRuns(IEnumerable<long> runIds)
+    {
+        using var tx = _db.BeginTransaction();
+        foreach (var id in runIds)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM run_items WHERE run_id=$id; DELETE FROM runs WHERE id=$id;";
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
     }
 
     /// <summary>Runs are user-nameable and renamable at any time (including after completion).</summary>

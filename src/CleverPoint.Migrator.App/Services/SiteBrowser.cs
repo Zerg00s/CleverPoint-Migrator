@@ -5,7 +5,8 @@ namespace CleverPoint.Migrator.App.Services;
 
 public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary, int ItemCount);
 public record SpWebInfo(string Title, string Url);
-public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0);
+public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,
+    string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "");
 
 /// <summary>
 /// Read-only browsing for the explorer panes: subsites, non-system lists and
@@ -64,18 +65,29 @@ public class SiteBrowser
         {
             var escaped = Uri.EscapeDataString(folderServerRelativeUrl.Replace("'", "''"));
             using var folders = await conn.Rest.GetJsonAsync(
-                $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Folders?$select=Name,ServerRelativeUrl&$top=500");
+                $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Folders?$select=Name,ServerRelativeUrl,TimeCreated,TimeLastModified&$top=500");
             using var files = await conn.Rest.GetJsonAsync(
-                $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Files?$select=Name,ServerRelativeUrl,Length&$top=500");
+                $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Files?$select=Name,ServerRelativeUrl,Length,TimeCreated,TimeLastModified,Author/Title,ModifiedBy/Title&$expand=Author,ModifiedBy&$top=500");
+
+            static string When(JsonElement e, string field) =>
+                e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String
+                    && DateTime.TryParse(v.GetString(), out var dt)
+                    ? dt.ToLocalTime().ToString("g") : "";
+            static string Who(JsonElement e, string field) =>
+                e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Object
+                    && v.TryGetProperty("Title", out var t) ? t.GetString() ?? "" : "";
 
             var entries = folders.RootElement.GetProperty("value").EnumerateArray()
                 .Where(e => e.GetProperty("Name").GetString() != "Forms")
                 .Select(e => new SpFolderEntry(e.GetProperty("Name").GetString() ?? "",
-                    e.GetProperty("ServerRelativeUrl").GetString() ?? "", true, 0))
+                    e.GetProperty("ServerRelativeUrl").GetString() ?? "", true, 0,
+                    Created: When(e, "TimeCreated"), Modified: When(e, "TimeLastModified")))
                 .Concat(files.RootElement.GetProperty("value").EnumerateArray()
                     .Select(e => new SpFolderEntry(e.GetProperty("Name").GetString() ?? "",
                         e.GetProperty("ServerRelativeUrl").GetString() ?? "", false,
-                        long.TryParse(e.GetProperty("Length").GetString(), out var l) ? l : 0)))
+                        long.TryParse(e.GetProperty("Length").GetString(), out var l) ? l : 0,
+                        Created: When(e, "TimeCreated"), CreatedBy: Who(e, "Author"),
+                        Modified: When(e, "TimeLastModified"), ModifiedBy: Who(e, "ModifiedBy"))))
                 .ToList();
             return entries;
         }
@@ -99,7 +111,8 @@ public class SiteBrowser
                 RenderOptions = 2, // ListData only
                 FolderServerRelativeUrl = folderUrl,
                 ViewXml = "<View><Query><OrderBy><FieldRef Name='FileLeafRef'/></OrderBy></Query>"
-                    + "<ViewFields><FieldRef Name='FileLeafRef'/><FieldRef Name='FileRef'/><FieldRef Name='FSObjType'/><FieldRef Name='File_x0020_Size'/></ViewFields>"
+                    + "<ViewFields><FieldRef Name='FileLeafRef'/><FieldRef Name='FileRef'/><FieldRef Name='FSObjType'/><FieldRef Name='File_x0020_Size'/>"
+                    + "<FieldRef Name='Created'/><FieldRef Name='Modified'/><FieldRef Name='Author'/><FieldRef Name='Editor'/></ViewFields>"
                     + "<RowLimit Paged='TRUE'>500</RowLimit></View>",
             },
         };
@@ -114,7 +127,9 @@ public class SiteBrowser
             var isFolder = row.TryGetProperty("FSObjType", out var t) && t.GetString() == "1";
             var size = row.TryGetProperty("File_x0020_Size", out var s)
                 && long.TryParse(s.GetString(), out var l) ? l : 0;
-            entries.Add(new SpFolderEntry(name, row.GetProperty("FileRef").GetString() ?? "", isFolder, size));
+            entries.Add(new SpFolderEntry(name, row.GetProperty("FileRef").GetString() ?? "", isFolder, size,
+                Created: Friendly(row, "Created"), CreatedBy: Person(row, "Author"),
+                Modified: Friendly(row, "Modified"), ModifiedBy: Person(row, "Editor")));
         }
         return entries.OrderByDescending(e => e.IsFolder).ThenBy(e => e.Name).ToList();
     }
@@ -126,17 +141,33 @@ public class SiteBrowser
         // GetList takes the path via @alias (decodedUrl= is only a folder-API
         // parameter and 400s here); $orderby speaks FIELD internal names (ID).
         using var doc = await conn.Rest.GetJsonAsync(
-            $"{conn.SiteUrl}/_api/web/GetList(@a1)/items?$select=Id,Title&$orderby=ID desc&$top=500&@a1='{escaped}'");
+            $"{conn.SiteUrl}/_api/web/GetList(@a1)/items?$select=Id,Title,Created,Modified,Author/Title,Editor/Title&$expand=Author,Editor&$orderby=ID desc&$top=500&@a1='{escaped}'");
+        static string ItemWhen(JsonElement e, string field) =>
+            e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(v.GetString(), out var dt) ? dt.ToLocalTime().ToString("g") : "";
+        static string ItemWho(JsonElement e, string field) =>
+            e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Object
+                && v.TryGetProperty("Title", out var t) ? t.GetString() ?? "" : "";
         return doc.RootElement.GetProperty("value").EnumerateArray()
             .Select(e =>
             {
                 var id = e.GetProperty("Id").GetInt32();
                 var title = e.TryGetProperty("Title", out var t) && t.ValueKind == JsonValueKind.String
                     ? t.GetString()! : $"(item {id})";
-                return new SpFolderEntry(title, "", false, 0, id);
+                return new SpFolderEntry(title, "", false, 0, id,
+                    Created: ItemWhen(e, "Created"), CreatedBy: ItemWho(e, "Author"),
+                    Modified: ItemWhen(e, "Modified"), ModifiedBy: ItemWho(e, "Editor"));
             })
             .ToList();
     }
+
+    /// <summary>RenderListData display strings pass through as-is.</summary>
+    private static string Friendly(JsonElement row, string field) =>
+        row.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
+
+    private static string Person(JsonElement row, string field) =>
+        row.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Array && v.GetArrayLength() > 0
+            && v[0].TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
 
     private static string Sanitize(string s) =>
         string.Concat(s.Select(c => char.IsLetterOrDigit(c) ? c : '_'));

@@ -37,6 +37,7 @@ public static class Program
             ["copy-selected"] = Scenarios.SameSiteCopyTests.CopySelectedItemsAsync,
             ["copy-paths"] = Scenarios.SameSiteCopyTests.CopySelectedPathsAsync,
             ["browse-large"] = Scenarios.BrowseLargeTest.RunAsync,
+            ["content-only"] = Scenarios.ContentOnlyTest.RunAsync,
             ["copy-lib"] = Scenarios.SameSiteCopyTests.CopyLibraryAsync,
             ["inspect"] = Scenarios.InspectScenario.RunAsync,
             ["copy-cross"] = Scenarios.CrossTenantCopyTests.RunAsync,

@@ -15,6 +15,13 @@ public class CopyOptions
     public bool CopyViews { get; set; } = true;
     public bool CopyListSettings { get; set; } = true;
 
+    /// <summary>
+    /// When false (content-only copies), the target schema is NOT touched in
+    /// any way: no field creation, no formatting sync, no lookup rewiring.
+    /// The target list must already exist.
+    /// </summary>
+    public bool MergeSchema { get; set; } = true;
+
     /// <summary>Preserve Created/Modified/Author/Editor on copied items and files.</summary>
     public bool PreserveAuthorsAndDates { get; set; } = true;
 

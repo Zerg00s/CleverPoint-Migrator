@@ -109,7 +109,7 @@ public class SettingsScreen : UserControl
             if (dialog.ShowDialog(FindForm()) == DialogResult.OK)
                 SettingsPresets.Export(new CopyOptions(), Path.GetFileNameWithoutExtension(dialog.FileName), dialog.FileName);
         };
-        var loadPreset = LinkButton("Load template...", 160);
+        var loadPreset = LinkButton("Load template...", 172);
         loadPreset.Click += (_, _) =>
         {
             using var dialog = new OpenFileDialog { Filter = "Migration template|*.json" };
@@ -233,6 +233,13 @@ public class SettingsScreen : UserControl
         var page = NewPage("Performance");
         page.Controls.Add(new Label { Text = "Parallel migrations (1-3)", AutoSize = true, Location = new Point(20, 24) });
         var parallel = new NumericUpDown { Minimum = 1, Maximum = 3, Value = Math.Clamp(_settings.MaxParallelMigrations, 1, 3), Location = new Point(220, 20), Width = 70 };
+        page.Controls.Add(new Label
+        {
+            Text = "How many migrations may RUN at the same time. Extra ones queue\n"
+                + "and start automatically when a slot frees up. All running migrations\n"
+                + "share one polite request budget, so more is not always faster.",
+            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(310, 18),
+        });
         page.Controls.Add(parallel);
         page.Controls.Add(new Label { Text = "Request rate (how hard to push SharePoint)", AutoSize = true, Location = new Point(20, 60) });
         var tiers = new (string Label, double Rps)[]
@@ -274,13 +281,38 @@ public class SettingsScreen : UserControl
         var page = NewPage("Advanced");
         page.Controls.Add(new Label
         {
-            Text = "Defaults work for almost everyone. These knobs exist for big or\nunusual migrations:\n\n" +
-                   "- Items per Migration API package (default 200)\n" +
-                   "- Large file threshold for streaming uploads (default 100 MB)\n" +
-                   "- Versions to migrate per document (default: latest)\n" +
-                   "- Self-healing: auto re-run incrementals, re-copy corrupt files\n\n" +
-                   "Set these per migration in the New Migration screen under\n'Advanced options', or bake them into a saved template.",
-            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(20, 20),
+            Text = "Self-healing (applies after each migration run):",
+            AutoSize = true, Location = new Point(20, 20),
+        });
+        var autoRetry = new CheckBox
+        {
+            Text = "Auto re-run incrementals after a run with failures (up to 5 attempts)",
+            AutoSize = true, Location = new Point(24, 48), Checked = _settings.SelfHealAutoRetry,
+        };
+        page.Controls.Add(autoRetry);
+        page.Controls.Add(new Label
+        {
+            Text = "Each pass re-copies only what failed or changed; it stops as soon as a pass is clean.",
+            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(42, 70),
+        });
+        var repair = new CheckBox
+        {
+            Text = "Detect and re-copy corrupt files (0-byte or truncated on the target)",
+            AutoSize = true, Location = new Point(24, 100), Checked = _settings.SelfHealRepairCorrupt,
+        };
+        page.Controls.Add(repair);
+        page.Controls.Add(new Label
+        {
+            Text = "Only files this tool migrated are ever deleted and replaced.",
+            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(42, 122),
+        });
+        autoRetry.CheckedChanged += (_, _) => { _settings.SelfHealAutoRetry = autoRetry.Checked; _settings.Save(); };
+        repair.CheckedChanged += (_, _) => { _settings.SelfHealRepairCorrupt = repair.Checked; _settings.Save(); };
+
+        page.Controls.Add(new Label
+        {
+            Text = "Per-task knobs (versions to migrate, date filters, user mapping, API package\nsize, large-file threshold) live in the New Migration screen, and can be saved\nas reusable templates there.",
+            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(20, 162),
         });
         return page;
     }

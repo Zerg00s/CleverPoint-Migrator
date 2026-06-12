@@ -37,6 +37,12 @@ public class AppSettings
     public double MaxRequestsPerSecond { get; set; } = 0;     // 0 = unlimited
     public int CacheMinutes { get; set; } = 15;
 
+    /// <summary>Self-healing: auto re-run incrementals (up to 5) after a run with failures. Off by default.</summary>
+    public bool SelfHealAutoRetry { get; set; }
+
+    /// <summary>Self-healing: detect corrupt target files (0-byte / truncated), delete OUR copies and re-copy. Off by default.</summary>
+    public bool SelfHealRepairCorrupt { get; set; }
+
     public static string Folder => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CleverPointMigrator");
 

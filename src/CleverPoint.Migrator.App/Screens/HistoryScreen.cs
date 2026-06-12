@@ -13,7 +13,11 @@ public class HistoryScreen : UserControl
     private readonly DataGridView _grid = new();
     private readonly TextBox _search = new() { Width = 240, PlaceholderText = "Search name, site, list...", Margin = new Padding(0, 2, 12, 0) };
     private readonly MultiSelectFilter _statusFilter = new(
-        new[] { "Completed", "CompletedWithIssues", "Interrupted", "Failed", "Running" });
+        new[] { "Completed", "Completed with issues", "Interrupted", "Failed", "Running" });
+
+    /// <summary>Status as people read it, not as the database spells it.</summary>
+    internal static string Pretty(string status) =>
+        status == "CompletedWithIssues" ? "Completed with issues" : status;
     private List<MigrationRun> _runs = new();
     private readonly AppSettings _settings;
 
@@ -29,7 +33,9 @@ public class HistoryScreen : UserControl
         var incremental = new Button { Text = "Run incremental", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0), BackColor = Brand.Accent, ForeColor = Color.White };
         incremental.FlatAppearance.BorderSize = 0;
         var reopen = new Button { Text = "Open task", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0) };
-        bar.Controls.AddRange(new Control[] { _search, _statusFilter, incremental, reopen, rename, export });
+        var delete = new Button { Text = "Delete", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0) };
+        delete.Click += (_, _) => DeleteSelected();
+        bar.Controls.AddRange(new Control[] { _search, _statusFilter, incremental, reopen, rename, export, delete });
         Controls.Add(bar);
         incremental.Click += (_, _) => ReopenSelected(delta: true);
         reopen.Click += (_, _) => ReopenSelected(delta: false);
@@ -43,12 +49,14 @@ public class HistoryScreen : UserControl
         _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         foreach (var (name, title) in new[] { ("id", "#"), ("name", "Name"), ("src", "Source"), ("tgt", "Target"),
-            ("engine", "Engine"), ("started", "Started"), ("status", "Status"), ("result", "Result") })
+            ("engine", "Engine"), ("started", "Started"), ("finished", "Finished"), ("duration", "Duration"),
+            ("status", "Status"), ("result", "Result") })
         {
             var col = new DataGridViewTextBoxColumn { Name = name, HeaderText = title, SortMode = DataGridViewColumnSortMode.Automatic };
             _grid.Columns.Add(col);
         }
         _grid.Columns["id"].FillWeight = 5;
+        GridClipboard.Attach(_grid);
         Controls.Add(_grid);
         _grid.BringToFront();
 
@@ -90,16 +98,20 @@ public class HistoryScreen : UserControl
         _grid.Rows.Clear();
         foreach (var run in _runs)
         {
-            if (selected.Count > 0 && !selected.Contains(run.Status)) continue;
+            if (selected.Count > 0 && !selected.Contains(Pretty(run.Status))) continue;
             if (query.Length > 0
                 && !run.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                 && !run.SourceUrl.Contains(query, StringComparison.OrdinalIgnoreCase)
                 && !run.SourceList.Contains(query, StringComparison.OrdinalIgnoreCase)
                 && !run.TargetList.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
 
+            var duration = run.FinishedUtc is { } f ? (f - run.StartedUtc) is var d && d.TotalHours >= 1
+                    ? $"{(int)d.TotalHours}:{d.Minutes:00}:{d.Seconds:00}" : $"{d.Minutes}:{d.Seconds:00}"
+                : "";
             var row = _grid.Rows[_grid.Rows.Add(run.Id, run.Name, $"{run.SourceUrl}/{run.SourceList}",
                 $"{run.TargetUrl}/{run.TargetList}", run.Engine,
-                run.StartedUtc.ToLocalTime().ToString("g"), run.Status,
+                run.StartedUtc.ToLocalTime().ToString("g"),
+                run.FinishedUtc?.ToLocalTime().ToString("g") ?? "", duration, Pretty(run.Status),
                 $"{run.Copied} copied, {run.Skipped} skipped, {run.Warnings} warn, {run.Failed} failed")];
             row.Cells["status"].Style.ForeColor = run.Failed > 0 || run.Status == "Failed" ? Brand.Fail
                 : run.Warnings > 0 || run.Status is "CompletedWithIssues" or "Interrupted" ? Brand.Warn : Brand.Ok;
@@ -124,6 +136,21 @@ public class HistoryScreen : UserControl
         Reload();
     }
 
+    /// <summary>Selective removal of history entries (multi-select supported).</summary>
+    private void DeleteSelected()
+    {
+        var ids = _grid.SelectedRows.Cast<DataGridViewRow>()
+            .Select(r => Convert.ToInt64(r.Cells["id"].Value)).ToList();
+        if (ids.Count == 0) return;
+        if (MessageBox.Show(FindForm(),
+                $"Delete {ids.Count} selected migration record(s) and their logs?\n\nThe copied content itself is not touched.",
+                "Delete from history", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        using var store = new HistoryStore(AppSettings.HistoryDbPath);
+        store.DeleteRuns(ids);
+        Reload();
+    }
+
     private void RenameSelected()
     {
         if (SelectedRunId() is not { } id) return;
@@ -142,6 +169,7 @@ public class HistoryScreen : UserControl
         if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
         using var store = new HistoryStore(AppSettings.HistoryDbPath);
         store.ExportRunCsv(id, dialog.FileName);
+        MigrationWizard.OfferToOpen(FindForm()!, dialog.FileName);
     }
 }
 
@@ -190,6 +218,7 @@ public class RunDetailDialog : Form
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = title, FillWeight = weight, SortMode = DataGridViewColumnSortMode.Automatic });
         Controls.Add(_grid);
         _grid.BringToFront();
+        GridClipboard.Attach(_grid);
 
         _filter.SelectionChanged += Render;
         _grid.CellDoubleClick += (_, e) =>

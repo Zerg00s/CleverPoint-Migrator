@@ -37,10 +37,11 @@ public class MigrationWizard : Form
     private readonly Button _runContent = new() { Text = "Copy content only", AutoSize = true, Padding = new Padding(18, 9, 18, 9), FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
     private readonly Button _cancel = new() { Text = "Cancel run", AutoSize = true, Padding = new Padding(18, 9, 18, 9), Visible = false, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
     private readonly Button _export = new() { Text = "Export results (CSV)", AutoSize = true, Padding = new Padding(10, 4, 10, 4), Visible = false, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
-    private readonly ComboBox _versions = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly Button _mapping = new() { Text = "User mapping: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(16, 0, 0, 0) };
-    private readonly Button _dateFilter = new() { Text = "Date filter: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 0, 0, 0) };
-    private string? _mappingCsvPath;
+    private readonly ComboBox _versions = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 4, 0, 4) };
+    private readonly Button _mapping = new() { Text = "User mapping: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(16, 4, 0, 4) };
+    private readonly Button _dateFilter = new() { Text = "Date filter: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 4, 0, 4) };
+    private readonly Button _saveTemplate = new() { Text = "Save as template...", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(16, 4, 0, 4) };
+    private readonly Button _applyTemplate = new() { Text = "Apply template...", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 4, 0, 4) };
     private DateTime? _modifiedSinceUtc;
     private DateTime? _modifiedBeforeUtc;
     private long? _lastRunId;
@@ -57,16 +58,25 @@ public class MigrationWizard : Form
         _sourceFolderScope = sourceFolder;
         _selectedPaths = selectedPaths ?? new List<string>();
         _itemIds = itemIds ?? new List<int>();
+        UpdateScopeInfo();
+    }
+
+    private void UpdateScopeInfo(string? prefix = null)
+    {
         var scope = new List<string>();
         if (_selectedPaths.Count > 0)
             scope.Add($"{_selectedPaths.Count} selected file(s)/folder(s): "
                 + string.Join(", ", _selectedPaths.Take(4).Select(p => p.Split('/')[^1]))
                 + (_selectedPaths.Count > 4 ? ", ..." : ""));
-        else if (sourceFolder != null)
-            scope.Add($"folder {sourceFolder.Split('/')[^1]}");
+        else if (_sourceFolderScope != null)
+            scope.Add($"folder {_sourceFolderScope.Split('/')[^1]}");
         if (_itemIds.Count > 0) scope.Add($"{_itemIds.Count} selected item(s)");
-        _scopeInfo.Text = scope.Count > 0 ? "Scope: " + string.Join("; ", scope) : "";
+        var text = scope.Count > 0 ? "Scope: " + string.Join("; ", scope) : "";
+        _scopeInfo.Text = prefix == null ? text : text.Length > 0 ? $"{prefix}  |  {text}" : prefix;
     }
+
+    /// <summary>What a run was scoped to, persisted with the run so re-runs stay scoped.</summary>
+    private sealed record ScopePayload(string? Folder, List<string> Paths, List<int> ItemIds);
 
     private string? _sourceFolderScope;
     private List<string> _selectedPaths = new();
@@ -96,22 +106,42 @@ public class MigrationWizard : Form
     {
         Preset(run.SourceUrl, run.SourceList, run.TargetUrl, run.TargetList);
         _engine.SelectedIndex = run.Engine == "MigrationApi" ? 1 : 0;
+
+        // Restore the original scope: an incremental over "3 selected files"
+        // must stay 3 selected files, not become the whole list.
+        if (run.ScopeJson != null)
+        {
+            try
+            {
+                var scope = System.Text.Json.JsonSerializer.Deserialize<ScopePayload>(run.ScopeJson);
+                if (scope != null)
+                {
+                    _sourceFolderScope = scope.Folder;
+                    _selectedPaths = scope.Paths ?? new List<string>();
+                    _itemIds = scope.ItemIds ?? new List<int>();
+                }
+            }
+            catch { /* legacy runs without scope info */ }
+        }
+
+        string prefix;
         if (delta)
         {
             _deltaBaselineUtc = run.MaxSourceModifiedUtc;
-            _scopeInfo.Text = _deltaBaselineUtc != null
+            prefix = _deltaBaselineUtc != null
                 ? $"Incremental: only items changed since {_deltaBaselineUtc.Value.ToLocalTime():g} copy; existing items update in place."
                 : "Incremental: existing items update in place (no duplicates); unchanged items re-copy (no baseline from the last run).";
         }
         else if (run.Status == "Interrupted")
         {
             _resumeRunId = run.Id;
-            _scopeInfo.Text = "Resume: items the interrupted run already copied will be skipped.";
+            prefix = "Resume: items the interrupted run already copied will be skipped.";
         }
         else
         {
-            _scopeInfo.Text = "Re-run: existing items update in place (no duplicates).";
+            prefix = "Re-run: existing items update in place (no duplicates).";
         }
+        UpdateScopeInfo(prefix);
     }
     private readonly Label _scopeInfo = new() { AutoSize = true, ForeColor = Brand.TextSecondary };
 
@@ -169,7 +199,9 @@ public class MigrationWizard : Form
         _versions.SelectedIndex = 0;
         var opts2 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
         var versionsLbl = new Label { Text = "File versions:", AutoSize = true, ForeColor = Brand.TextPrimary, Padding = new Padding(0, 6, 6, 0) };
-        opts2.Controls.AddRange(new Control[] { versionsLbl, _versions, _mapping, _dateFilter });
+        opts2.Controls.AddRange(new Control[] { versionsLbl, _versions, _mapping, _dateFilter, _saveTemplate, _applyTemplate });
+        _saveTemplate.Click += (_, _) => SaveTemplate();
+        _applyTemplate.Click += (_, _) => ApplyTemplate();
         layout.Controls.Add(opts2, 1, 5);
         layout.SetColumnSpan(opts2, 3);
         _mapping.Click += (_, _) => PickUserMapping();
@@ -199,7 +231,7 @@ public class MigrationWizard : Form
         _run.FlatAppearance.BorderSize = 0;
         // Secondary buttons share one subtle border so nothing looks heavier
         // than its neighbors.
-        foreach (var secondary in new[] { _runContent, _cancel, _export, _mapping, _dateFilter })
+        foreach (var secondary in new[] { _runContent, _cancel, _export, _mapping, _dateFilter, _saveTemplate, _applyTemplate })
         {
             secondary.FlatAppearance.BorderColor = Color.FromArgb(0xC6, 0xCE, 0xD6);
             secondary.FlatAppearance.BorderSize = 1;
@@ -270,6 +302,7 @@ public class MigrationWizard : Form
         _log.Columns[1].FillWeight = 46;
         _log.Columns[2].FillWeight = 12;
         _log.Columns[3].FillWeight = 30;
+        GridClipboard.Attach(_log);
     }
 
     private SpConnection Connect(string siteUrl) => ConnectionResolver.Resolve(this, _settings, siteUrl);
@@ -298,6 +331,9 @@ public class MigrationWizard : Form
             SourceUrl = _sourceSite.Text, SourceList = _sourceList.Text,
             TargetUrl = _targetSite.Text, TargetList = targetTitle,
             Engine = _engine.SelectedIndex == 1 ? "MigrationApi" : "Classic",
+            ScopeJson = _sourceFolderScope != null || _selectedPaths.Count > 0 || _itemIds.Count > 0
+                ? System.Text.Json.JsonSerializer.Serialize(new ScopePayload(_sourceFolderScope, _selectedPaths, _itemIds))
+                : null,
         });
 
         var result = new CopyResult();
@@ -328,8 +364,9 @@ public class MigrationWizard : Form
             CopyAttachments = _attachments.Checked,
             CopyPermissions = _permissions.Checked,
             CopyContent = !_contentOnly.Checked,
-            // "Copy content only" leaves the target's views and settings alone;
-            // fields still merge so item values have somewhere to land.
+            // "Copy content only" never touches the target schema: no fields,
+            // no views, no settings, no formatting. The target must exist.
+            MergeSchema = !contentOnly,
             CopyViews = !contentOnly,
             CopyListSettings = !contentOnly,
             SourceFolderServerRelativeUrl = _sourceFolderScope,
@@ -347,9 +384,15 @@ public class MigrationWizard : Form
             ModifiedBeforeUtc = _modifiedBeforeUtc,
         };
 
+        options.UnresolvedUserFallback = _unresolvedFallback;
         Dictionary<string, string>? userMap = null, groupMap = null;
-        if (_mappingCsvPath != null)
-            (userMap, groupMap) = UserMappingStore.LoadCsv(_mappingCsvPath);
+        if (_mappingRows.Count > 0)
+        {
+            userMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            groupMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (type, src, tgt) in _mappingRows)
+                (type == "Group" ? groupMap : userMap)[src] = tgt;
+        }
 
         // Any re-run over a pair we've copied before updates in place instead
         // of duplicating: the persisted source->target item map drives upserts.
@@ -396,6 +439,21 @@ public class MigrationWizard : Form
                     await CopyEngine.CopyListAsync(source, target, _sourceList.Text, options, userMap, _cts.Token, result, groupMap);
                 }
             }, _cts.Token);
+
+            // Self-healing (Settings > Advanced, off by default): re-run
+            // incrementals until clean and/or re-copy corrupt files.
+            if (_engine.SelectedIndex == 0
+                && ((result.Failed > 0 && _settings.SelfHealAutoRetry) || _settings.SelfHealRepairCorrupt))
+            {
+                _status.Text = "Self-healing pass...";
+                var healing = new HealingOptions
+                {
+                    AutoRetry = _settings.SelfHealAutoRetry,
+                    RepairCorruptFiles = _settings.SelfHealRepairCorrupt,
+                };
+                await Task.Run(() => RunCoordinator.HealAsync(source, target, _sourceList.Text, options,
+                    healing, result, msg => BeginInvoke(() => _status.Text = msg), _cts.Token), _cts.Token);
+            }
             if (result.Failed > 0) status = "CompletedWithIssues";
         }
         catch (OperationCanceledException)
@@ -436,30 +494,27 @@ public class MigrationWizard : Form
         }
     }
 
-    /// <summary>Pick (or clear) the identity-mapping CSV: Type,Source,Target with User and Group rows.</summary>
+    private readonly List<(string Type, string Source, string Target)> _mappingRows = new();
+    private string? _unresolvedFallback;
+
+    /// <summary>Per-task identity mapping: rows, pickers, fallback, CSV in/out.</summary>
     private void PickUserMapping()
     {
-        if (_mappingCsvPath != null && MessageBox.Show(this,
-                $"A mapping file is set:\n{_mappingCsvPath}\n\nYes = choose a different file, No = remove the mapping.",
-                "User mapping", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.No)
+        if (_sourceSite.Text.Length == 0 || _targetSite.Text.Length == 0)
         {
-            _mappingCsvPath = null;
-            _mapping.Text = "User mapping: none";
+            _status.Text = "Fill in the source and target site URLs first - the mapping pickers search those sites.";
             return;
         }
-        using var dialog = new OpenFileDialog { Filter = "CSV files|*.csv|All files|*.*", Title = "Choose the identity mapping CSV (Type,Source,Target)" };
+        using var dialog = new UserMappingDialog(_settings, _sourceSite.Text, _targetSite.Text, _mappingRows, _unresolvedFallback);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        try
-        {
-            var (users, groups) = UserMappingStore.LoadCsv(dialog.FileName);
-            _mappingCsvPath = dialog.FileName;
-            _mapping.Text = $"User mapping: {users.Count} users, {groups.Count} groups";
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, $"That file could not be read as a mapping CSV: {ex.Message}",
-                "User mapping", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
+        _mappingRows.Clear();
+        _mappingRows.AddRange(dialog.Rows);
+        _unresolvedFallback = dialog.UnresolvedFallback;
+        var users = _mappingRows.Count(r => r.Type == "User");
+        var groups = _mappingRows.Count - users;
+        _mapping.Text = _mappingRows.Count == 0 && _unresolvedFallback == null
+            ? "User mapping: none"
+            : $"User mapping: {users} users, {groups} groups{(_unresolvedFallback != null ? ", fallback set" : "")}";
     }
 
     /// <summary>Advanced: copy only items modified in a date window.</summary>
@@ -510,9 +565,74 @@ public class MigrationWizard : Form
         using var store = new HistoryStore(AppSettings.HistoryDbPath);
         store.ExportRunCsv(id, dialog.FileName);
         _status.Text = $"Results exported to {dialog.FileName}";
+        OfferToOpen(this, dialog.FileName);
+    }
+
+    /// <summary>Every export ends with "open it now?".</summary>
+    public static void OfferToOpen(IWin32Window owner, string path)
+    {
+        if (MessageBox.Show(owner, $"Saved to:\n{path}\n\nOpen it now?", "Export complete",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch { /* no associated app; the file is still there */ }
     }
 
     private int SelectedMaxVersions() => _versions.SelectedIndex switch { 1 => 5, 2 => 10, 3 => 50, _ => 1 };
+
+    /// <summary>This task's option set, captured for a reusable named template.</summary>
+    private CopyOptions TemplateOptions() => new()
+    {
+        PreserveAuthorsAndDates = _preserve.Checked,
+        CopyAttachments = _attachments.Checked,
+        CopyPermissions = _permissions.Checked,
+        CopyContent = !_contentOnly.Checked,
+        MaxVersions = SelectedMaxVersions(),
+        ModifiedSinceUtc = _modifiedSinceUtc,
+        ModifiedBeforeUtc = _modifiedBeforeUtc,
+        UnresolvedUserFallback = _unresolvedFallback,
+    };
+
+    private void SaveTemplate()
+    {
+        using var dialog = new SaveFileDialog { Filter = "Migration template|*.json", FileName = "my-migration-template.json" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        SettingsPresets.Export(TemplateOptions(), Path.GetFileNameWithoutExtension(dialog.FileName), dialog.FileName);
+        _status.Text = $"Template saved: {dialog.FileName}";
+    }
+
+    private void ApplyTemplate()
+    {
+        using var dialog = new OpenFileDialog { Filter = "Migration template|*.json" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            var (name, o) = SettingsPresets.Import(dialog.FileName);
+            _preserve.Checked = o.PreserveAuthorsAndDates;
+            _attachments.Checked = o.CopyAttachments;
+            _permissions.Checked = o.CopyPermissions;
+            _contentOnly.Checked = !o.CopyContent;
+            _versions.SelectedIndex = o.MaxVersions switch { >= 50 => 3, >= 10 => 2, >= 5 => 1, _ => 0 };
+            _modifiedSinceUtc = o.ModifiedSinceUtc;
+            _modifiedBeforeUtc = o.ModifiedBeforeUtc;
+            _unresolvedFallback = o.UnresolvedUserFallback;
+            _dateFilter.Text = (_modifiedSinceUtc, _modifiedBeforeUtc) switch
+            {
+                (null, null) => "Date filter: none",
+                ({ } since, null) => $"Date filter: after {since.ToLocalTime():d}",
+                (null, { } before) => $"Date filter: before {before.ToLocalTime():d}",
+                ({ } since, { } before) => $"Date filter: {since.ToLocalTime():d} - {before.ToLocalTime():d}",
+            };
+            _status.Text = $"Template '{name}' applied.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"That file is not a usable template: {ex.Message}", "Apply template",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
 
     private static async Task<bool> TargetListExistsAsync(SpConnection target, string title)
     {
