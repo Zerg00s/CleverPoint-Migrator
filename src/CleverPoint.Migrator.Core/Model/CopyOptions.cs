@@ -40,6 +40,12 @@ public class CopyOptions
     /// </summary>
     public List<string> NamePatterns { get; set; } = new();
 
+    /// <summary>
+    /// Optional explicit source item IDs to copy (explorer selection on a
+    /// generic list). Empty = no ID filter.
+    /// </summary>
+    public List<int> ItemIds { get; set; } = new();
+
     public int PageSize { get; set; } = 200;
 
     /// <summary>

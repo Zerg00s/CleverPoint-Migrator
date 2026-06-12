@@ -5,7 +5,7 @@ namespace CleverPoint.Migrator.App.Services;
 
 public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary, int ItemCount);
 public record SpWebInfo(string Title, string Url);
-public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size);
+public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0);
 
 /// <summary>
 /// Read-only browsing for the explorer panes: subsites, non-system lists and
@@ -76,6 +76,23 @@ public class SiteBrowser
                     long.TryParse(e.GetProperty("Length").GetString(), out var l) ? l : 0)))
             .ToList();
         return entries;
+    }
+
+    /// <summary>Items of a generic list (no files to enumerate), newest first. Not cached: selections need live IDs.</summary>
+    public async Task<List<SpFolderEntry>> GetListItemsAsync(SpConnection conn, SpListInfo list)
+    {
+        var escaped = Uri.EscapeDataString(list.ServerRelativeUrl.Replace("'", "''"));
+        using var doc = await conn.Rest.GetJsonAsync(
+            $"{conn.SiteUrl}/_api/web/GetList(decodedUrl='{escaped}')/items?$select=Id,Title&$orderby=Id desc&$top=500");
+        return doc.RootElement.GetProperty("value").EnumerateArray()
+            .Select(e =>
+            {
+                var id = e.GetProperty("Id").GetInt32();
+                var title = e.TryGetProperty("Title", out var t) && t.ValueKind == JsonValueKind.String
+                    ? t.GetString()! : $"(item {id})";
+                return new SpFolderEntry(title, "", false, 0, id);
+            })
+            .ToList();
     }
 
     private static string Sanitize(string s) =>

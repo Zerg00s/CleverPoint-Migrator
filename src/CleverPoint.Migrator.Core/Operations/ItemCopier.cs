@@ -356,6 +356,12 @@ public class ItemCopier
                     }
                 }
 
+                // Explicit ID selection (explorer multi-select on a list).
+                // Unselected items are not logged as skips - thousands of
+                // "not selected" rows would bury the real log.
+                if (options.ItemIds.Count > 0 && !options.ItemIds.Contains(item.Id))
+                    continue;
+
                 if (options.ModifiedSinceUtc.HasValue || options.ModifiedBeforeUtc.HasValue)
                 {
                     var modified = itemModified;

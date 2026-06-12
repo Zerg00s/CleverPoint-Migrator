@@ -38,7 +38,7 @@ public class MigrationWizard : Form
 
     /// <summary>Prefills the wizard from the explorer (drag-drop or selection).</summary>
     public void Preset(string sourceSite, string sourceList, string targetSite, string targetList,
-        string? sourceFolder = null, List<string>? namePatterns = null)
+        string? sourceFolder = null, List<string>? namePatterns = null, List<int>? itemIds = null)
     {
         _sourceSite.Text = sourceSite;
         _sourceList.Text = sourceList;
@@ -46,14 +46,17 @@ public class MigrationWizard : Form
         _targetList.Text = targetList;
         _sourceFolderScope = sourceFolder;
         _namePatterns = namePatterns ?? new List<string>();
+        _itemIds = itemIds ?? new List<int>();
         var scope = new List<string>();
         if (sourceFolder != null) scope.Add($"folder {sourceFolder.Split('/')[^1]}");
         if (_namePatterns.Count > 0) scope.Add($"only: {string.Join(", ", _namePatterns.Take(5))}{(_namePatterns.Count > 5 ? "..." : "")}");
+        if (_itemIds.Count > 0) scope.Add($"{_itemIds.Count} selected item(s)");
         _scopeInfo.Text = scope.Count > 0 ? "Scope: " + string.Join("; ", scope) : "";
     }
 
     private string? _sourceFolderScope;
     private List<string> _namePatterns = new();
+    private List<int> _itemIds = new();
     private readonly Label _scopeInfo = new() { AutoSize = true, ForeColor = Brand.TextSecondary };
 
     public MigrationWizard(AppSettings settings)
@@ -245,6 +248,7 @@ public class MigrationWizard : Form
             CopyListSettings = !contentOnly,
             SourceFolderServerRelativeUrl = _sourceFolderScope,
             NamePatterns = _namePatterns,
+            ItemIds = _itemIds,
         };
 
         var status = "Completed";

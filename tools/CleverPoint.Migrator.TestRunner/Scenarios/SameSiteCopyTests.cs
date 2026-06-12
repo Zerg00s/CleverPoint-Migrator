@@ -84,6 +84,50 @@ public static class SameSiteCopyTests
         Program.Check("list copy: attachment files present on target", attachedFiles >= 2, $"{attachedFiles} files");
     }
 
+    /// <summary>Explorer-style selection: copy only explicitly chosen item IDs.</summary>
+    public static async Task CopySelectedItemsAsync()
+    {
+        var site = await RequireTestSiteAsync();
+        using (var ctx = site.CreateContext())
+        {
+            await TestAssets.DeleteIfExistsAsync(ctx, "MigTest-SelCopy");
+        }
+
+        // Pick three real item IDs from the source list (like the explorer would).
+        List<int> pickedIds;
+        using (var ctx = site.CreateContext())
+        {
+            var list = ctx.Web.Lists.GetByTitle(TestAssets.SourceListTitle);
+            var items = list.GetItems(new CamlQuery { ViewXml = "<View Scope='RecursiveAll'><RowLimit>20</RowLimit></View>" });
+            ctx.Load(items, p => p.Include(i => i.Id, i => i.FileSystemObjectType));
+            await ctx.ExecuteQueryAsync();
+            pickedIds = items.AsEnumerable()
+                .Where(i => i.FileSystemObjectType != FileSystemObjectType.Folder)
+                .Take(3).Select(i => i.Id).ToList();
+        }
+
+        var options = new CopyOptions
+        {
+            TargetListTitle = "MigTest-SelCopy",
+            TargetListUrl = "Lists/MigTestSelCopy",
+            ItemIds = pickedIds,
+        };
+        var result = await CopyEngine.CopyListAsync(site, site, TestAssets.SourceListTitle, options);
+        Console.WriteLine($"  copy result: {result.Summary()}");
+        foreach (var r in result.Records.Where(r => r.Status is ItemCopyStatus.Failed or ItemCopyStatus.Warning))
+            Console.WriteLine($"    [{r.Status}] {r.ItemType} {r.SourcePath}: {r.Message}");
+
+        Program.Check("selected items: no failures", result.Failed == 0, result.Summary());
+        var copied = result.Records.Count(r => r.ItemType == "Item" && r.Status == ItemCopyStatus.Copied);
+        Program.Check("selected items: exactly the 3 picked items copied", copied == 3, $"{copied} items (picked IDs: {string.Join(",", pickedIds)})");
+
+        using var targetCtx = site.CreateContext();
+        var targetList = targetCtx.Web.Lists.GetByTitle("MigTest-SelCopy");
+        targetCtx.Load(targetList, l => l.ItemCount);
+        await targetCtx.ExecuteQueryAsync();
+        Program.Check("selected items: target holds only the selection", targetList.ItemCount == 3, $"{targetList.ItemCount} on target");
+    }
+
     public static async Task CopyLibraryAsync()
     {
         var site = await RequireTestSiteAsync();

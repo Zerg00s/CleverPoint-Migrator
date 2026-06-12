@@ -34,6 +34,7 @@ public static class Program
             ["auth"] = Scenarios.AuthSmokeTest.RunAsync,
             ["provision"] = Scenarios.SameSiteCopyTests.ProvisionAsync,
             ["copy-list"] = Scenarios.SameSiteCopyTests.CopyListAsync,
+            ["copy-selected"] = Scenarios.SameSiteCopyTests.CopySelectedItemsAsync,
             ["copy-lib"] = Scenarios.SameSiteCopyTests.CopyLibraryAsync,
             ["inspect"] = Scenarios.InspectScenario.RunAsync,
             ["copy-cross"] = Scenarios.CrossTenantCopyTests.RunAsync,

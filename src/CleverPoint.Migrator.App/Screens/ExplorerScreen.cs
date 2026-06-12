@@ -54,9 +54,11 @@ public class ExplorerScreen : UserControl
             return;
         }
 
-        // Selected files become name filters; one selected folder becomes the scope.
+        // Selected files become name filters, selected LIST ITEMS become an
+        // ID filter; one selected folder becomes the scope.
         var folders = items.Where(i => i.IsFolder).ToList();
-        var files = items.Where(i => !i.IsFolder).ToList();
+        var listItems = items.Where(i => !i.IsFolder && i.ItemId > 0).ToList();
+        var files = items.Where(i => !i.IsFolder && i.ItemId == 0).ToList();
         if (folders.Count > 1)
         {
             MessageBox.Show(FindForm(),
@@ -67,24 +69,18 @@ public class ExplorerScreen : UserControl
         var folderScope = folders.Count == 1 ? folders[0].ServerRelativeUrl
             : files.Count > 0 ? _source.CurrentFolder : null;
         var patterns = files.Select(f => f.Name).ToList();
+        var itemIds = listItems.Select(i => i.ItemId).ToList();
 
         // New list on the SAME site gets " - Copy" so it never collides with the source.
         var sameSite = string.Equals(_source.Connection.SiteUrl.TrimEnd('/'), _target.Connection.SiteUrl.TrimEnd('/'),
             StringComparison.OrdinalIgnoreCase);
         var targetName = _target.CurrentList?.Title ?? (sameSite ? $"{sourceList.Title} - Copy" : sourceList.Title);
-        var what = items.Count == 0 ? $"everything in '{sourceList.Title}'"
-            : folders.Count == 1 ? $"folder '{folders[0].Name}'"
-            : $"{files.Count} selected file(s)";
-        var destination = _target.CurrentList != null
-            ? $"'{_target.CurrentList.Title}'"
-            : $"a new list '{targetName}' on {_target.Connection.SiteUrl}";
-        if (MessageBox.Show(FindForm(), $"Copy {what} to {destination}?\n\nMetadata, structure and attachments are preserved.",
-                "Start migration", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-            return;
 
+        // No confirmation popup here: the wizard shows (and lets the user
+        // change) every detail, and nothing runs until a copy button is clicked.
         using var wizard = new MigrationWizard(_settings);
         wizard.Preset(_source.Connection.SiteUrl, sourceList.Title,
-            _target.Connection.SiteUrl, targetName, folderScope, patterns);
+            _target.Connection.SiteUrl, targetName, folderScope, patterns, itemIds);
         wizard.ShowDialog(FindForm());
     }
 }
@@ -277,12 +273,29 @@ public class ExplorerPane : UserControl
                 break;
             case SpListInfo list:
                 CurrentList = list;
-                await ShowFolderAsync(list.ServerRelativeUrl);
+                // Libraries browse as folders/files; generic lists show their items.
+                if (list.IsLibrary) await ShowFolderAsync(list.ServerRelativeUrl);
+                else await ShowListItemsAsync(list);
                 break;
             case SpFolderEntry { IsFolder: true } folder:
                 await ShowFolderAsync(folder.ServerRelativeUrl);
                 break;
         }
+    }
+
+    private async Task ShowListItemsAsync(SpListInfo list)
+    {
+        if (Connection == null) return;
+        _status.Text = "Loading items...";
+        _currentFolder = null;
+        var entries = await Task.Run(() => _browser.GetListItemsAsync(Connection, list));
+        _items.Items.Clear();
+        _items.Items.Add(new ListViewItem(new[] { "..", "Back to site" }));
+        foreach (var entry in entries)
+            _items.Items.Add(new ListViewItem(new[] { entry.Name, $"Item #{entry.ItemId}" }, "list") { Tag = entry });
+        var shown = entries.Count >= 500 ? "first 500 items" : $"{entries.Count} items";
+        _status.Text = $"{list.Title}: {shown}"
+            + (_isTarget ? "" : "  (select items to copy just those, or copy with nothing selected for all)");
     }
 
     private async Task ShowFolderAsync(string folderUrl)
