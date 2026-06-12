@@ -33,6 +33,7 @@ public class ExplorerScreen : UserControl
         _source = new ExplorerPane("Source", settings, _browser, isTarget: false);
         _target = new ExplorerPane("Target", settings, _browser, isTarget: true);
         _target.DropReceived += OnDropMigration;
+        _source.CopyRequested += OnDropMigration;
         split.Panel1.Controls.Add(_source);
         split.Panel2.Controls.Add(_target);
         Controls.Add(split);
@@ -79,6 +80,17 @@ public class ExplorerPane : UserControl
     public SpConnection? Connection { get; private set; }
     public SpListInfo? CurrentList { get; private set; }
     public event Action<List<SpFolderEntry>>? DropReceived;
+    public event Action<List<SpFolderEntry>>? CopyRequested;
+
+    private const string AddConnectionEntry = "<  Add a new connection...  >";
+
+    private void RefreshSiteChoices()
+    {
+        _siteUrl.Items.Clear();
+        foreach (var c in _settings.Connections)
+            _siteUrl.Items.Add(c.SiteUrl);
+        _siteUrl.Items.Add(AddConnectionEntry);
+    }
 
     public ExplorerPane(string role, AppSettings settings, SiteBrowser browser, bool isTarget)
     {
@@ -98,8 +110,25 @@ public class ExplorerPane : UserControl
         header.Controls.Add(_connect, 1, 1);
         Controls.Add(header);
 
-        foreach (var c in settings.Connections)
-            _siteUrl.Items.Add(c.SiteUrl);
+        // Searchable: type to filter; pick a saved connection or add one.
+        _siteUrl.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+        _siteUrl.AutoCompleteSource = AutoCompleteSource.ListItems;
+        RefreshSiteChoices();
+        _siteUrl.SelectedIndexChanged += async (_, _) =>
+        {
+            if (_siteUrl.SelectedItem?.ToString() == AddConnectionEntry)
+            {
+                using var editor = new ConnectionEditor(_settings);
+                var added = editor.ShowDialog(FindForm()) == DialogResult.OK;
+                RefreshSiteChoices();
+                _siteUrl.Text = added ? _settings.Connections[^1].SiteUrl : "";
+                if (added) await OpenSiteAsync();
+            }
+            else
+            {
+                await OpenSiteAsync();
+            }
+        };
 
         _items.Dock = DockStyle.Fill;
         _items.View = View.Details;
@@ -134,6 +163,25 @@ public class ExplorerPane : UserControl
                     .Select(i => i.Tag).OfType<SpFolderEntry>().ToList();
                 _items.DoDragDrop(selection, DragDropEffects.Copy);
             };
+
+            // Keyboard/mouse-only alternative to drag and drop.
+            var copy = new Button
+            {
+                Text = "Copy to target  >",
+                AutoSize = true,
+                Padding = new Padding(12, 4, 12, 4),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Brand.Accent,
+                ForeColor = Color.White,
+                Dock = DockStyle.Bottom,
+            };
+            copy.FlatAppearance.BorderSize = 0;
+            copy.Click += (_, _) => CopyRequested?.Invoke(
+                _items.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<SpFolderEntry>().ToList());
+            Controls.Add(copy);
+            copy.BringToFront();
+            _status.BringToFront();
+            _items.BringToFront();
         }
     }
 

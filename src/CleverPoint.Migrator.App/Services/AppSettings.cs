@@ -14,6 +14,13 @@ public class SavedConnection
     public string AppId { get; set; } = "";
     public string CertPfxPath { get; set; } = "";
     public string CertPasswordProtected { get; set; } = "";   // DPAPI, base64
+
+    /// <summary>Last health-check result ("Connected", "Failed: ...", "Signs in on use").</summary>
+    public string LastStatus { get; set; } = "";
+    public DateTime? LastVerifiedUtc { get; set; }
+
+    /// <summary>Certificate expiry (app+certificate mode); browser sessions are per-use.</summary>
+    public DateTime? CertExpiresUtc { get; set; }
 }
 
 /// <summary>

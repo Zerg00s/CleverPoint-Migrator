@@ -128,36 +128,103 @@ public class SettingsScreen : UserControl
     private TabPage BuildConnectionsTab()
     {
         var page = NewPage("Connections");
-        var list = new ListBox { Location = new Point(20, 20), Size = new Size(420, 220) };
-        foreach (var c in _settings.Connections)
-            list.Items.Add($"{c.Name}  ({c.AuthMode})  {c.SiteUrl}");
-        page.Controls.Add(list);
-        page.Controls.Add(new Label
+
+        var list = new ListView
         {
-            Text = "Browser sign-in needs no Azure setup at all: just a name and the site\n" +
-                   "URL, and you sign in like you would in SharePoint. App + certificate\n" +
-                   "is for unattended or scheduled copies.",
-            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(20, 252),
-        });
-        var add = LinkButton("Add connection...", 308);
-        var provision = LinkButton("Set up a NEW Azure app for me (Global Admin wizard)...", 340);
-        provision.Click += (_, _) =>
-        {
-            using var wizard = new AppRegistrationWizard(_settings);
-            wizard.ShowDialog(FindForm());
+            Location = new Point(16, 16),
+            Size = new Size(700, 220),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            View = View.Details,
+            FullRowSelect = true,
+            BorderStyle = BorderStyle.FixedSingle,
         };
-        page.Controls.Add(provision);
+        list.Columns.Add("Name", 140);
+        list.Columns.Add("Sign-in", 110);
+        list.Columns.Add("Site", 200);
+        list.Columns.Add("Status", 150);
+        list.Columns.Add("Expires", 110);
+
+        void Refresh()
+        {
+            list.Items.Clear();
+            foreach (var c in _settings.Connections)
+            {
+                var row = new ListViewItem(new[]
+                {
+                    c.Name,
+                    c.AuthMode == "Browser" ? "Browser" : "App + cert",
+                    c.SiteUrl,
+                    c.LastStatus + (c.LastVerifiedUtc is { } v ? $" ({v.ToLocalTime():g})" : ""),
+                    ConnectionTester.ExpiryText(c),
+                }) { Tag = c };
+                row.SubItems[3].ForeColor = c.LastStatus.StartsWith("Failed") ? Brand.Fail
+                    : c.LastStatus.StartsWith("Connected") ? Brand.Ok : Brand.TextSecondary;
+                row.UseItemStyleForSubItems = false;
+                list.Items.Add(row);
+            }
+        }
+        Refresh();
+        page.Controls.Add(list);
+
+        SavedConnection? Selected() => list.SelectedItems.Count > 0 ? list.SelectedItems[0].Tag as SavedConnection : null;
+
+        var buttons = new FlowLayoutPanel { Location = new Point(12, 244), AutoSize = true };
+        Button Btn(string text)
+        {
+            var b = new Button { Text = text, AutoSize = true, Padding = new Padding(10, 3, 10, 3), FlatStyle = FlatStyle.Flat, Margin = new Padding(4, 0, 4, 0) };
+            buttons.Controls.Add(b);
+            return b;
+        }
+        var add = Btn("Add connection...");
+        var test = Btn("Test");
+        var reconnect = Btn("Reconnect...");
+        var remove = Btn("Remove");
+        page.Controls.Add(buttons);
+
         add.Click += (_, _) =>
         {
             using var editor = new ConnectionEditor(_settings);
-            if (editor.ShowDialog(FindForm()) == DialogResult.OK)
-            {
-                list.Items.Clear();
-                foreach (var c in _settings.Connections)
-                    list.Items.Add($"{c.Name}  ({c.AuthMode})  {c.SiteUrl}");
-            }
+            if (editor.ShowDialog(FindForm()) == DialogResult.OK) Refresh();
         };
-        page.Controls.Add(add);
+        test.Click += async (_, _) =>
+        {
+            if (Selected() is not { } c) return;
+            await ConnectionTester.TestAsync(FindForm(), _settings, c, allowInteractive: true);
+            _settings.Save();
+            Refresh();
+        };
+        reconnect.Click += async (_, _) =>
+        {
+            if (Selected() is not { } c) return;
+            await ConnectionTester.ReconnectAsync(FindForm()!, _settings, c);
+            _settings.Save();
+            Refresh();
+        };
+        remove.Click += (_, _) =>
+        {
+            if (Selected() is not { } c) return;
+            if (MessageBox.Show(FindForm(), $"Remove the connection '{c.Name}'?", "Remove connection",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            _settings.Connections.Remove(c);
+            _settings.Save();
+            Refresh();
+        };
+
+        page.Controls.Add(new Label
+        {
+            Text = "Browser sign-in needs no Azure setup: just a name and the site URL.\n" +
+                   "App + certificate is for unattended or scheduled copies. Connections\n" +
+                   "are checked automatically when the app starts.",
+            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(16, 290),
+        });
+        var provision = LinkButton("Set up a NEW Azure app for me (Global Admin wizard)...", 348);
+        provision.Click += (_, _) =>
+        {
+            using var wizard = new AppRegistrationWizard(_settings);
+            if (wizard.ShowDialog(FindForm()) == DialogResult.OK) Refresh();
+            Refresh();
+        };
+        page.Controls.Add(provision);
         return page;
     }
 
@@ -317,12 +384,14 @@ public static class StartupRegistration
 /// <summary>Minimal app+certificate connection editor.</summary>
 public class ConnectionEditor : Form
 {
-    private readonly ComboBox _authMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 350 };
+    private readonly ComboBox _authMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 380 };
+    private readonly Label _testStatus = new() { AutoSize = true, ForeColor = Brand.TextSecondary, MaximumSize = new Size(560, 0) };
 
     public ConnectionEditor(AppSettings settings)
     {
         Text = "Add connection";
-        Size = new Size(520, 360);
+        Size = new Size(640, 470);
+        MinimumSize = new Size(620, 440);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false; MaximizeBox = false;
@@ -374,27 +443,56 @@ public class ConnectionEditor : Form
         };
         Controls.Add(browse);
 
-        var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true, Padding = new Padding(14, 4, 14, 4), FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White };
+        _testStatus.Location = new Point(16, 300);
+        Controls.Add(_testStatus);
+
+        // Bottom-right button row in a flow panel: nothing can clip.
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom, Height = 52, FlowDirection = FlowDirection.RightToLeft,
+            Padding = new Padding(0, 8, 16, 0),
+        };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Padding = new Padding(14, 5, 14, 5), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 0, 0, 0) };
+        var ok = new Button { Text = "Test and save", AutoSize = true, Padding = new Padding(14, 5, 14, 5), FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White, Margin = new Padding(10, 0, 0, 0) };
         ok.FlatAppearance.BorderSize = 0;
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Padding = new Padding(14, 4, 14, 4), FlatStyle = FlatStyle.Flat };
-        ok.Location = new Point(290, 280);
-        cancel.Location = new Point(386, 280);
-        Controls.AddRange(new Control[] { ok, cancel });
+        buttons.Controls.AddRange(new Control[] { cancel, ok });
+        Controls.Add(buttons);
         AcceptButton = ok; CancelButton = cancel;
 
-        ok.Click += (_, _) =>
+        SavedConnection Build() => new()
         {
-            settings.Connections.Add(new SavedConnection
+            Name = fields[0].Box.Text,
+            SiteUrl = fields[1].Box.Text.TrimEnd('/'),
+            AuthMode = _authMode.SelectedIndex == 1 ? "AppCertificate" : "Browser",
+            TenantId = fields[2].Box.Text,
+            AppId = fields[3].Box.Text,
+            CertPfxPath = fields[4].Box.Text,
+            CertPasswordProtected = fields[5].Box.Text.Length > 0 ? AppSettings.Protect(fields[5].Box.Text) : "",
+        };
+
+        ok.Click += async (_, _) =>
+        {
+            if (fields[0].Box.Text.Trim().Length == 0 || fields[1].Box.Text.Trim().Length == 0)
             {
-                Name = fields[0].Box.Text,
-                SiteUrl = fields[1].Box.Text,
-                AuthMode = _authMode.SelectedIndex == 1 ? "AppCertificate" : "Browser",
-                TenantId = fields[2].Box.Text,
-                AppId = fields[3].Box.Text,
-                CertPfxPath = fields[4].Box.Text,
-                CertPasswordProtected = fields[5].Box.Text.Length > 0 ? AppSettings.Protect(fields[5].Box.Text) : "",
-            });
+                _testStatus.Text = "A name and the site URL are needed first.";
+                return;
+            }
+            ok.Enabled = false;
+            _testStatus.ForeColor = Brand.TextSecondary;
+            _testStatus.Text = _authMode.SelectedIndex == 0
+                ? "Opening the sign-in window..."
+                : "Testing the connection...";
+            var connection = Build();
+            var (success, message) = await ConnectionTester.TestAsync(this, settings, connection, allowInteractive: true);
+            _testStatus.ForeColor = success ? Brand.Ok : Brand.Fail;
+            _testStatus.Text = message;
+            ok.Enabled = true;
+            if (!success) return;   // stay open so credentials can be fixed
+
+            settings.Connections.Add(connection);
             settings.Save();
+            DialogResult = DialogResult.OK;
+            Close();
         };
     }
 }

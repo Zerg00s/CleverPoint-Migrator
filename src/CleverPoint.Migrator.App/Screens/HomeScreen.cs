@@ -35,11 +35,8 @@ public class HomeScreen : UserControl
             Cursor = Cursors.Hand,
         };
         newMigration.FlatAppearance.BorderSize = 0;
-        newMigration.Click += (_, _) =>
-        {
-            using var wizard = new MigrationWizard(settings);
-            wizard.ShowDialog(FindForm());
-        };
+        // The split source/target explorer IS the migration experience.
+        newMigration.Click += (_, _) => navigate(new ExplorerScreen(settings));
         Controls.Add(newMigration);
 
         Controls.Add(new Label

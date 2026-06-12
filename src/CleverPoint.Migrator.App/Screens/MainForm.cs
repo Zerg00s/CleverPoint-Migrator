@@ -30,6 +30,23 @@ public class MainForm : Form
         SetupTray();
 
         ShowScreen(new HomeScreen(_settings, ShowScreen));
+
+        // Silent connection health sweep at launch (app+certificate only;
+        // browser connections never pop sign-ins uninvited).
+        Load += async (_, _) =>
+        {
+            try
+            {
+                var failures = await Services.ConnectionTester.VerifyAllAtLaunchAsync(_settings);
+                if (failures > 0)
+                    Toasts.Show("Connection problem",
+                        $"{failures} connection(s) failed their health check. See Settings > Connections.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine($"[CPMigrator] launch health check: {ex.Message}");
+            }
+        };
     }
 
     private Control BuildHeader()
