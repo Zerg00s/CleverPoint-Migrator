@@ -103,7 +103,15 @@ public class SettingsScreen : UserControl
             Text = "Add an app+certificate connection for unattended copies, or sign in\nwith your browser when starting a migration.",
             AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(20, 252),
         });
-        var add = LinkButton("Add app + certificate connection...", 300);
+        var provision = LinkButton("Set up a NEW Azure app for me (Global Admin wizard)...", 296);
+        provision.Click += (_, _) =>
+        {
+            using var wizard = new AppRegistrationWizard(_settings);
+            wizard.ShowDialog(FindForm());
+        };
+        page.Controls.Add(provision);
+
+        var add = LinkButton("Add an existing app + certificate connection...", 328);
         add.Click += (_, _) =>
         {
             using var editor = new ConnectionEditor(_settings);

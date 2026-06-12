@@ -130,11 +130,49 @@ rows take principal names) imports/exports with an auto-detect template.
 RequestThrottle paces all traffic per tenant host so parallel runs share
 one budget, and a 429 anywhere pauses every run hitting that host.
 
+## Pages, versions, healing, filters (verified 2026-06-12, second wave)
+
+Modern pages migrate through the SitePages REST API (checkout ->
+SavePageAsDraft -> publish) with URL rewriting into the target web; the
+list-item path is unusable (the sanitizer strips link hrefs and
+SavePageAsDraft renames files to Title-derived names, both handled).
+Version history copies via REST /versions, oldest first, verified with
+per-version SHA-256. Self-healing (HealingOptions, off by default) re-runs
+targeted incrementals up to 5 times and detects corrupt targets (0-byte or
+under half the source size), deletes and re-copies them. Wildcard name
+filters and folder-scope copies log what they skip. RequestThrottle paces
+all traffic per tenant host (shared across parallel runs; any 429 pauses
+everyone), verified by timing tests. Special characters (' & # % + unicode)
+round-trip on both engines after switching every path to
+GetFileByServerRelativePath/decodedUrl. Item attachments copy with
+preserved dates.
+
+## The Windows app
+
+`src/CleverPoint.Migrator.App` (net8.0-windows WinForms): branded shell with
+tray integration, circular splash, welcome empty-state, two-pane explorer
+with drag-to-migrate, migration wizard (engine choice with guidance, live
+color-coded log, gentle cancel, queueing beyond the parallel limit),
+history (multi-select status filter, rename, CSV export), settings sub-tabs
+(performance tiers, maintenance with clear history/cache, diagnostics
+Start/Stop capture producing a shareable zip, About with GitHub links), and
+an Azure app-registration wizard that ports Setup-MigrationApp.ps1 into the
+UI. Sign-App.ps1 (adapted from the sample project) publishes a
+self-contained signed exe with git-tag auto-versioning. Help/issues:
+https://github.com/Zerg00s/CleverPoint-Migrator/issues
+
+## Performance
+
+See PERFORMANCE.md in the parent folder for the measured classic-vs-API
+comparison and engine recommendations.
+
 ## Scope decisions
 
 Taxonomy/managed-metadata fields are out of scope (explicit warnings when
-skipped). Version history copies latest-only so far (multi-version via the
-Migration API package format is queued). Graph API is not used.
+skipped). Migration API list items are not implementable (AMR exports no
+ground truth for plain items); the classic engine covers lists. Graph API
+is used only by the app-registration wizard (the only management surface);
+migrations themselves never touch it.
 
 ## Roadmap
 

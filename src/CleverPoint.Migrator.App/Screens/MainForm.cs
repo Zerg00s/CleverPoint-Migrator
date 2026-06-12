@@ -116,6 +116,7 @@ public class MainForm : Form
         _tray.ContextMenuStrip = menu;
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
         _tray.Visible = true;
+        Toasts.Configure(_tray, () => _settings.ShowCompletionToasts);
 
         Resize += (_, _) =>
         {
@@ -123,6 +124,27 @@ public class MainForm : Form
                 Hide();
         };
         FormClosed += (_, _) => _tray.Visible = false;
+    }
+}
+
+/// <summary>Windows notifications on run completion, suppressible in settings.</summary>
+public static class Toasts
+{
+    private static NotifyIcon? _tray;
+    private static Func<bool>? _enabled;
+
+    public static void Configure(NotifyIcon tray, Func<bool> enabled)
+    {
+        _tray = tray;
+        _enabled = enabled;
+    }
+
+    public static void Show(string title, string message)
+    {
+        if (_tray == null || _enabled?.Invoke() != true) return;
+        _tray.BalloonTipTitle = title;
+        _tray.BalloonTipText = message;
+        _tray.ShowBalloonTip(5000);
     }
 }
 

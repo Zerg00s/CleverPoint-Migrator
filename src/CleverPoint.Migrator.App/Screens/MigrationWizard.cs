@@ -135,6 +135,8 @@ public class MigrationWizard : Form
             CertPfxPath = match.CertPfxPath,
             CertPassword = string.IsNullOrEmpty(match.CertPasswordProtected) ? "" : AppSettings.Unprotect(match.CertPasswordProtected),
         };
+        // The configured request budget applies per tenant host.
+        Core.Http.RequestThrottle.Configure(new Uri(siteUrl).Host, _settings.MaxRequestsPerSecond);
         return new SpConnection(siteUrl, new CertTokenProvider(creds));
     }
 
@@ -187,6 +189,13 @@ public class MigrationWizard : Form
         var status = "Completed";
         try
         {
+            // Concurrency cap: extra migrations queue and wait their turn.
+            RunQueue.Configure(_settings.MaxParallelMigrations);
+            if (RunQueue.RunningCount >= _settings.MaxParallelMigrations)
+                _status.Text = $"Queued ({RunQueue.RunningCount} running)...";
+            using var slot = await RunQueue.EnterAsync();
+            _status.Text = "Running...";
+
             // Engine work stays off the UI thread; the UI only receives events.
             await Task.Run(async () =>
             {
@@ -225,6 +234,8 @@ public class MigrationWizard : Form
             _progress.Visible = false;
             if (status is "Completed" or "CompletedWithIssues")
                 _status.Text = $"Done: {result.Summary()}";
+            Toasts.Show(status == "Completed" ? "Migration finished" : $"Migration {status}",
+                $"{_sourceList.Text} -> {targetTitle}: {result.Summary()}");
         }
     }
 
