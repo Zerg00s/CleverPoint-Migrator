@@ -389,6 +389,7 @@ public class MigrationWizard : Form
         }
         var targetTitle = _targetList.Text.Length > 0 ? _targetList.Text : _sourceList.Text;
 
+        _running = true;
         _run.Enabled = false;
         _runContent.Enabled = false;
         _cancel.Visible = true;
@@ -419,7 +420,12 @@ public class MigrationWizard : Form
             // Persist on the WORKER thread: routing through BeginInvoke loses
             // rows when the window closes before the UI queue flushes.
             lock (storeLock) store.RecordItem(runId, rec);
-            BeginInvoke(() =>
+            // The window may be gone (closed mid-run); the DB row above is
+            // what matters - UI updates are best-effort.
+            if (!IsHandleCreated || IsDisposed) return;
+            try
+            {
+                BeginInvoke(() =>
         {
             var row = _log.Rows[_log.Rows.Add(rec.ItemType, rec.SourcePath,
                 rec.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), rec.Status.ToString(), rec.Message ?? "")];
@@ -445,6 +451,8 @@ public class MigrationWizard : Form
                 _status.Text = text;
             }
         });
+            }
+            catch (InvalidOperationException) { /* window closed mid-run */ }
         };
 
         var options = new CopyOptions
@@ -591,6 +599,7 @@ public class MigrationWizard : Form
             _lastRunId = runId;
             _export.Visible = true;
             _compare.Visible = true;
+            _running = false;
             _run.Enabled = !_batchMode;
             _runContent.Enabled = !_batchMode;
             _cancel.Visible = false;
@@ -847,6 +856,25 @@ public class MigrationWizard : Form
         {
             return false;
         }
+    }
+
+    private bool _running;
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (_running || _batchMode)
+        {
+            var choice = MessageBox.Show(this,
+                "A migration is still running.\n\nStop it and close? Everything copied so far stays in place and the run can be resumed from History.",
+                "Migration in progress", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (choice != DialogResult.Yes)
+            {
+                e.Cancel = true;
+                return;
+            }
+            _cts?.Cancel();
+        }
+        base.OnFormClosing(e);
     }
 
     private void ConfirmCancel()
