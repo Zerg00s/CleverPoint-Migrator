@@ -150,7 +150,13 @@ public class HomeScreen : UserControl
             Cursor = Cursors.Hand,
         };
         addConnection.FlatAppearance.BorderSize = 0;
-        addConnection.Click += (_, _) => navigate(new SettingsScreen(settings));
+        addConnection.Click += (_, _) =>
+        {
+            // Straight into connection creation; land on the normal home once added.
+            using var editor = new ConnectionEditor(settings);
+            if (editor.ShowDialog(FindForm()) == DialogResult.OK && settings.Connections.Count > 0)
+                navigate(new HomeScreen(settings, navigate));
+        };
 
         canvas.Controls.AddRange(new Control[] { welcome, prompt, addConnection });
         canvas.Resize += (_, _) =>
