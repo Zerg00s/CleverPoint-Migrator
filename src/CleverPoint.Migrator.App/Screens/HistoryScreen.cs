@@ -15,17 +15,24 @@ public class HistoryScreen : UserControl
     private readonly MultiSelectFilter _statusFilter = new(
         new[] { "Completed", "CompletedWithIssues", "Interrupted", "Failed", "Running" });
     private List<MigrationRun> _runs = new();
+    private readonly AppSettings _settings;
 
     public HistoryScreen(AppSettings settings, Action<Control> navigate)
     {
+        _settings = settings;
         BackColor = Brand.Surface;
         Padding = new Padding(24);
 
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 44, Padding = new Padding(0, 6, 0, 0) };
         var export = new Button { Text = "Export log (CSV)", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0) };
         var rename = new Button { Text = "Rename", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0) };
-        bar.Controls.AddRange(new Control[] { _search, _statusFilter, rename, export });
+        var incremental = new Button { Text = "Run incremental", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0), BackColor = Brand.Accent, ForeColor = Color.White };
+        incremental.FlatAppearance.BorderSize = 0;
+        var reopen = new Button { Text = "Open task", AutoSize = true, Padding = new Padding(10, 2, 10, 2), FlatStyle = FlatStyle.Flat, Margin = new Padding(12, 0, 0, 0) };
+        bar.Controls.AddRange(new Control[] { _search, _statusFilter, incremental, reopen, rename, export });
         Controls.Add(bar);
+        incremental.Click += (_, _) => ReopenSelected(delta: true);
+        reopen.Click += (_, _) => ReopenSelected(delta: false);
 
         _grid.Dock = DockStyle.Fill;
         _grid.ReadOnly = true;
@@ -90,8 +97,8 @@ public class HistoryScreen : UserControl
                 && !run.SourceList.Contains(query, StringComparison.OrdinalIgnoreCase)
                 && !run.TargetList.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
 
-            var row = _grid.Rows[_grid.Rows.Add(run.Id, run.Name, $"{run.SourceUrl} / {run.SourceList}",
-                $"{run.TargetUrl} / {run.TargetList}", run.Engine,
+            var row = _grid.Rows[_grid.Rows.Add(run.Id, run.Name, $"{run.SourceUrl}/{run.SourceList}",
+                $"{run.TargetUrl}/{run.TargetList}", run.Engine,
                 run.StartedUtc.ToLocalTime().ToString("g"), run.Status,
                 $"{run.Copied} copied, {run.Skipped} skipped, {run.Warnings} warn, {run.Failed} failed")];
             row.Cells["status"].Style.ForeColor = run.Failed > 0 || run.Status == "Failed" ? Brand.Fail
@@ -101,6 +108,21 @@ public class HistoryScreen : UserControl
 
     private long? SelectedRunId() =>
         _grid.SelectedRows.Count > 0 ? Convert.ToInt64(_grid.SelectedRows[0].Cells["id"].Value) : null;
+
+    /// <summary>
+    /// "Return to session": reopen a past run in the wizard. Incremental mode
+    /// pre-arms the delta baseline; an Interrupted run resumes where it left off.
+    /// </summary>
+    private void ReopenSelected(bool delta)
+    {
+        if (SelectedRunId() is not { } id) return;
+        var run = _runs.FirstOrDefault(r => r.Id == id);
+        if (run == null) return;
+        using var wizard = new MigrationWizard(_settings);
+        wizard.PresetFromRun(run, delta);
+        wizard.ShowDialog(FindForm());
+        Reload();
+    }
 
     private void RenameSelected()
     {

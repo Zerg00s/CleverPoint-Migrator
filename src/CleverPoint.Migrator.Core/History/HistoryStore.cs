@@ -20,6 +20,9 @@ public class MigrationRun
     public int Skipped { get; set; }
     public int Warnings { get; set; }
     public int Failed { get; set; }
+
+    /// <summary>Max server-stamped Modified seen on the source during the run; the next delta's baseline.</summary>
+    public DateTime? MaxSourceModifiedUtc { get; set; }
 }
 
 /// <summary>
@@ -55,6 +58,9 @@ public class HistoryStore : IDisposable
                 pair TEXT NOT NULL, source_id INT NOT NULL, target_id INT NOT NULL,
                 PRIMARY KEY(pair, source_id));
             """);
+        // Schema upgrades for databases created by earlier builds.
+        try { Exec("ALTER TABLE runs ADD COLUMN max_modified_utc TEXT"); }
+        catch (SqliteException) { /* column already there */ }
     }
 
     public long StartRun(MigrationRun run)
@@ -99,8 +105,10 @@ public class HistoryStore : IDisposable
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
-            UPDATE runs SET finished_utc=$f, status=$s, copied=$c, skipped=$k, warnings=$w, failed=$x WHERE id=$id
+            UPDATE runs SET finished_utc=$f, status=$s, copied=$c, skipped=$k, warnings=$w, failed=$x,
+                max_modified_utc=COALESCE($m, max_modified_utc) WHERE id=$id
             """;
+        cmd.Parameters.AddWithValue("$m", (object?)result.MaxSourceModifiedUtc?.ToString("o") ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$f", DateTime.UtcNow.ToString("o"));
         cmd.Parameters.AddWithValue("$s", status);
         cmd.Parameters.AddWithValue("$c", result.Copied);
@@ -115,7 +123,7 @@ public class HistoryStore : IDisposable
     {
         var runs = new List<MigrationRun>();
         using var cmd = _db.CreateCommand();
-        cmd.CommandText = "SELECT id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed FROM runs ORDER BY id DESC LIMIT $l";
+        cmd.CommandText = "SELECT id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc FROM runs ORDER BY id DESC LIMIT $l";
         cmd.Parameters.AddWithValue("$l", limit);
         using var r = cmd.ExecuteReader();
         while (r.Read())
@@ -128,6 +136,7 @@ public class HistoryStore : IDisposable
                 FinishedUtc = r.IsDBNull(8) ? null : DateTime.Parse(r.GetString(8)).ToUniversalTime(),
                 Status = r.GetString(9), Copied = r.GetInt32(10), Skipped = r.GetInt32(11),
                 Warnings = r.GetInt32(12), Failed = r.GetInt32(13),
+                MaxSourceModifiedUtc = r.IsDBNull(14) ? null : DateTime.Parse(r.GetString(14)).ToUniversalTime(),
             });
         }
         return runs;

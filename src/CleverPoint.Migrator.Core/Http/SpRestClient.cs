@@ -176,11 +176,20 @@ public class SpRestClient
 
     private readonly Dictionary<string, (string Digest, DateTime ExpiresUtc)> _digests = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Form digest for cookie-auth writes, cached per site (~20 min).</summary>
     private async Task<string> GetDigestAsync(string requestUrl)
     {
         var apiIndex = requestUrl.IndexOf("/_api/", StringComparison.OrdinalIgnoreCase);
         var siteUrl = apiIndex > 0 ? requestUrl[..apiIndex] : new Uri(requestUrl).GetLeftPart(UriPartial.Authority);
+        return await GetFormDigestAsync(siteUrl);
+    }
+
+    /// <summary>
+    /// Form digest for cookie-auth writes, cached per site (~20 min). Also used
+    /// by SpConnection for CSOM: netstandard CSOM does no digest handling of its
+    /// own, so cookie-auth ProcessQuery posts are 403 without this header.
+    /// </summary>
+    public async Task<string> GetFormDigestAsync(string siteUrl)
+    {
         if (_digests.TryGetValue(siteUrl, out var cached) && cached.ExpiresUtc > DateTime.UtcNow.AddMinutes(2))
             return cached.Digest;
 

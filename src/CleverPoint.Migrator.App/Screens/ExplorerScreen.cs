@@ -33,11 +33,35 @@ public class ExplorerScreen : UserControl
         _source = new ExplorerPane("Source", settings, _browser, isTarget: false);
         _target = new ExplorerPane("Target", settings, _browser, isTarget: true);
         _target.DropReceived += OnDropMigration;
-        _source.CopyRequested += OnDropMigration;
         split.Panel1.Controls.Add(_source);
         split.Panel2.Controls.Add(_target);
+
+        // One action bar UNDER both panes, with breathing room.
+        var copy = new Button
+        {
+            Text = "Copy to target  >",
+            AutoSize = true,
+            Padding = new Padding(32, 10, 32, 10),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Brand.Accent,
+            ForeColor = Color.White,
+            Font = Brand.Heading,
+            Cursor = Cursors.Hand,
+        };
+        copy.FlatAppearance.BorderSize = 0;
+        copy.Click += (_, _) => OnDropMigration(_source.CurrentSelection());
+        var actionBar = new Panel { Dock = DockStyle.Bottom, Height = 76, BackColor = Brand.Surface };
+        actionBar.Controls.Add(copy);
+        actionBar.Resize += (_, _) => copy.Location = new Point((actionBar.Width - copy.Width) / 2, (actionBar.Height - copy.Height) / 2);
+
         Controls.Add(split);
-        Load += (_, _) => split.SplitterDistance = Width / 2;
+        Controls.Add(actionBar);
+        split.BringToFront();
+        Load += (_, _) =>
+        {
+            split.SplitterDistance = Width / 2;
+            copy.Location = new Point((actionBar.Width - copy.Width) / 2, (actionBar.Height - copy.Height) / 2);
+        };
     }
 
     private void OnDropMigration(List<SpFolderEntry> items)
@@ -54,22 +78,15 @@ public class ExplorerScreen : UserControl
             return;
         }
 
-        // Selected files become name filters, selected LIST ITEMS become an
-        // ID filter; one selected folder becomes the scope.
-        var folders = items.Where(i => i.IsFolder).ToList();
+        // Surgical selection: any mix of files and folders becomes an exact
+        // path list (folders bring their whole subtree); selected LIST ITEMS
+        // become an ID filter. Nothing selected = the whole list.
         var listItems = items.Where(i => !i.IsFolder && i.ItemId > 0).ToList();
-        var files = items.Where(i => !i.IsFolder && i.ItemId == 0).ToList();
-        if (folders.Count > 1)
-        {
-            MessageBox.Show(FindForm(),
-                "Copy one folder at a time (or the whole list). Multiple-folder selections aren't supported yet.",
-                "One folder at a time", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        var folderScope = folders.Count == 1 ? folders[0].ServerRelativeUrl
-            : files.Count > 0 ? _source.CurrentFolder : null;
-        var patterns = files.Select(f => f.Name).ToList();
+        var pathEntries = items.Where(i => i.ServerRelativeUrl.Length > 0).ToList();
+        var selectedPaths = pathEntries.Select(e => e.ServerRelativeUrl).ToList();
         var itemIds = listItems.Select(i => i.ItemId).ToList();
+        // Scanning can start at the open folder - all selections live under it.
+        var folderScope = selectedPaths.Count > 0 ? _source.CurrentFolder : null;
 
         // New list on the SAME site gets " - Copy" so it never collides with the source.
         var sameSite = string.Equals(_source.Connection.SiteUrl.TrimEnd('/'), _target.Connection.SiteUrl.TrimEnd('/'),
@@ -80,7 +97,7 @@ public class ExplorerScreen : UserControl
         // change) every detail, and nothing runs until a copy button is clicked.
         using var wizard = new MigrationWizard(_settings);
         wizard.Preset(_source.Connection.SiteUrl, sourceList.Title,
-            _target.Connection.SiteUrl, targetName, folderScope, patterns, itemIds);
+            _target.Connection.SiteUrl, targetName, folderScope, selectedPaths, itemIds);
         wizard.ShowDialog(FindForm());
     }
 }
@@ -109,7 +126,6 @@ public class ExplorerPane : UserControl
         _items.SelectedItems.Count > 0 ? _items.SelectedItems[0].Tag as SpListInfo : null;
 
     public event Action<List<SpFolderEntry>>? DropReceived;
-    public event Action<List<SpFolderEntry>>? CopyRequested;
 
     private const string AddConnectionEntry = "<  Add a new connection...  >";
 
@@ -131,12 +147,16 @@ public class ExplorerPane : UserControl
         Dock = DockStyle.Fill;
         Padding = new Padding(8);
 
-        var header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 64, ColumnCount = 2 };
+        var header = new TableLayoutPanel { Dock = DockStyle.Top, Height = 64, ColumnCount = 3 };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.Controls.Add(new Label { Text = role, Font = Brand.Heading, ForeColor = Brand.Primary, AutoSize = true }, 0, 0);
         header.Controls.Add(_siteUrl, 0, 1);
         header.Controls.Add(_connect, 1, 1);
+        var refresh = new Button { Text = "Refresh", AutoSize = true, FlatStyle = FlatStyle.Flat, Margin = new Padding(6, 0, 0, 0) };
+        refresh.Click += async (_, _) => await RefreshAsync();
+        header.Controls.Add(refresh, 2, 1);
         Controls.Add(header);
 
         // Searchable: type to filter; pick a saved connection or add one.
@@ -192,27 +212,12 @@ public class ExplorerPane : UserControl
                     .Select(i => i.Tag).OfType<SpFolderEntry>().ToList();
                 _items.DoDragDrop(selection, DragDropEffects.Copy);
             };
-
-            // Keyboard/mouse-only alternative to drag and drop.
-            var copy = new Button
-            {
-                Text = "Copy to target  >",
-                AutoSize = true,
-                Padding = new Padding(12, 4, 12, 4),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Brand.Accent,
-                ForeColor = Color.White,
-                Dock = DockStyle.Bottom,
-            };
-            copy.FlatAppearance.BorderSize = 0;
-            copy.Click += (_, _) => CopyRequested?.Invoke(
-                _items.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<SpFolderEntry>().ToList());
-            Controls.Add(copy);
-            copy.BringToFront();
-            _status.BringToFront();
-            _items.BringToFront();
         }
     }
+
+    /// <summary>The current multi-selection (files, folders, list items) for the copy action.</summary>
+    public List<SpFolderEntry> CurrentSelection() =>
+        _items.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<SpFolderEntry>().ToList();
 
     private async Task OpenSiteAsync()
     {
@@ -233,12 +238,31 @@ public class ExplorerPane : UserControl
         }
     }
 
-    private async Task ShowSiteAsync()
+    /// <summary>Reloads whatever is on screen, bypassing the cache.</summary>
+    private async Task RefreshAsync()
+    {
+        if (Connection == null) return;
+        try
+        {
+            if (CurrentList == null) await ShowSiteAsync(fresh: true);
+            else if (_currentFolder != null) await ShowFolderAsync(_currentFolder);
+            else await ShowListItemsAsync(CurrentList);
+        }
+        catch (Exception ex)
+        {
+            _status.Text = $"Refresh failed: {Short(ex.Message)}";
+        }
+    }
+
+    private static string Short(string message) =>
+        message.Length > 160 ? message[..160] + "..." : message;
+
+    private async Task ShowSiteAsync(bool fresh = false)
     {
         if (Connection == null) return;
         _status.Text = "Loading site...";
-        var lists = await Task.Run(() => _browser.GetListsAsync(Connection));
-        var webs = await Task.Run(() => _browser.GetSubwebsAsync(Connection));
+        var lists = await Task.Run(() => _browser.GetListsAsync(Connection, useCache: !fresh));
+        var webs = await Task.Run(() => _browser.GetSubwebsAsync(Connection, useCache: !fresh));
         _items.Items.Clear();
         foreach (var web in webs)
         {
@@ -258,6 +282,20 @@ public class ExplorerPane : UserControl
     private async Task DrillAsync()
     {
         if (Connection == null || _items.SelectedItems.Count == 0) return;
+        try
+        {
+            await DrillCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            // Browsing problems (throttling, permissions, deleted items) land
+            // in the status bar - never in a crash dialog.
+            _status.Text = $"Could not open: {Short(ex.Message)}";
+        }
+    }
+
+    private async Task DrillCoreAsync()
+    {
         switch (_items.SelectedItems[0].Tag)
         {
             case null:   // ".." row
@@ -303,7 +341,7 @@ public class ExplorerPane : UserControl
         if (Connection == null) return;
         _status.Text = "Loading folder...";
         _currentFolder = folderUrl;
-        var entries = await Task.Run(() => _browser.GetFolderAsync(Connection, folderUrl));
+        var entries = await Task.Run(() => _browser.GetFolderAsync(Connection, folderUrl, CurrentList?.ServerRelativeUrl));
         _items.Items.Clear();
         _items.Items.Add(new ListViewItem(new[] { "..", "Back to site" }));
         foreach (var entry in entries)
@@ -316,6 +354,7 @@ public class ExplorerPane : UserControl
             _items.Items.Add(row);
         }
         _status.Text = $"{CurrentList?.Title}: {entries.Count(e => e.IsFolder)} folders, {entries.Count(e => !e.IsFolder)} files"
-            + (_isTarget ? "  (drop items here to migrate)" : "  (drag items to the target pane)");
+            + (_isTarget ? "  (drop items here to migrate)"
+                : "  (Ctrl+click any mix of files and folders to copy just those; nothing selected = everything)");
     }
 }

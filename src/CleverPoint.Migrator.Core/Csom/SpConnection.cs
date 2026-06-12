@@ -48,6 +48,10 @@ public class SpConnection
             else if (_cookies is { } c)
             {
                 e.WebRequestExecutor.RequestHeaders["Cookie"] = $"FedAuth={c.FedAuth}; rtFa={c.RtFa}";
+                // netstandard CSOM has no built-in form-digest handling, so
+                // cookie-auth ProcessQuery writes are 403 without this header.
+                e.WebRequestExecutor.RequestHeaders["X-RequestDigest"] =
+                    Rest.GetFormDigestAsync(SiteUrl).GetAwaiter().GetResult();
             }
             e.WebRequestExecutor.RequestHeaders["User-Agent"] = SpRestClient.UserAgent;
         };

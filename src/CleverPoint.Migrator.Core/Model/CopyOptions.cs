@@ -46,6 +46,14 @@ public class CopyOptions
     /// </summary>
     public List<int> ItemIds { get; set; } = new();
 
+    /// <summary>
+    /// Optional surgical selection: server-relative paths of files AND/OR
+    /// folders picked in the explorer. A file copies when its path is listed;
+    /// a folder copies with everything underneath it. Parents of selected
+    /// paths are recreated on demand. Empty = no path filter.
+    /// </summary>
+    public List<string> SelectedPaths { get; set; } = new();
+
     public int PageSize { get; set; } = 200;
 
     /// <summary>

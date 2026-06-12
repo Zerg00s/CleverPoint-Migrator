@@ -75,7 +75,10 @@ public class HomeScreen : UserControl
                 var row = recent.Rows[recent.Rows.Add(
                     run.Name, run.StartedUtc.ToLocalTime().ToString("g"), run.Status,
                     $"{run.Copied} copied, {run.Skipped} skipped, {run.Failed} failed")];
-                row.Cells[2].Style.ForeColor = run.Failed > 0 ? Brand.Fail : run.Warnings > 0 ? Brand.Warn : Brand.Ok;
+                // Color by the RUN status first: a run that died before
+                // copying anything has 0 item failures but is still red.
+                row.Cells[2].Style.ForeColor = run.Failed > 0 || run.Status == "Failed" ? Brand.Fail
+                    : run.Warnings > 0 || run.Status is "CompletedWithIssues" or "Interrupted" ? Brand.Warn : Brand.Ok;
             }
         }
         catch { /* empty history is fine on first run */ }

@@ -104,6 +104,13 @@ public class FileCopier
                     ? $"{targetRoot}/{relativePath[..relativePath.LastIndexOf('/')]}"
                     : targetRoot;
 
+                // Filtered copies (selected paths / name patterns) skip folder
+                // items, so a matched file's parent chain may not exist yet -
+                // recreate it on demand.
+                if (relativePath.Contains('/')
+                    && (options.SelectedPaths.Count > 0 || options.NamePatterns.Count > 0))
+                    await EnsureFolderAsync(targetWeb, targetRoot, relativePath[..relativePath.LastIndexOf('/')]);
+
                 // Large files stream through chunked upload sessions
                 // (O(slice) memory; works up to SPO's 250 GB limit).
                 var declaredSize = long.TryParse(sourceItem.FieldValues.GetValueOrDefault("File_x0020_Size")?.ToString(), out var ds) ? ds : 0;

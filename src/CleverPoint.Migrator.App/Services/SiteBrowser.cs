@@ -58,24 +58,65 @@ public class SiteBrowser
         return webs;
     }
 
-    public async Task<List<SpFolderEntry>> GetFolderAsync(SpConnection conn, string folderServerRelativeUrl)
+    public async Task<List<SpFolderEntry>> GetFolderAsync(SpConnection conn, string folderServerRelativeUrl, string? listServerRelativeUrl = null)
     {
-        var escaped = Uri.EscapeDataString(folderServerRelativeUrl.Replace("'", "''"));
-        using var folders = await conn.Rest.GetJsonAsync(
-            $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Folders?$select=Name,ServerRelativeUrl&$top=500");
-        using var files = await conn.Rest.GetJsonAsync(
-            $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Files?$select=Name,ServerRelativeUrl,Length&$top=500");
+        try
+        {
+            var escaped = Uri.EscapeDataString(folderServerRelativeUrl.Replace("'", "''"));
+            using var folders = await conn.Rest.GetJsonAsync(
+                $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Folders?$select=Name,ServerRelativeUrl&$top=500");
+            using var files = await conn.Rest.GetJsonAsync(
+                $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativePath(decodedUrl='{escaped}')/Files?$select=Name,ServerRelativeUrl,Length&$top=500");
 
-        var entries = folders.RootElement.GetProperty("value").EnumerateArray()
-            .Where(e => e.GetProperty("Name").GetString() != "Forms")
-            .Select(e => new SpFolderEntry(e.GetProperty("Name").GetString() ?? "",
-                e.GetProperty("ServerRelativeUrl").GetString() ?? "", true, 0))
-            .Concat(files.RootElement.GetProperty("value").EnumerateArray()
+            var entries = folders.RootElement.GetProperty("value").EnumerateArray()
+                .Where(e => e.GetProperty("Name").GetString() != "Forms")
                 .Select(e => new SpFolderEntry(e.GetProperty("Name").GetString() ?? "",
-                    e.GetProperty("ServerRelativeUrl").GetString() ?? "", false,
-                    long.TryParse(e.GetProperty("Length").GetString(), out var l) ? l : 0)))
-            .ToList();
-        return entries;
+                    e.GetProperty("ServerRelativeUrl").GetString() ?? "", true, 0))
+                .Concat(files.RootElement.GetProperty("value").EnumerateArray()
+                    .Select(e => new SpFolderEntry(e.GetProperty("Name").GetString() ?? "",
+                        e.GetProperty("ServerRelativeUrl").GetString() ?? "", false,
+                        long.TryParse(e.GetProperty("Length").GetString(), out var l) ? l : 0)))
+                .ToList();
+            return entries;
+        }
+        catch (Core.Http.SpRestException ex)
+            when (listServerRelativeUrl != null && ex.Message.Contains("SPQueryThrottledException"))
+        {
+            // Above the list view threshold the folder enumeration is blocked;
+            // RenderListDataAsStream is what the SP UI itself uses, so it
+            // works on 100K-item libraries.
+            return await RenderFolderAsync(conn, folderServerRelativeUrl, listServerRelativeUrl);
+        }
+    }
+
+    private static async Task<List<SpFolderEntry>> RenderFolderAsync(SpConnection conn, string folderUrl, string listUrl)
+    {
+        var escapedList = Uri.EscapeDataString(listUrl.Replace("'", "''"));
+        var body = new
+        {
+            parameters = new
+            {
+                RenderOptions = 2, // ListData only
+                FolderServerRelativeUrl = folderUrl,
+                ViewXml = "<View><Query><OrderBy><FieldRef Name='FileLeafRef'/></OrderBy></Query>"
+                    + "<ViewFields><FieldRef Name='FileLeafRef'/><FieldRef Name='FileRef'/><FieldRef Name='FSObjType'/><FieldRef Name='File_x0020_Size'/></ViewFields>"
+                    + "<RowLimit Paged='TRUE'>500</RowLimit></View>",
+            },
+        };
+        var response = await conn.Rest.PostAsync(
+            $"{conn.SiteUrl}/_api/web/GetList(@a1)/RenderListDataAsStream?@a1='{escapedList}'", body);
+        using var doc = JsonDocument.Parse(response);
+        var entries = new List<SpFolderEntry>();
+        foreach (var row in doc.RootElement.GetProperty("Row").EnumerateArray())
+        {
+            var name = row.GetProperty("FileLeafRef").GetString() ?? "";
+            if (name == "Forms") continue;
+            var isFolder = row.TryGetProperty("FSObjType", out var t) && t.GetString() == "1";
+            var size = row.TryGetProperty("File_x0020_Size", out var s)
+                && long.TryParse(s.GetString(), out var l) ? l : 0;
+            entries.Add(new SpFolderEntry(name, row.GetProperty("FileRef").GetString() ?? "", isFolder, size));
+        }
+        return entries.OrderByDescending(e => e.IsFolder).ThenBy(e => e.Name).ToList();
     }
 
     /// <summary>Items of a generic list (no files to enumerate), newest first. Not cached: selections need live IDs.</summary>

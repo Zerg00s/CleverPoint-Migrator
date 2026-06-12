@@ -3,6 +3,7 @@ using CleverPoint.Migrator.App.Theme;
 using CleverPoint.Migrator.Core.Auth;
 using CleverPoint.Migrator.Core.Csom;
 using CleverPoint.Migrator.Core.History;
+using CleverPoint.Migrator.Core.Http;
 using CleverPoint.Migrator.Core.MigrationApi;
 using CleverPoint.Migrator.Core.Model;
 using CleverPoint.Migrator.Core.Operations;
@@ -38,25 +39,58 @@ public class MigrationWizard : Form
 
     /// <summary>Prefills the wizard from the explorer (drag-drop or selection).</summary>
     public void Preset(string sourceSite, string sourceList, string targetSite, string targetList,
-        string? sourceFolder = null, List<string>? namePatterns = null, List<int>? itemIds = null)
+        string? sourceFolder = null, List<string>? selectedPaths = null, List<int>? itemIds = null)
     {
         _sourceSite.Text = sourceSite;
         _sourceList.Text = sourceList;
         _targetSite.Text = targetSite;
         _targetList.Text = targetList;
         _sourceFolderScope = sourceFolder;
-        _namePatterns = namePatterns ?? new List<string>();
+        _selectedPaths = selectedPaths ?? new List<string>();
         _itemIds = itemIds ?? new List<int>();
         var scope = new List<string>();
-        if (sourceFolder != null) scope.Add($"folder {sourceFolder.Split('/')[^1]}");
-        if (_namePatterns.Count > 0) scope.Add($"only: {string.Join(", ", _namePatterns.Take(5))}{(_namePatterns.Count > 5 ? "..." : "")}");
+        if (_selectedPaths.Count > 0)
+            scope.Add($"{_selectedPaths.Count} selected file(s)/folder(s): "
+                + string.Join(", ", _selectedPaths.Take(4).Select(p => p.Split('/')[^1]))
+                + (_selectedPaths.Count > 4 ? ", ..." : ""));
+        else if (sourceFolder != null)
+            scope.Add($"folder {sourceFolder.Split('/')[^1]}");
         if (_itemIds.Count > 0) scope.Add($"{_itemIds.Count} selected item(s)");
         _scopeInfo.Text = scope.Count > 0 ? "Scope: " + string.Join("; ", scope) : "";
     }
 
     private string? _sourceFolderScope;
-    private List<string> _namePatterns = new();
+    private List<string> _selectedPaths = new();
     private List<int> _itemIds = new();
+    private DateTime? _deltaBaselineUtc;
+    private long? _resumeRunId;
+
+    /// <summary>
+    /// Reopens a history run in the wizard ("return to session"). Delta mode
+    /// pre-arms the incremental baseline; an Interrupted run resumes by
+    /// skipping everything its first attempt already copied.
+    /// </summary>
+    public void PresetFromRun(MigrationRun run, bool delta)
+    {
+        Preset(run.SourceUrl, run.SourceList, run.TargetUrl, run.TargetList);
+        _engine.SelectedIndex = run.Engine == "MigrationApi" ? 1 : 0;
+        if (delta)
+        {
+            _deltaBaselineUtc = run.MaxSourceModifiedUtc;
+            _scopeInfo.Text = _deltaBaselineUtc != null
+                ? $"Incremental: only items changed since {_deltaBaselineUtc.Value.ToLocalTime():g} copy; existing items update in place."
+                : "Incremental: existing items update in place (no duplicates); unchanged items re-copy (no baseline from the last run).";
+        }
+        else if (run.Status == "Interrupted")
+        {
+            _resumeRunId = run.Id;
+            _scopeInfo.Text = "Resume: items the interrupted run already copied will be skipped.";
+        }
+        else
+        {
+            _scopeInfo.Text = "Re-run: existing items update in place (no duplicates).";
+        }
+    }
     private readonly Label _scopeInfo = new() { AutoSize = true, ForeColor = Brand.TextSecondary };
 
     public MigrationWizard(AppSettings settings)
@@ -70,6 +104,15 @@ public class MigrationWizard : Form
         Font = Brand.Body;
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, Padding = new Padding(16), AutoSize = true };
+        // Labels and Browse buttons size to content; the input columns share
+        // the rest, so nothing clips at any window width.
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        foreach (var input in new Control[] { _sourceSite, _targetSite, _engine, _sourceList, _targetList, _targetUrl })
+            input.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         layout.Controls.Add(Lbl("Source site URL"), 0, 0); layout.Controls.Add(_sourceSite, 1, 0);
         layout.Controls.Add(Lbl("List / library"), 2, 0); layout.Controls.Add(_sourceList, 3, 0);
         var browseSource = BrowseButton("source", _sourceSite, _sourceList);
@@ -247,9 +290,18 @@ public class MigrationWizard : Form
             CopyViews = !contentOnly,
             CopyListSettings = !contentOnly,
             SourceFolderServerRelativeUrl = _sourceFolderScope,
-            NamePatterns = _namePatterns,
+            SelectedPaths = _selectedPaths,
             ItemIds = _itemIds,
+            ModifiedSinceUtc = _deltaBaselineUtc,
         };
+
+        // Any re-run over a pair we've copied before updates in place instead
+        // of duplicating: the persisted source->target item map drives upserts.
+        var pairKey = HistoryStore.PairKey(_sourceSite.Text, _sourceList.Text, _targetSite.Text, targetTitle);
+        var knownMap = store.GetItemMap(pairKey);
+        if (knownMap.Count > 0) options.UpsertItemMap = knownMap;
+        if (_resumeRunId is { } rid)
+            options.ResumeSkipPaths = store.GetCopiedSourcePaths(rid);
 
         var status = "Completed";
         try
@@ -265,6 +317,15 @@ public class MigrationWizard : Form
             // engine work stays off it and the UI only receives events.
             var source = Connect(_sourceSite.Text);
             var target = Connect(_targetSite.Text);
+
+            // Content-only copies content INTO an existing list - they never
+            // create one. Probe first so the user gets a clear answer instead
+            // of a surprise new list.
+            if (contentOnly && !await TargetListExistsAsync(target, targetTitle))
+                throw new InvalidOperationException(
+                    $"the target list '{targetTitle}' does not exist on {_targetSite.Text}. " +
+                    "Use 'Copy structure + content' to create it, or pick an existing list.");
+
             await Task.Run(async () =>
             {
                 if (_engine.SelectedIndex == 1)
@@ -304,7 +365,7 @@ public class MigrationWizard : Form
         }
         finally
         {
-            store.SaveItemMap(HistoryStore.PairKey(_sourceSite.Text, _sourceList.Text, _targetSite.Text, targetTitle), result.ItemMappings);
+            store.SaveItemMap(pairKey, result.ItemMappings);
             store.FinishRun(runId, result, status);
             _run.Enabled = true;
             _cancel.Visible = false;
@@ -313,6 +374,20 @@ public class MigrationWizard : Form
                 _status.Text = $"Done: {result.Summary()}";
             Toasts.Show(status == "Completed" ? "Migration finished" : $"Migration {status}",
                 $"{_sourceList.Text} -> {targetTitle}: {result.Summary()}");
+        }
+    }
+
+    private static async Task<bool> TargetListExistsAsync(SpConnection target, string title)
+    {
+        try
+        {
+            using var doc = await target.Rest.GetJsonAsync(
+                $"{target.SiteUrl}/_api/web/lists/GetByTitle('{Uri.EscapeDataString(title.Replace("'", "''"))}')?$select=Title");
+            return true;
+        }
+        catch (SpRestException ex) when (ex.StatusCode == 404)
+        {
+            return false;
         }
     }
 

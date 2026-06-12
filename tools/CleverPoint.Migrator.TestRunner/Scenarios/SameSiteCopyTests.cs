@@ -128,6 +128,71 @@ public static class SameSiteCopyTests
         Program.Check("selected items: target holds only the selection", targetList.ItemCount == 3, $"{targetList.ItemCount} on target");
     }
 
+    /// <summary>Surgical mixed selection: 2 specific files + 1 subfolder via SelectedPaths.</summary>
+    public static async Task CopySelectedPathsAsync()
+    {
+        var site = await RequireTestSiteAsync();
+        using (var ctx = site.CreateContext())
+        {
+            await TestAssets.DeleteIfExistsAsync(ctx, "MigTest-PathCopy");
+        }
+
+        // Discover real paths like the explorer would: 2 root-level files + 1 subfolder.
+        List<string> picked;
+        int expectFiles, expectFolders;
+        using (var ctx = site.CreateContext())
+        {
+            var list = ctx.Web.Lists.GetByTitle(TestAssets.SourceLibTitle);
+            ctx.Load(list.RootFolder, f => f.ServerRelativeUrl);
+            var items = list.GetItems(new CamlQuery { ViewXml = "<View Scope='RecursiveAll'><RowLimit>200</RowLimit></View>" });
+            ctx.Load(items);
+            ctx.Load(items, p => p.Include(i => i.Id, i => i.FileSystemObjectType));
+            await ctx.ExecuteQueryAsync();
+            var rootUrl = list.RootFolder.ServerRelativeUrl;
+            var all = items.AsEnumerable()
+                .Select(i => (Ref: (string)i["FileRef"], IsFolder: i.FileSystemObjectType == FileSystemObjectType.Folder))
+                .ToList();
+            var folderRef = all.First(x => x.IsFolder).Ref;
+            // True root-level files only: nothing below any folder.
+            var rootFiles = all.Where(x => !x.IsFolder && !x.Ref[(rootUrl.Length + 1)..].Contains('/'))
+                .Take(2).Select(x => x.Ref).ToList();
+            var inFolderFiles = all.Count(x => !x.IsFolder && x.Ref.StartsWith(folderRef + "/", StringComparison.OrdinalIgnoreCase));
+            expectFolders = all.Count(x => x.IsFolder
+                && (x.Ref.Equals(folderRef, StringComparison.OrdinalIgnoreCase)
+                    || x.Ref.StartsWith(folderRef + "/", StringComparison.OrdinalIgnoreCase)));
+            picked = rootFiles.Append(folderRef).ToList();
+            expectFiles = rootFiles.Count + inFolderFiles;
+            Console.WriteLine($"  picked: {string.Join(", ", picked.Select(p => p.Split('/')[^1]))} (expect {expectFiles} files, {expectFolders} folders)");
+        }
+
+        var options = new CopyOptions
+        {
+            TargetListTitle = "MigTest-PathCopy",
+            TargetListUrl = "MigTestPathCopy",
+            SelectedPaths = picked,
+        };
+        var result = await CopyEngine.CopyListAsync(site, site, TestAssets.SourceLibTitle, options);
+        Console.WriteLine($"  copy result: {result.Summary()}");
+        foreach (var r in result.Records.Where(r => r.Status is ItemCopyStatus.Failed or ItemCopyStatus.Warning))
+            Console.WriteLine($"    [{r.Status}] {r.ItemType} {r.SourcePath}: {r.Message}");
+
+        Program.Check("selected paths: no failures", result.Failed == 0, result.Summary());
+        var copiedFiles = result.Records.Count(r => r.ItemType == "File" && r.Status == ItemCopyStatus.Copied);
+        Program.Check($"selected paths: exactly {expectFiles} files copied (2 picked + folder contents)",
+            copiedFiles == expectFiles, $"{copiedFiles} files");
+
+        // The target must hold ONLY the selection: the 2 files, the folder, its children.
+        using var targetCtx = site.CreateContext();
+        var targetList = targetCtx.Web.Lists.GetByTitle("MigTest-PathCopy");
+        var targetItems = targetList.GetItems(new CamlQuery { ViewXml = "<View Scope='RecursiveAll'><RowLimit>500</RowLimit></View>" });
+        targetCtx.Load(targetItems, p => p.Include(i => i.FileSystemObjectType));
+        await targetCtx.ExecuteQueryAsync();
+        var tFiles = targetItems.AsEnumerable().Count(i => i.FileSystemObjectType == FileSystemObjectType.File);
+        var tFolders = targetItems.AsEnumerable().Count(i => i.FileSystemObjectType == FileSystemObjectType.Folder);
+        Program.Check("selected paths: target holds only the selection",
+            tFiles == expectFiles && tFolders == expectFolders, $"{tFiles} files, {tFolders} folders on target");
+    }
+
     public static async Task CopyLibraryAsync()
     {
         var site = await RequireTestSiteAsync();

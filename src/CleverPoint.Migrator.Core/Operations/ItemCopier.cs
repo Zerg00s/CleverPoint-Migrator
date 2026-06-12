@@ -362,6 +362,19 @@ public class ItemCopier
                 if (options.ItemIds.Count > 0 && !options.ItemIds.Contains(item.Id))
                     continue;
 
+                // Surgical path selection (explorer multi-select of files and
+                // folders): a listed file copies, a listed folder copies with
+                // its whole subtree; everything else is silently left out and
+                // parents of matches recreate on demand.
+                if (options.SelectedPaths.Count > 0)
+                {
+                    var fileRef = (string)item["FileRef"];
+                    var match = options.SelectedPaths.Any(p =>
+                        fileRef.Equals(p, StringComparison.OrdinalIgnoreCase)
+                        || fileRef.StartsWith(p.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase));
+                    if (!match) continue;
+                }
+
                 if (options.ModifiedSinceUtc.HasValue || options.ModifiedBeforeUtc.HasValue)
                 {
                     var modified = itemModified;
