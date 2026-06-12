@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>CleverPoint.Migrator.App</RootNamespace>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Company>CleverPoint Solutions Inc.</Company>
+    <Authors>Denis Molodtsov</Authors>
+    <Product>CleverPoint Migrator</Product>
+    <Description>SharePoint Online migration tool</Description>
+    <Copyright>Copyright (c) CleverPoint Solutions Inc. 2026</Copyright>
+    <!-- Auto-incrementing version: date-derived build/revision, shown in About. -->
+    <VersionPrefix>1.0</VersionPrefix>
+    <FileVersion>1.0.$([System.DateTime]::UtcNow.ToString(yyMM)).$([System.DateTime]::UtcNow.ToString(ddHH))</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <InformationalVersion>1.0.$([System.DateTime]::UtcNow.ToString(yyMM)).$([System.DateTime]::UtcNow.ToString(ddHH))</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2535.41" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <ProjectReference Include="..\CleverPoint.Migrator.Core\CleverPoint.Migrator.Core.csproj" />
+  </ItemGroup>
+
+</Project>

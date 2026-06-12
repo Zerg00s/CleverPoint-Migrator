@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Test artifacts and local databases
+amr-output/
+BatLogs/
+*.db
+*.db-journal
+migration-history*.db
+delta-run-log.csv
+compare-report.*
+user-mapping*.csv
+
+# SECRETS - never check in credentials, certificates or tokens
+Secrets/
+*.pfx
+*.pem
+*.cer
+*.key
+App-Credentials_*.txt
+*secrets*.json
+appsettings.local.json

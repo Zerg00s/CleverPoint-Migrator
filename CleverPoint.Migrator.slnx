@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CleverPoint.Migrator.App/CleverPoint.Migrator.App.csproj" />
+    <Project Path="src/CleverPoint.Migrator.Core/CleverPoint.Migrator.Core.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/CleverPoint.Migrator.TestRunner/CleverPoint.Migrator.TestRunner.csproj" />
+  </Folder>
+</Solution>
