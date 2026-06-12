@@ -155,7 +155,7 @@ public class FileCopier
                 // Metadata: custom fields + authors/dates, one UpdateOverwriteVersion.
                 var targetItem = uploaded.ListItemAllFields;
                 await _itemCopier.ApplyFieldValuesAsync(sourceItem, targetItem, copyFields, result, fileRef);
-                await ApplyDocumentMetadataAsync(sourceItem, targetItem, options, result, fileRef);
+                await ApplyDocumentMetadataAsync(sourceItem, targetItem, options, result, fileRef, targetPath);
 
                 var rec = result.Add("File", fileRef, targetPath, ItemCopyStatus.Copied,
                     versionsUploaded > 0 ? $"with {versionsUploaded + 1} versions" : null);
@@ -231,7 +231,7 @@ public class FileCopier
         // Metadata on the uploaded file.
         var uploadedItem = await GetItemByPathAsync(_targetCtx, null!, targetFileRel, false);
         if (uploadedItem != null)
-            await ApplyDocumentMetadataAsync(sourceItem, uploadedItem, options, result, fileRef);
+            await ApplyDocumentMetadataAsync(sourceItem, uploadedItem, options, result, fileRef, targetFileRel);
 
         var rec = result.Add("File", fileRef, targetFileRel, ItemCopyStatus.Copied, $"chunked upload, {total / 1048576.0:F0} MB");
         rec.SizeBytes = total;
@@ -287,8 +287,26 @@ public class FileCopier
     private bool _metadataProbeDone;
     private bool _useFormUpdateMetadata;
 
+    /// <summary>Test hook: start straight on the form-update strategy.</summary>
+    public bool ForceFormUpdateMetadata { set { _useFormUpdateMetadata = value; _metadataProbeDone = value; } }
+
+    /// <summary>
+    /// The server's CURRENT Modified for a target file, via a FRESH CSOM
+    /// object. Re-loading the object we just wrote returns our own pending
+    /// values, which made the old probe compare us against ourselves.
+    /// </summary>
+    private async Task<DateTime?> ReadServerModifiedAsync(string targetPath)
+    {
+        var file = _targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetPath));
+        var item = file.ListItemAllFields;
+        _targetCtx.Load(item);
+        await _targetCtx.ExecuteQueryAsync();
+        return item.FieldValues.TryGetValue("Modified", out var m) && m is DateTime
+            ? ItemCopier.ToWriteDate(m) : null;
+    }
+
     private async Task ApplyDocumentMetadataAsync(ListItem sourceItem, ListItem targetItem,
-        CopyOptions options, CopyResult result, string fileRef)
+        CopyOptions options, CopyResult result, string fileRef, string targetPath)
     {
         // Form-update strategy (set after the probe below detects a site that
         // ignores direct overwrites - typical for user-context sign-ins):
@@ -325,16 +343,22 @@ public class FileCopier
         {
             _metadataProbeDone = true;
             var intended = ItemCopier.ToWriteDate(sourceItem["Modified"]);
-            _targetCtx.Load(targetItem);
-            await _targetCtx.ExecuteQueryAsync();
-            var actual = ItemCopier.ToWriteDate(targetItem["Modified"]);
-            if (Math.Abs((actual - intended).TotalMinutes) > 2)
+            var actual = await ReadServerModifiedAsync(targetPath);
+            if (actual != null && Math.Abs((actual.Value - intended).TotalMinutes) > 2)
             {
                 _useFormUpdateMetadata = true;
                 await _itemCopier.ApplyDocumentMetadataFormUpdateAsync(sourceItem, targetItem, result, fileRef);
                 result.Add("File", fileRef, "", Model.ItemCopyStatus.Warning,
                     "this site ignores direct metadata overwrites (typical for browser sign-in); "
                     + "switched to the form-update strategy for the rest of this run");
+
+                // Verify the fallback actually took; if even that is refused,
+                // say so in words instead of pretending it worked.
+                var healed = await ReadServerModifiedAsync(targetPath);
+                if (healed == null || Math.Abs((healed.Value - intended).TotalMinutes) > 2)
+                    result.Add("File", fileRef, "", Model.ItemCopyStatus.Warning,
+                        "this site refuses metadata preservation under the current sign-in. "
+                        + "Connect with app + certificate to preserve authors and dates.");
             }
         }
     }

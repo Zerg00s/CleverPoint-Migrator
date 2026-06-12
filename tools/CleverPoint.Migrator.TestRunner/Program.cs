@@ -39,6 +39,7 @@ public static class Program
             ["browse-large"] = Scenarios.BrowseLargeTest.RunAsync,
             ["content-only"] = Scenarios.ContentOnlyTest.RunAsync,
             ["count-probe"] = Scenarios.CountProbe.RunAsync,
+            ["meta-fallback"] = Scenarios.DocMetaFallbackTest.RunAsync,
             ["copy-lib"] = Scenarios.SameSiteCopyTests.CopyLibraryAsync,
             ["inspect"] = Scenarios.InspectScenario.RunAsync,
             ["copy-cross"] = Scenarios.CrossTenantCopyTests.RunAsync,

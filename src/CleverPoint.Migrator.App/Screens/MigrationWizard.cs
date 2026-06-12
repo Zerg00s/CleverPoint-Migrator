@@ -357,9 +357,14 @@ public class MigrationWizard : Form
         var runStart = DateTime.UtcNow;
         var copiedCount = 0;
         var processed = 0;
-        result.RecordAdded += rec => BeginInvoke(() =>
+        var storeLock = new object();
+        result.RecordAdded += rec =>
         {
-            store.RecordItem(runId, rec);
+            // Persist on the WORKER thread: routing through BeginInvoke loses
+            // rows when the window closes before the UI queue flushes.
+            lock (storeLock) store.RecordItem(runId, rec);
+            BeginInvoke(() =>
+        {
             var row = _log.Rows[_log.Rows.Add(rec.ItemType, rec.SourcePath, rec.Status.ToString(), rec.Message ?? "")];
             row.Cells[2].Style.ForeColor = Brand.StatusColor(rec.Status.ToString());
             if (_log.Rows.Count % 25 == 0) _log.FirstDisplayedScrollingRowIndex = _log.Rows.Count - 1;
@@ -383,6 +388,7 @@ public class MigrationWizard : Form
                 _status.Text = text;
             }
         });
+        };
 
         var options = new CopyOptions
         {
@@ -488,6 +494,8 @@ public class MigrationWizard : Form
         catch (OperationCanceledException)
         {
             status = "Interrupted";
+            result.Add("Run", $"{_sourceList.Text} -> {targetTitle}", "", ItemCopyStatus.Skipped,
+                "run cancelled by the user; resume it from History");
             _status.Text = "Run cancelled. You can resume it from History.";
         }
         catch (Exception ex) when (ex.Message.Contains("403") || ex.Message.Contains("401")
@@ -498,12 +506,17 @@ public class MigrationWizard : Form
             // re-prompts for sign-in.
             ConnectionResolver.InvalidateBrowserSession(_sourceSite.Text);
             ConnectionResolver.InvalidateBrowserSession(_targetSite.Text);
+            result.Add("Run", $"{_sourceList.Text} -> {targetTitle}", "", ItemCopyStatus.Failed,
+                $"access denied (sign-in session expired?): {ex.Message}");
             _status.Text = "Access was denied. Your sign-in session may have expired - " +
                 "click Start again to sign in fresh. If it persists, check your permissions on both sites.";
         }
         catch (Exception ex)
         {
             status = "Failed";
+            // The reason must SURVIVE in the log, not just flash in the status bar.
+            result.Add("Run", $"{_sourceList.Text} -> {targetTitle}", "", ItemCopyStatus.Failed,
+                $"run stopped: {ex.Message}");
             _status.Text = $"The run hit a problem: {ex.Message}";
         }
         finally

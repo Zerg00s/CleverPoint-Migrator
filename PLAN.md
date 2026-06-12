@@ -30,7 +30,9 @@ Windows, [ ] not done yet.
       fixed). Document metadata under user sign-in: first-file read-back
       probe AUTO-SWITCHES to the ValidateUpdateListItem document-update
       strategy when a site ignores direct overwrites, heals the probe file,
-      and notes the switch in the log - Denis to re-verify on Windows
+      and notes the switch in the log. Fallback strategy PROVEN live:
+      forced run preserves Created/Modified/Author/Editor, 0 mismatches
+      (meta-fallback 2/2) - Denis to re-verify on Windows
 
 ## Selection and scoping
 
@@ -61,6 +63,11 @@ Windows, [ ] not done yet.
 - [x] CSV import/export + sample CSV (engine verified live: usermap 29/29)
 
 ## History and reporting
+
+- [x] Log rows persist on the worker thread (UI-queue routing dropped rows
+      when the window closed early -> "1 failed" with no visible failure)
+- [x] Run-level errors (cancel, access denied, crashes) are recorded as log
+      rows, not just status-bar text
 
 - [x] SQLite history (2000+ runs), rename, search, status multi-select
       filter, sortable columns, status colors (status-string aware)

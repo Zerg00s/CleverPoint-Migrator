@@ -1,33 +1,32 @@
 namespace CleverPoint.Migrator.TestRunner.Scenarios;
 
-/// <summary>Finds libraries whose new-file template is broken (doc.aspx 'something went wrong').</summary>
+/// <summary>Checks every library's new-document template file (existence AND plausible content).</summary>
 public static class CountProbe
 {
     public static async Task RunAsync()
     {
         var conn = Program.Target.ForWeb("https://cleverpointlab.sharepoint.com/sites/Migrationson365Group");
         using var doc = await conn.Rest.GetJsonAsync(
-            $"{conn.SiteUrl}/_api/web/lists?$select=Title,Hidden,BaseType,ItemCount,DocumentTemplateUrl,RootFolder/ServerRelativeUrl&$expand=RootFolder&$top=100");
+            $"{conn.SiteUrl}/_api/web/lists?$select=Title,Hidden,BaseType,DocumentTemplateUrl,RootFolder/ServerRelativeUrl&$expand=RootFolder&$top=100");
         foreach (var e in doc.RootElement.GetProperty("value").EnumerateArray())
         {
-            if (e.GetProperty("BaseType").GetInt32() != 1 || e.GetProperty("Hidden").GetBoolean()) continue;
+            if (e.GetProperty("BaseType").GetInt32() != 1) continue;
             var title = e.GetProperty("Title").GetString();
-            var count = e.GetProperty("ItemCount").GetInt32();
             var tpl = e.TryGetProperty("DocumentTemplateUrl", out var t) ? t.GetString() : null;
-            var tplExists = "none";
-            if (!string.IsNullOrEmpty(tpl))
+            if (string.IsNullOrEmpty(tpl)) { Console.WriteLine($"  {title}: no template set"); continue; }
+            try
             {
-                try
-                {
-                    var esc = Uri.EscapeDataString(tpl!.Replace("'", "''"));
-                    using var f = await conn.Rest.GetJsonAsync(
-                        $"{conn.SiteUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='{esc}')?$select=Exists");
-                    tplExists = f.RootElement.GetProperty("Exists").GetBoolean().ToString();
-                }
-                catch { tplExists = "MISSING"; }
+                var esc = Uri.EscapeDataString(tpl!.Replace("'", "''"));
+                using var f = await conn.Rest.GetJsonAsync(
+                    $"{conn.SiteUrl}/_api/web/GetFileByServerRelativePath(decodedUrl='{esc}')?$select=Exists,Length,Name");
+                var len = f.RootElement.TryGetProperty("Length", out var l) ? l.ToString() : "?";
+                Console.WriteLine($"  {title}: template={tpl} exists={f.RootElement.GetProperty("Exists").GetBoolean()} length={len}");
             }
-            Console.WriteLine($"  {title}  items={count}  template={tpl}  exists={tplExists}");
+            catch
+            {
+                Console.WriteLine($"  {title}: template={tpl} -> MISSING (404) <- breaks 'new document'");
+            }
         }
-        Program.Check("template probe ran", true);
+        Program.Check("template content probe ran", true);
     }
 }
