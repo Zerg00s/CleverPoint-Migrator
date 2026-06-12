@@ -27,8 +27,10 @@ Windows, [ ] not done yet.
 - [x] Content-only copies NEVER touch target schema (verified: sentinel col
       survives, no leaked source columns)
 - [~] Browser cookie auth end-to-end writes (REST digest + CSOM digest both
-      fixed; first-file metadata read-back probe warns when a site ignores
-      preserved fields - Denis to re-verify on Windows)
+      fixed). Document metadata under user sign-in: first-file read-back
+      probe AUTO-SWITCHES to the ValidateUpdateListItem document-update
+      strategy when a site ignores direct overwrites, heals the probe file,
+      and notes the switch in the log - Denis to re-verify on Windows
 
 ## Selection and scoping
 
@@ -68,16 +70,22 @@ Windows, [ ] not done yet.
 - [x] Selective delete of history entries (multi-select)
 - [x] Copy text out of any table (Ctrl+C + right-click menu)
 - [x] Compare report engine (CompareReport; scenario verified)
-- [ ] Compare report button in the UI (run it from History/task screen)
-- [ ] ETA percent once scan total is known (rate + elapsed shown today)
-- [ ] Clickable item links in the LIVE wizard log (history log has them)
+- [x] Compare report button on the task screen (field + sampled content
+      compare, mismatches land in the log)
+- [x] ETA: percent + remaining time + real progress bar once the scan total
+      is known
+- [x] Clickable item links in the LIVE wizard log (double-click opens)
 
 ## Explorer (Explore & copy)
 
 - [x] Split source/target panes, searchable connection combos, drag-drop
 - [x] Subsite drill-down; generic lists show their items
 - [x] Threshold-safe browsing of 100K libraries (RenderListDataAsStream)
-- [x] Up button + ".." row + Backspace; labels say where they go
+- [x] Up button + ".." row (teal + bold so it reads as clickable) +
+      Backspace; labels say where they go
+- [x] Library item counts: SharePoint's ItemCount lags minutes behind bulk
+      writes (verified live: 0 -> 3 -> 97 on the same library); Refresh
+      re-reads, the lag is server-side
 - [x] Refresh per pane (bypasses cache); auto-refresh after a run
 - [x] Created/Modified/Created by/Modified by columns
 - [x] Copy button centered below both panes
@@ -95,7 +103,8 @@ Windows, [ ] not done yet.
 - [x] Per-task settings TEMPLATES: save as / apply (JSON, reusable)
 - [x] Buttons aligned, one size recipe; both disabled while running
 - [x] 401/403 invalidates browser session with a friendly retry hint
-- [ ] Field mapping per task (source column -> target column)
+- [x] Field mapping per task (source internal column -> target internal
+      column; values write to the mapped column)
 
 ## App shell and polish
 

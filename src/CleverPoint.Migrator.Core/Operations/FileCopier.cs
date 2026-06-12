@@ -42,6 +42,8 @@ public class FileCopier
 
     public void SetDeltaSkipLog(Model.CopyResult result) => _itemCopier.DeltaSkipLog = result;
 
+    public Dictionary<string, string>? FieldNameMap { set => _itemCopier.FieldNameMap = value; }
+
     /// <summary>Max server-stamped Modified seen by the scan (delta baseline source).</summary>
     public DateTime? LastScanMaxModifiedUtc => _itemCopier.LastScanMaxModifiedUtc;
 
@@ -64,6 +66,7 @@ public class FileCopier
         var targetWeb = _targetCtx.Web;
 
         var allItems = await _itemCopier.LoadAllItemsAsync(sourceList, options);
+        result.PlannedItems = allItems.Count;
 
         // Pre-resolve users before any target writes (see ItemCopier note).
         await _users.PreResolveAsync(ItemCopier.CollectUserIds(allItems, copyFields));
@@ -282,10 +285,23 @@ public class FileCopier
     }
 
     private bool _metadataProbeDone;
+    private bool _useFormUpdateMetadata;
 
     private async Task ApplyDocumentMetadataAsync(ListItem sourceItem, ListItem targetItem,
         CopyOptions options, CopyResult result, string fileRef)
     {
+        // Form-update strategy (set after the probe below detects a site that
+        // ignores direct overwrites - typical for user-context sign-ins):
+        // custom fields persist via one UpdateOverwriteVersion, then
+        // authors/dates go through a ValidateUpdateListItem document update.
+        if (options.PreserveAuthorsAndDates && _useFormUpdateMetadata)
+        {
+            targetItem.UpdateOverwriteVersion();
+            await _targetCtx.ExecuteQueryAsync();
+            await _itemCopier.ApplyDocumentMetadataFormUpdateAsync(sourceItem, targetItem, result, fileRef);
+            return;
+        }
+
         if (options.PreserveAuthorsAndDates)
         {
             var authorId = sourceItem.FieldValues.TryGetValue("Author", out var a) && a is FieldUserValue av
@@ -302,9 +318,9 @@ public class FileCopier
         targetItem.UpdateOverwriteVersion();
         await _targetCtx.ExecuteQueryAsync();
 
-        // Some tenants/sites silently IGNORE system-field overwrites instead
-        // of failing them (typically when the signed-in account lacks full
-        // control). Read the first file back once per run and say so loudly.
+        // Probe the FIRST file of the run: some sites silently IGNORE
+        // system-field overwrites instead of failing them. When that happens,
+        // heal this file via the form-update path and use it for the rest.
         if (options.PreserveAuthorsAndDates && !_metadataProbeDone)
         {
             _metadataProbeDone = true;
@@ -313,9 +329,13 @@ public class FileCopier
             await _targetCtx.ExecuteQueryAsync();
             var actual = ItemCopier.ToWriteDate(targetItem["Modified"]);
             if (Math.Abs((actual - intended).TotalMinutes) > 2)
+            {
+                _useFormUpdateMetadata = true;
+                await _itemCopier.ApplyDocumentMetadataFormUpdateAsync(sourceItem, targetItem, result, fileRef);
                 result.Add("File", fileRef, "", Model.ItemCopyStatus.Warning,
-                    "This site IGNORED the preserved dates/authors on write. The signed-in account may lack "
-                    + "full control here - connect with app + certificate to preserve metadata reliably.");
+                    "this site ignores direct metadata overwrites (typical for browser sign-in); "
+                    + "switched to the form-update strategy for the rest of this run");
+            }
         }
     }
 

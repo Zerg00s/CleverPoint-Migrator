@@ -37,9 +37,11 @@ public class MigrationWizard : Form
     private readonly Button _runContent = new() { Text = "Copy content only", AutoSize = true, Padding = new Padding(18, 9, 18, 9), FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
     private readonly Button _cancel = new() { Text = "Cancel run", AutoSize = true, Padding = new Padding(18, 9, 18, 9), Visible = false, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
     private readonly Button _export = new() { Text = "Export results (CSV)", AutoSize = true, Padding = new Padding(10, 4, 10, 4), Visible = false, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
+    private readonly Button _compare = new() { Text = "Compare source and target", AutoSize = true, Padding = new Padding(10, 4, 10, 4), Visible = false, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 3, 10, 3) };
     private readonly ComboBox _versions = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 4, 0, 4) };
     private readonly Button _mapping = new() { Text = "User mapping: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(16, 4, 0, 4) };
     private readonly Button _dateFilter = new() { Text = "Date filter: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 4, 0, 4) };
+    private readonly Button _fieldMapping = new() { Text = "Field mapping: none", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 4, 0, 4) };
     private readonly Button _saveTemplate = new() { Text = "Save as template...", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(16, 4, 0, 4) };
     private readonly Button _applyTemplate = new() { Text = "Apply template...", AutoSize = true, Padding = new Padding(10, 4, 10, 4), FlatStyle = FlatStyle.Flat, Margin = new Padding(10, 4, 0, 4) };
     private DateTime? _modifiedSinceUtc;
@@ -199,7 +201,8 @@ public class MigrationWizard : Form
         _versions.SelectedIndex = 0;
         var opts2 = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
         var versionsLbl = new Label { Text = "File versions:", AutoSize = true, ForeColor = Brand.TextPrimary, Padding = new Padding(0, 6, 6, 0) };
-        opts2.Controls.AddRange(new Control[] { versionsLbl, _versions, _mapping, _dateFilter, _saveTemplate, _applyTemplate });
+        opts2.Controls.AddRange(new Control[] { versionsLbl, _versions, _mapping, _fieldMapping, _dateFilter, _saveTemplate, _applyTemplate });
+        _fieldMapping.Click += (_, _) => EditFieldMapping();
         _saveTemplate.Click += (_, _) => SaveTemplate();
         _applyTemplate.Click += (_, _) => ApplyTemplate();
         layout.Controls.Add(opts2, 1, 5);
@@ -209,7 +212,8 @@ public class MigrationWizard : Form
         _export.Click += (_, _) => ExportResults();
 
         var actions = new FlowLayoutPanel { AutoSize = true };
-        actions.Controls.AddRange(new Control[] { _run, _runContent, _cancel, _export, _progress });
+        actions.Controls.AddRange(new Control[] { _run, _runContent, _cancel, _export, _compare, _progress });
+        _compare.Click += async (_, _) => await RunCompareAsync();
         layout.Controls.Add(actions, 1, 6);
         layout.SetColumnSpan(actions, 3);
         layout.Controls.Add(_status, 1, 7);
@@ -231,7 +235,7 @@ public class MigrationWizard : Form
         _run.FlatAppearance.BorderSize = 0;
         // Secondary buttons share one subtle border so nothing looks heavier
         // than its neighbors.
-        foreach (var secondary in new[] { _runContent, _cancel, _export, _mapping, _dateFilter, _saveTemplate, _applyTemplate })
+        foreach (var secondary in new[] { _runContent, _cancel, _export, _compare, _mapping, _fieldMapping, _dateFilter, _saveTemplate, _applyTemplate })
         {
             secondary.FlatAppearance.BorderColor = Color.FromArgb(0xC6, 0xCE, 0xD6);
             secondary.FlatAppearance.BorderSize = 1;
@@ -303,6 +307,19 @@ public class MigrationWizard : Form
         _log.Columns[2].FillWeight = 12;
         _log.Columns[3].FillWeight = 30;
         GridClipboard.Attach(_log);
+        // Double-click any row to open the item in the browser.
+        _log.CellDoubleClick += (_, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            var path = _log.Rows[e.RowIndex].Cells[1].Value?.ToString();
+            if (string.IsNullOrEmpty(path) || !path.StartsWith('/')) return;
+            try
+            {
+                var url = new Uri(new Uri(_sourceSite.Text), path).ToString();
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch { /* no browser association */ }
+        };
     }
 
     private SpConnection Connect(string siteUrl) => ConnectionResolver.Resolve(this, _settings, siteUrl);
@@ -339,6 +356,7 @@ public class MigrationWizard : Form
         var result = new CopyResult();
         var runStart = DateTime.UtcNow;
         var copiedCount = 0;
+        var processed = 0;
         result.RecordAdded += rec => BeginInvoke(() =>
         {
             store.RecordItem(runId, rec);
@@ -346,13 +364,23 @@ public class MigrationWizard : Form
             row.Cells[2].Style.ForeColor = Brand.StatusColor(rec.Status.ToString());
             if (_log.Rows.Count % 25 == 0) _log.FirstDisplayedScrollingRowIndex = _log.Rows.Count - 1;
 
-            // Live throughput + rough time remaining once the scan total is known.
+            // Live throughput, percent and ETA once the scan total is known.
             if (rec.Status == ItemCopyStatus.Copied) copiedCount++;
+            if (rec.ItemType is "Item" or "File" or "Folder") processed++;
             var elapsed = (DateTime.UtcNow - runStart).TotalSeconds;
             if (elapsed > 5 && copiedCount > 0)
             {
                 var rate = copiedCount / elapsed;
-                _status.Text = $"Running... {copiedCount} copied, {rate * 60:F0} items/min, {TimeSpan.FromSeconds(elapsed):mm\\:ss} elapsed";
+                var text = $"Running... {copiedCount} copied, {rate * 60:F0} items/min, {TimeSpan.FromSeconds(elapsed):mm\\:ss} elapsed";
+                if (result.PlannedItems > 0 && processed <= result.PlannedItems)
+                {
+                    var pct = Math.Min(100, processed * 100 / result.PlannedItems);
+                    var eta = TimeSpan.FromSeconds((result.PlannedItems - processed) / Math.Max(rate, 0.01));
+                    text = $"Running... {pct}% ({processed}/{result.PlannedItems}), {rate * 60:F0} items/min, ETA {(eta.TotalHours >= 1 ? $"{(int)eta.TotalHours}h {eta.Minutes}m" : $"{eta.Minutes}:{eta.Seconds:00}")}";
+                    _progress.Style = ProgressBarStyle.Continuous;
+                    _progress.Value = pct;
+                }
+                _status.Text = text;
             }
         });
 
@@ -373,6 +401,7 @@ public class MigrationWizard : Form
             SelectedPaths = _selectedPaths,
             ItemIds = _itemIds,
             MaxVersions = SelectedMaxVersions(),
+            FieldMap = new Dictionary<string, string>(_fieldMap, StringComparer.OrdinalIgnoreCase),
             // Delta baseline and the manual date filter compose: the later
             // "since" wins, "before" is the manual filter's alone.
             ModifiedSinceUtc = (_deltaBaselineUtc, _modifiedSinceUtc) switch
@@ -483,6 +512,7 @@ public class MigrationWizard : Form
             store.FinishRun(runId, result, status);
             _lastRunId = runId;
             _export.Visible = true;
+            _compare.Visible = true;
             _run.Enabled = true;
             _runContent.Enabled = true;
             _cancel.Visible = false;
@@ -495,6 +525,7 @@ public class MigrationWizard : Form
     }
 
     private readonly List<(string Type, string Source, string Target)> _mappingRows = new();
+    private readonly Dictionary<string, string> _fieldMap = new(StringComparer.OrdinalIgnoreCase);
     private string? _unresolvedFallback;
 
     /// <summary>Per-task identity mapping: rows, pickers, fallback, CSV in/out.</summary>
@@ -578,6 +609,83 @@ public class MigrationWizard : Form
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
         }
         catch { /* no associated app; the file is still there */ }
+    }
+
+    /// <summary>Per-task column mapping: source internal name -> target internal name.</summary>
+    private void EditFieldMapping()
+    {
+        using var dlg = new Form
+        {
+            Text = "Field mapping",
+            ClientSize = new Size(560, 360),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false,
+            BackColor = Brand.Surface, Font = Brand.Body,
+        };
+        var hint = new Label
+        {
+            Text = "Writes a source column's values into a DIFFERENT target column.\nUse internal column names (Site settings > columns, or the column URL).",
+            AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(14, 10),
+        };
+        var src = new TextBox { Location = new Point(14, 58), Width = 180, PlaceholderText = "Source internal name" };
+        var tgt = new TextBox { Location = new Point(204, 58), Width = 180, PlaceholderText = "Target internal name" };
+        var add = new Button { Text = "Add", AutoSize = true, Location = new Point(394, 56), FlatStyle = FlatStyle.Flat };
+        var grid = new ListView { Location = new Point(14, 92), Size = new Size(530, 200), View = View.Details, FullRowSelect = true };
+        grid.Columns.Add("Source column", 250);
+        grid.Columns.Add("Target column", 250);
+        foreach (var (k, v) in _fieldMap) grid.Items.Add(new ListViewItem(new[] { k, v }));
+        add.Click += (_, _) =>
+        {
+            if (src.Text.Trim().Length == 0 || tgt.Text.Trim().Length == 0) return;
+            grid.Items.Add(new ListViewItem(new[] { src.Text.Trim(), tgt.Text.Trim() }));
+            src.Text = ""; tgt.Text = "";
+        };
+        var remove = new Button { Text = "Remove selected", AutoSize = true, Location = new Point(14, 300), FlatStyle = FlatStyle.Flat };
+        remove.Click += (_, _) => { foreach (ListViewItem i in grid.SelectedItems) grid.Items.Remove(i); };
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true, Location = new Point(390, 298), FlatStyle = FlatStyle.Flat, BackColor = Brand.Accent, ForeColor = Color.White, Padding = new Padding(14, 4, 14, 4) };
+        ok.FlatAppearance.BorderSize = 0;
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Location = new Point(470, 298), FlatStyle = FlatStyle.Flat, Padding = new Padding(10, 4, 10, 4) };
+        dlg.Controls.AddRange(new Control[] { hint, src, tgt, add, grid, remove, ok, cancel });
+        dlg.AcceptButton = ok;
+        dlg.CancelButton = cancel;
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        _fieldMap.Clear();
+        foreach (ListViewItem i in grid.Items) _fieldMap[i.SubItems[0].Text] = i.SubItems[1].Text;
+        _fieldMapping.Text = _fieldMap.Count == 0 ? "Field mapping: none" : $"Field mapping: {_fieldMap.Count} column(s)";
+    }
+
+    /// <summary>After-run validation: field-by-field + sampled content compare.</summary>
+    private async Task RunCompareAsync()
+    {
+        if (_sourceSite.Text.Length == 0 || _sourceList.Text.Length == 0) return;
+        _compare.Enabled = false;
+        _status.Text = "Comparing source and target...";
+        try
+        {
+            var source = Connect(_sourceSite.Text);
+            var target = Connect(_targetSite.Text);
+            var targetTitle = _targetList.Text.Length > 0 ? _targetList.Text : _sourceList.Text;
+            var report = await Task.Run(() => Core.Validation.CompareReport.RunAsync(
+                source, target, _sourceList.Text, targetTitle,
+                Array.Empty<string>(), compareContent: true));
+            foreach (var m in report.Mismatches.Take(200))
+            {
+                var row = _log.Rows[_log.Rows.Add("Compare", m, "Warning", "")];
+                row.Cells[2].Style.ForeColor = Brand.StatusColor("Warning");
+            }
+            _status.Text = report.IsClean
+                ? $"Compare clean: {report.SourceItems} source vs {report.TargetItems} target items, no mismatches."
+                : $"Compare found {report.Mismatches.Count} mismatch(es) - rows added to the log.";
+        }
+        catch (Exception ex)
+        {
+            _status.Text = $"Compare failed: {ex.Message}";
+        }
+        finally
+        {
+            _compare.Enabled = true;
+        }
     }
 
     private int SelectedMaxVersions() => _versions.SelectedIndex switch { 1 => 5, 2 => 10, 3 => 50, _ => 1 };

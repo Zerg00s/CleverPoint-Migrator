@@ -61,6 +61,12 @@ public class CopyOptions
     /// </summary>
     public List<string> SelectedPaths { get; set; } = new();
 
+    /// <summary>
+    /// Optional field mapping: source internal column name -> target internal
+    /// column name. Values write to the mapped target column.
+    /// </summary>
+    public Dictionary<string, string> FieldMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public int PageSize { get; set; } = 200;
 
     /// <summary>

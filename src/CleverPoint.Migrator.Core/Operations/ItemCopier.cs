@@ -65,6 +65,9 @@ public class ItemCopier
 
     /// <summary>Source item ids with unique permissions + the copier to apply them (CopyPermissions setting).</summary>
     public HashSet<int>? UniquePermissionItemIds { get; set; }
+
+    /// <summary>Optional source internal name -> target internal name mapping (per-task field mapping).</summary>
+    public Dictionary<string, string>? FieldNameMap { get; set; }
     public PermissionCopier? Permissions { get; set; }
 
     public ItemCopier(ClientContext sourceCtx, ClientContext targetCtx, UserResolver users)
@@ -92,7 +95,7 @@ public class ItemCopier
         return sourceList.Fields.AsEnumerable()
             .Where(f => !f.Hidden && !f.ReadOnlyField
                 && !NeverCopyFields.Contains(f.InternalName)
-                && targetFieldTypes.ContainsKey(f.InternalName)
+                && targetFieldTypes.ContainsKey(FieldNameMap?.GetValueOrDefault(f.InternalName) ?? f.InternalName)
                 && f.TypeAsString is not ("TaxonomyFieldType" or "TaxonomyFieldTypeMulti" or "Computed")
                 // Lookups copy only when the schema copier wired them up.
                 && (f.TypeAsString is not ("Lookup" or "LookupMulti") || LookupMaps.ContainsKey(f.InternalName)))
@@ -111,6 +114,7 @@ public class ItemCopier
 
         // Page through all source items, folders included.
         var allItems = await LoadAllItemsAsync(sourceList, options);
+        result.PlannedItems = allItems.Count;
 
         // Resolve every referenced user BEFORE the first write: resolution
         // executes queries on the target context and would flush half-built
@@ -405,6 +409,7 @@ public class ItemCopier
         foreach (var (name, type) in copyFields)
         {
             if (!sourceItem.FieldValues.TryGetValue(name, out var value) || value == null) continue;
+            var writeName = FieldNameMap?.GetValueOrDefault(name) ?? name;
 
             switch (type)
             {
@@ -412,7 +417,7 @@ public class ItemCopier
                     if (value is FieldUserValue uv)
                     {
                         var id = await _users.ResolveAsync(uv.LookupId);
-                        if (id.HasValue) targetItem[name] = new FieldUserValue { LookupId = id.Value };
+                        if (id.HasValue) targetItem[writeName] = new FieldUserValue { LookupId = id.Value };
                         else result.Add("Item", sourceRef, "", ItemCopyStatus.Warning, $"user field {name}: unresolved user dropped");
                     }
                     break;
@@ -425,18 +430,18 @@ public class ItemCopier
                             var id = await _users.ResolveAsync(u.LookupId);
                             if (id.HasValue) resolved.Add(new FieldUserValue { LookupId = id.Value });
                         }
-                        if (resolved.Count > 0) targetItem[name] = resolved.ToArray();
+                        if (resolved.Count > 0) targetItem[writeName] = resolved.ToArray();
                     }
                     break;
                 case "URL":
                     if (value is FieldUrlValue url)
-                        targetItem[name] = new FieldUrlValue { Url = url.Url, Description = url.Description };
+                        targetItem[writeName] = new FieldUrlValue { Url = url.Url, Description = url.Description };
                     break;
                 case "Lookup":
                     if (value is FieldLookupValue lv && LookupMaps.TryGetValue(name, out var map))
                     {
                         var mappedId = map == null ? lv.LookupId : map.GetValueOrDefault(lv.LookupId, -1);
-                        if (mappedId > 0) targetItem[name] = new FieldLookupValue { LookupId = mappedId };
+                        if (mappedId > 0) targetItem[writeName] = new FieldLookupValue { LookupId = mappedId };
                         else result.Add("Item", sourceRef, "", ItemCopyStatus.Warning, $"lookup {name}: no matching target item for '{lv.LookupValue}'");
                     }
                     break;
@@ -448,11 +453,11 @@ public class ItemCopier
                             .Where(id => id > 0)
                             .Select(id => new FieldLookupValue { LookupId = id })
                             .ToArray();
-                        if (mapped.Length > 0) targetItem[name] = mapped;
+                        if (mapped.Length > 0) targetItem[writeName] = mapped;
                     }
                     break;
                 default:
-                    targetItem[name] = value;
+                    targetItem[writeName] = value;
                     break;
             }
         }
@@ -592,6 +597,34 @@ public class ItemCopier
         await _targetCtx.ExecuteQueryAsync();
         foreach (var fv in validation.Where(v => v.HasException))
             result.Add("Folder", sourceRef, "", ItemCopyStatus.Warning, $"{fv.FieldName}: {fv.ErrorMessage}");
+    }
+
+    /// <summary>
+    /// Document fallback for sites that silently IGNORE UpdateOverwriteVersion
+    /// metadata (typical for user-context browser sign-ins): one
+    /// ValidateUpdateListItem DOCUMENT update with claims keys and
+    /// site-local date strings. Public so FileCopier can switch to it.
+    /// </summary>
+    public async Task ApplyDocumentMetadataFormUpdateAsync(ListItem sourceItem, ListItem targetItem,
+        CopyResult result, string sourceRef)
+    {
+        var author = await ResolveRealUserAsync(sourceItem, "Author");
+        var editor = await ResolveRealUserAsync(sourceItem, "Editor");
+        var formValues = new List<ListItemFormUpdateValue>();
+        if (author != null)
+            formValues.Add(new ListItemFormUpdateValue { FieldName = "Author", FieldValue = $"[{{\"Key\":\"{author.Value.Login}\"}}]" });
+        if (editor != null)
+            formValues.Add(new ListItemFormUpdateValue { FieldName = "Editor", FieldValue = $"[{{\"Key\":\"{editor.Value.Login}\"}}]" });
+        var (createdSite, modifiedSite) = await ToSiteLocalAsync(
+            ReadUtc(sourceItem["Created"]), ReadUtc(sourceItem["Modified"]));
+        formValues.Add(new ListItemFormUpdateValue { FieldName = "Created", FieldValue = createdSite.ToString("M/d/yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture) });
+        formValues.Add(new ListItemFormUpdateValue { FieldName = "Modified", FieldValue = modifiedSite.ToString("M/d/yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture) });
+
+        // bNewDocumentUpdate=true: a document update, no version bump.
+        var validation = targetItem.ValidateUpdateListItem(formValues, true, "", false, false, "");
+        await _targetCtx.ExecuteQueryAsync();
+        foreach (var fv in validation.Where(v => v.HasException))
+            result.Add("File", sourceRef, "", ItemCopyStatus.Warning, $"{fv.FieldName}: {fv.ErrorMessage}");
     }
 
     /// <summary>

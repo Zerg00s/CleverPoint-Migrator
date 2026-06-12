@@ -71,6 +71,7 @@ public static class CopyEngine
             {
                 LookupMaps = lookupMaps,
                 CancellationToken = cancellationToken,
+                FieldNameMap = options.FieldMap.Count > 0 ? options.FieldMap : null,
             };
             copier.SetDeltaSkipLog(result);
             await copier.CopyAsync(sourceList, targetList, options, result);
@@ -85,6 +86,7 @@ public static class CopyEngine
                 CancellationToken = cancellationToken,
                 DeltaSkipLog = result,
                 ContentTypeMap = schema.ContentTypeMap,
+                FieldNameMap = options.FieldMap.Count > 0 ? options.FieldMap : null,
             };
             if (options.CopyPermissions)
             {

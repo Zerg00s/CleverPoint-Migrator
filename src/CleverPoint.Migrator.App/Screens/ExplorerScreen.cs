@@ -387,7 +387,8 @@ public class ExplorerPane : UserControl
         _currentFolder = null;
         var entries = await Task.Run(() => _browser.GetListItemsAsync(Connection, list));
         _items.Items.Clear();
-        _items.Items.Add(new ListViewItem(new[] { "..", "Back to site" }));
+        _items.Items.Add(new ListViewItem(new[] { "..", "Back to site" })
+            { ForeColor = Brand.Primary, Font = new Font(Font, FontStyle.Bold) });
         foreach (var entry in entries)
             _items.Items.Add(new ListViewItem(new[]
                 { entry.Name, $"Item #{entry.ItemId}", entry.Modified, entry.ModifiedBy, entry.Created, entry.CreatedBy },
@@ -406,7 +407,8 @@ public class ExplorerPane : UserControl
         var entries = await Task.Run(() => _browser.GetFolderAsync(Connection, folderUrl, CurrentList?.ServerRelativeUrl));
         _items.Items.Clear();
         var atRoot = CurrentList == null || folderUrl.Equals(CurrentList.ServerRelativeUrl, StringComparison.OrdinalIgnoreCase);
-        _items.Items.Add(new ListViewItem(new[] { "..", atRoot ? "Back to site" : "Up one level" }));
+        _items.Items.Add(new ListViewItem(new[] { "..", atRoot ? "Back to site" : "Up one level" })
+            { ForeColor = Brand.Primary, Font = new Font(Font, FontStyle.Bold) });
         foreach (var entry in entries)
         {
             var row = new ListViewItem(new[]

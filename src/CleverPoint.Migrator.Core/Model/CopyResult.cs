@@ -22,6 +22,9 @@ public class CopyResult
     public DateTime? FinishedUtc { get; set; }
     public int ThrottleHits { get; set; }
 
+    /// <summary>Items found by the scan (post-filter); powers progress %/ETA.</summary>
+    public int PlannedItems { get; set; }
+
     /// <summary>SHA-256 per source FileRef (library copies only), for verification.</summary>
     public Dictionary<string, string> FileHashes { get; set; } = new();
 
