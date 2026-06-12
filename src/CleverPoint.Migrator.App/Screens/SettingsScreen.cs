@@ -40,13 +40,47 @@ public class SettingsScreen : UserControl
                    "SharePoint Online migrations with REST, CSOM and the\nSPO Migration API. No Graph, no nonsense.",
             AutoSize = true, Location = new Point(20, 20), Font = Brand.Body,
         });
-        var help = LinkButton("Help and documentation (GitHub)", 130);
+        var updateStatus = new Label { Text = "Checking for updates...", AutoSize = true, ForeColor = Brand.TextSecondary, Location = new Point(20, 124) };
+        page.Controls.Add(updateStatus);
+        _ = CheckForUpdatesAsync(updateStatus);
+
+        var help = LinkButton("Help and documentation (GitHub)", 156);
         help.Click += (_, _) => OpenUrl("https://github.com/Zerg00s/CleverPoint-Migrator");
-        var report = LinkButton("Report a problem (GitHub Issues)", 162);
+        var report = LinkButton("Report a problem (GitHub Issues)", 188);
         report.Click += (_, _) => OpenUrl("https://github.com/Zerg00s/CleverPoint-Migrator/issues");
         page.Controls.Add(help);
         page.Controls.Add(report);
         return page;
+    }
+
+    /// <summary>Non-blocking version check against GitHub releases.</summary>
+    private static async Task CheckForUpdatesAsync(Label status)
+    {
+        try
+        {
+            using var http = new HttpClient();
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("CleverPointMigrator");
+            var json = await http.GetStringAsync("https://api.github.com/repos/Zerg00s/CleverPoint-Migrator/releases/latest");
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var latest = doc.RootElement.GetProperty("tag_name").GetString()?.TrimStart('v') ?? "";
+            var current = Application.ProductVersion.Split('+')[0];
+            if (Version.TryParse(latest, out var l) && Version.TryParse(current, out var c) && l > c)
+            {
+                status.Text = $"Version {latest} is available - click to download";
+                status.ForeColor = Brand.Accent;
+                status.Cursor = Cursors.Hand;
+                status.Click += (_, _) => OpenUrl("https://github.com/Zerg00s/CleverPoint-Migrator/releases/latest");
+            }
+            else
+            {
+                status.Text = "Up to date";
+                status.ForeColor = Brand.Ok;
+            }
+        }
+        catch
+        {
+            status.Text = "";   // offline or no releases yet; stay quiet
+        }
     }
 
     private static void OpenUrl(string url) =>
