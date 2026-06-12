@@ -122,8 +122,11 @@ Windows, [ ] not done yet.
       identical content types, and doc.aspx renders HTTP 200 for all three.
       The engine does not corrupt target libraries; the browser-side error
       reproduces only under Denis's signed-in session (suspects: stale
-      session cookies, Brave shields, license/Office Online). Control test
-      with the Probe* libraries pending.
+      session cookies, Brave shields, license/Office Online). Control test result
+      2026-06-12: + New > Word fails on ALL THREE including the never-touched
+      native ProbeNative124259 -> the engine is definitively cleared; the
+      failure is environmental (browser/session/Office Online on that site).
+      Next: Edge/InPrivate test + correlation ID.
 
 ## App shell and polish
 
