@@ -253,7 +253,7 @@ html, body {
 .entry-cell[draggable="true"] { cursor: grab; }
 .entry-cell[draggable="true"]:active { cursor: grabbing; }
 .exp-pane-head { padding: 12px 14px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #eee); }
-.exp-pane-head .role { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--cp-primary); }
+.exp-pane-head .role { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--cp-source); }
 .exp-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .exp-list { flex: 1 1 auto; overflow-y: auto; }
 .exp-status { padding: 8px 14px; font-size: 12px; opacity: .6; border-top: 1px solid var(--neutral-stroke-divider-rest, #eee); }

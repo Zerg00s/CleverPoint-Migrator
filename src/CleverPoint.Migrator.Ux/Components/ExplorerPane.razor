@@ -38,7 +38,8 @@
                                 @bind-SelectedOptions="_selectedSites" @bind-SelectedOptions:after="OnSiteSelected" />
             <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Add())" Title="Add a connection" @onclick="AddConnection" />
             <FluentButton Appearance="Appearance.Stealth" Loading="_loading" Disabled="@(string.IsNullOrWhiteSpace(_site))"
-                          IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" Title="Reload this connection" @onclick="OpenAsync" />
+                          IconStart="@(new Icons.Regular.Size20.ArrowClockwise())"
+                          Title="@(CurrentList is not null ? "Refresh this folder" : "Reload this connection")" @onclick="Reload" />
         </div>
     </div>
 
@@ -49,7 +50,7 @@
         }
         else if (CurrentList is null && _lists.Count > 0)
         {
-            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()"
+            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()" ResizableColumns="true"
                             GridTemplateColumns="@(IsSource ? "40px 1fr auto" : "1fr auto")" ShowHover="true" Style="width:100%;"
                             RowClass="@(_ => "click-row")"
                             OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is not null) await OpenList(r.Item); })">
@@ -93,6 +94,7 @@
             </div>
             <div class="cp-scroll" style="height:100%; border:none;">
                 <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
+                                ResizableColumns="true"
                                 GridTemplateColumns="@(IsSource ? "40px 1fr auto auto" : "1fr auto auto")" ShowHover="true" Style="width:100%;"
                                 RowClass="@(e => e.IsFolder ? "folder-row" : "")"
                                 OnRowClick="@(async (FluentDataGridRow<SpFolderEntry> r) => { if (r.Item?.IsFolder == true) await OpenFolder(r.Item); })">
@@ -243,7 +245,15 @@
         await OnDropRequested.InvokeAsync();
     }
 
-    private async Task OpenAsync()
+    // Reload refreshes where you ARE: the open folder/list, not back to the list of
+    // lists. Only at the top level does it reload the lists.
+    private async Task Reload()
+    {
+        if (CurrentList is not null) await LoadCurrentAsync();
+        else await OpenAsync(forceRefresh: true);
+    }
+
+    private async Task OpenAsync(bool forceRefresh = false)
     {
         // With nothing chosen (e.g. no saved connections), Open behaves like the
         // "+" button so the user can add one on the spot.
@@ -271,7 +281,7 @@
         try
         {
             var conn = UxConnectionResolver.Resolve(Connection, _site, SignIn);
-            _lists = await Browser.GetListsAsync(conn);
+            _lists = await Browser.GetListsAsync(conn, useCache: !forceRefresh);
             _status = $"{_lists.Count} lists and libraries"
                 + (IsSource ? "  ·  tick several to copy them all, or click one to pick items" : "");
         }

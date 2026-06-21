@@ -18,41 +18,33 @@
 }
 else
 {
-    <div class="conn-table">
-        <div class="conn-row conn-head">
-            <div class="conn-name">Name</div>
-            <div class="conn-signin">Sign-in</div>
-            <div class="conn-site">Site</div>
-            <div class="conn-status">Status</div>
-            <div class="conn-actions"></div>
-        </div>
-        @foreach (var c in Settings.Connections)
-        {
-            <div class="conn-row">
-                <div class="conn-name">@c.Name</div>
-                <div class="conn-signin">@(c.AuthMode == "AppCertificate" ? "App + certificate" : "Browser")</div>
-                <div class="conn-site" title="@c.SiteUrl">@c.SiteUrl</div>
-                <div class="conn-status">
-                    <span class="conn-dot @StatusClass(c)"></span>
-                    <span>@StatusText(c)</span>
-                </div>
+    <div class="conn-table cp-grid">
+        <FluentDataGrid Items="@Settings.Connections.AsQueryable()" ResizableColumns="true"
+                        GridTemplateColumns="1.2fr 1fr 2.4fr 1.4fr 210px" ShowHover="true" Style="width:100%;">
+            <PropertyColumn Property="@(c => c.Name)" Title="Name" />
+            <TemplateColumn Title="Sign-in">@(context.AuthMode == "AppCertificate" ? "App + certificate" : "Browser")</TemplateColumn>
+            <PropertyColumn Property="@(c => c.SiteUrl)" Title="Site" />
+            <TemplateColumn Title="Status">
+                <span class="conn-status"><span class="conn-dot @StatusClass(context)"></span> <span>@StatusText(context)</span></span>
+            </TemplateColumn>
+            <TemplateColumn Title="">
                 <div class="conn-actions">
-                    @if (_busy == c.SiteUrl)
+                    @if (_busy == context.SiteUrl)
                     {
                         <FluentProgressRing Style="width:20px;height:20px;" />
                     }
                     else
                     {
-                        <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Connect(c, false))"
-                                      IconStart="@(IsConnected(c) ? (Icon)new Icons.Regular.Size20.ArrowClockwise() : new Icons.Regular.Size20.PlugConnected())">
-                            @(IsConnected(c) ? "Reconnect" : "Connect")
+                        <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Connect(context, false))"
+                                      IconStart="@(IsConnected(context) ? (Icon)new Icons.Regular.Size20.ArrowClockwise() : new Icons.Regular.Size20.PlugConnected())">
+                            @(IsConnected(context) ? "Reconnect" : "Connect")
                         </FluentButton>
                         <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Delete())"
-                                      Title="Remove" @onclick="@(() => Remove(c))" />
+                                      Title="Remove" @onclick="@(() => Remove(context))" />
                     }
                 </div>
-            </div>
-        }
+            </TemplateColumn>
+        </FluentDataGrid>
     </div>
 }
 
