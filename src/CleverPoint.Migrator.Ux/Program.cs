@@ -20,6 +20,7 @@ internal class Program
         builder.Services.AddSingleton<UxSettings>();
         builder.Services.AddSingleton<HistoryService>();
         builder.Services.AddSingleton<AppStatusService>();
+        builder.Services.AddSingleton<SiteBrowser>();
 
         builder.RootComponents.Add<App>("#app");
 

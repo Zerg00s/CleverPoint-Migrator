@@ -1,0 +1,112 @@
+@page "/perf"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+
+<div class="page-head">
+    <h1>Large table stress test</h1>
+    <p>A virtualized, single-scroll Fluent DataGrid over a synthetic dataset — sortable, filterable,
+       and the cell text is selectable for copy. Used to decide one-table vs pagination at scale.</p>
+</div>
+
+<FluentCard>
+    <FluentToolbar Style="width:100%;">
+        <FluentSelect TOption="string" @bind-Value="_sizeStr" @bind-Value:after="Build"
+                      Items="@_sizes" OptionValue="@(s => s)" OptionText="@(s => $"{int.Parse(s):N0} rows")" Style="min-width:160px;" />
+        <FluentSearch @bind-Value="_filter" @bind-Value:after="Apply" Immediate="true" ImmediateDelay="250"
+                      Placeholder="Filter name / dept / status…" />
+        <FluentSpacer />
+        <span class="hint">@_status</span>
+    </FluentToolbar>
+
+    <div class="cp-scroll cp-grid" style="height: calc(100vh - 250px); margin-top:12px;">
+        <FluentDataGrid Items="@_view" Virtualize="true" ItemSize="34" GenerateHeader="GenerateHeaderOption.Sticky"
+                        GridTemplateColumns="0.5fr 1.6fr 2fr 1.1fr 0.9fr 0.8fr 1fr" ShowHover="true" Style="width:100%;">
+            <PropertyColumn Property="@(r => r.Id)" Title="ID" Sortable="true" />
+            <PropertyColumn Property="@(r => r.Name)" Title="Name" Sortable="true" />
+            <PropertyColumn Property="@(r => r.Email)" Title="Email" Sortable="true" />
+            <PropertyColumn Property="@(r => r.Department)" Title="Department" Sortable="true" />
+            <TemplateColumn Title="Status" Sortable="false">
+                <FluentBadge BackgroundColor="@Color(context.Status)" Color="white">@context.Status</FluentBadge>
+            </TemplateColumn>
+            <PropertyColumn Property="@(r => r.Score)" Title="Score" Format="F1" Sortable="true" Align="Align.End" />
+            <PropertyColumn Property="@(r => r.Hired)" Title="Hired" Format="yyyy-MM-dd" Sortable="true" />
+        </FluentDataGrid>
+    </div>
+</FluentCard>
+
+@code {
+    private sealed class Row
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Department { get; set; } = "";
+        public string Status { get; set; } = "";
+        public double Score { get; set; }
+        public DateOnly Hired { get; set; }
+    }
+
+    private readonly string[] _sizes = { "1000", "10000", "100000", "500000" };
+    private string _sizeStr = "100000";
+    private string _filter = "";
+    private List<Row> _all = new();
+    private IQueryable<Row> _view = Enumerable.Empty<Row>().AsQueryable();
+    private string _status = "";
+
+    private static readonly string[] Depts = { "Engineering", "Sales", "Finance", "HR", "Marketing", "Legal", "Support", "Ops" };
+    private static readonly string[] Statuses = { "Active", "On Leave", "Pending", "Closed" };
+
+    protected override void OnInitialized() => Build();
+
+    private void Build()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var n = int.Parse(_sizeStr);
+        var rnd = new Random(42);
+        _all = new List<Row>(n);
+        for (var i = 1; i <= n; i++)
+        {
+            var dept = Depts[i % Depts.Length];
+            _all.Add(new Row
+            {
+                Id = i,
+                Name = $"{Names[i % Names.Length]} {Surs[(i / Names.Length) % Surs.Length]} {i}",
+                Email = $"user{i}@contoso.com",
+                Department = dept,
+                Status = Statuses[i % Statuses.Length],
+                Score = Math.Round(rnd.NextDouble() * 100, 1),
+                Hired = new DateOnly(2010 + i % 15, 1 + i % 12, 1 + i % 28),
+            });
+        }
+        sw.Stop();
+        _buildMs = sw.ElapsedMilliseconds;
+        Apply();
+    }
+
+    private long _buildMs;
+
+    private void Apply()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        IEnumerable<Row> q = _all;
+        if (!string.IsNullOrWhiteSpace(_filter))
+        {
+            var f = _filter.Trim();
+            q = q.Where(r => r.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
+                          || r.Email.Contains(f, StringComparison.OrdinalIgnoreCase)
+                          || r.Department.Contains(f, StringComparison.OrdinalIgnoreCase)
+                          || r.Status.Contains(f, StringComparison.OrdinalIgnoreCase));
+        }
+        var list = q.ToList();
+        _view = list.AsQueryable();
+        sw.Stop();
+        _status = $"{list.Count:N0} of {_all.Count:N0} rows · built in {_buildMs} ms · filtered in {sw.ElapsedMilliseconds} ms";
+    }
+
+    private static string Color(string s) => s switch
+    {
+        "Active" => "#1e7e34", "On Leave" => "#b8860b", "Pending" => "#1f4e79", _ => "#8a8886"
+    };
+
+    private static readonly string[] Names = { "Ada", "Bo", "Cy", "Dev", "Eli", "Fay", "Gus", "Hua", "Ivy", "Jo" };
+    private static readonly string[] Surs = { "Lovelace", "Turing", "Hopper", "Knuth", "Ritchie", "Liskov", "Dijkstra", "Kay" };
+}

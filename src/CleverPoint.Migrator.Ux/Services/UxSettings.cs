@@ -49,6 +49,7 @@ public class UxSettings
 
     public static string SettingsPath => Path.Combine(Folder, "settings.json");
     public static string HistoryDbPath => Path.Combine(Folder, "history.db");
+    public static string CacheFolder => Path.Combine(Folder, "cache");
 
     // Loaded snapshot reused by the singleton; reloaded on demand.
     private bool _loaded;

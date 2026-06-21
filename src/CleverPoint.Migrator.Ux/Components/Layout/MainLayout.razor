@@ -52,6 +52,10 @@
                 <FluentIcon Value="@(new Icons.Regular.Size20.Settings())" /> <span>Settings</span>
             </NavLink>
 
+            <NavLink class="nav-item" href="perf" ActiveClass="active">
+                <FluentIcon Value="@(new Icons.Regular.Size20.Table())" /> <span>Large table test</span>
+            </NavLink>
+
             <div class="nav-section">Help</div>
             <div class="nav-item" role="link" @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator"))">
                 <FluentIcon Value="@(new Icons.Regular.Size20.Link())" /> <span>GitHub project</span>
