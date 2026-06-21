@@ -27,6 +27,14 @@
     <ProjectReference Include="..\CleverPoint.Migrator.Core\CleverPoint.Migrator.Core.csproj" />
   </ItemGroup>
 
+  <!-- Guard against the single-file publish trap: PublishSingleFile self-extracts to a
+       temp dir, moving AppContext.BaseDirectory away from wwwroot -> Photino's file
+       provider throws DirectoryNotFoundException at startup. Publish as a self-contained
+       FOLDER instead (see BUILD.md / photino-fluent-findings.md). -->
+  <Target Name="BlockSingleFilePublish" BeforeTargets="Publish" Condition="'$(PublishSingleFile)' == 'true'">
+    <Error Text="Do not publish CleverPoint.Migrator.Ux with PublishSingleFile=true (Photino serves wwwroot from next to the exe). Publish a self-contained folder: dotnet publish -c Release -r win-x64 --self-contained true -o publish/windows" />
+  </Target>
+
   <!-- Photino serves UI from a physical wwwroot next to the exe. A plain build keeps
        static web assets in a manifest and does NOT copy them; this target does, so
        `dotnet run` works the same as publish. (See photino-fluent-findings.md.) -->

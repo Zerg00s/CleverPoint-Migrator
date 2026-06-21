@@ -8,7 +8,11 @@ export DISPLAY=:0
 unset WAYLAND_DISPLAY
 export GDK_BACKEND=x11
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
-pkill -f CleverPoint.Migrator.Ux 2>/dev/null
+# Kill prior instances by the exe PATH anchored to the START (^). pkill -f matches the
+# WHOLE command line of every process, including this launcher shell — and any agent
+# shell whose command text merely mentions the app name. A bare `pkill -f <name>` would
+# match and kill its own shell (exit 144), so anchor to argv[0] = the real app only.
+pkill -f "^$APP" 2>/dev/null
 sleep 2
 setsid "$APP" > "$LOG" 2>&1 < /dev/null &
 disown
