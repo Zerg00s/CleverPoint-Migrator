@@ -162,6 +162,38 @@ Windows, [ ] not done yet.
 - [x] Git repo with secrets excluded
 - [ ] 100K-item endurance test (deferred to fine-tuning per Denis)
 
+## New Fluent UI front-end (src/CleverPoint.Migrator.Ux)
+
+A second, cross-platform desktop front-end built on Photino.Blazor +
+Microsoft Fluent UI, adopting the reference UX concept's architecture and the
+photino-fluent-findings. Shares the Core engine unchanged. Runs on Windows
+(WebView2) and on Linux/WSL (WebKitGTK) — the latter makes it
+screenshot-testable from the agent.
+
+- [x] App shell: deep-blue header, teal "C" brand, highlighted left nav,
+      light/dark toggle, live-clock footer, page transitions
+- [x] Home: connection-aware (empty-state CTA vs hero + at-a-glance stats +
+      recent migrations from the real HistoryStore)
+- [x] Settings: tabbed (Connections grid + add-connection dialog /
+      Performance / Advanced self-healing / About); shares settings.json
+- [x] History: real DataGrid (#, name, started/finished/duration, status
+      badge, result), search + status filter + pagination
+- [x] Explore & copy: split source/target panes, connection pickers, Open,
+      DataGrids with type icons + source checkboxes, centered Copy button
+- [x] Wizard: pre-populated task screen (engine, what-to-copy, versions,
+      mapping/date affordances), run buttons, toast + result bar
+- [x] WSL UI-testing harness (tools/ui-testing): launch on XWayland,
+      screenshot, click. Every screen verified by screenshot.
+- [ ] Live engine execution from the Blazor wizard (task #47): cert auth
+      runs headless via Core; browser auth needs a Photino sign-in WebView.
+      Windows-verify only (no tenant session on WSL).
+
+Key WSL finding: WSLg here runs the Weston/Wayland compositor, so the GTK
+window must be forced onto XWayland (GDK_BACKEND=x11, unset WAYLAND_DISPLAY)
+or xdotool/import can't see it. WebKitGTK also initializes its viewport
+shorter than the window under WSLg — size the test window to ~545px for clean
+shots. Neither affects the real Windows WebView2 target. (See BUILD.md.)
+
 ## Verified-by-test scenarios (TestRunner)
 
 auth provision copy-list copy-selected copy-paths content-only browse-large
