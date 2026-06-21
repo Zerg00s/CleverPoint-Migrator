@@ -25,7 +25,26 @@
   <ItemGroup>
     <!-- Reuse the real migration engine + history store unchanged. -->
     <ProjectReference Include="..\CleverPoint.Migrator.Core\CleverPoint.Migrator.Core.csproj" />
+    <!-- Build the Windows WebView2 sign-in helper alongside us (don't reference its
+         assembly; it's a different TFM and launched as a separate process). -->
+    <ProjectReference Include="..\CleverPoint.Migrator.SignInHelper\CleverPoint.Migrator.SignInHelper.csproj"
+                      ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" Private="false" />
   </ItemGroup>
+
+  <!-- Bundle the sign-in helper's full output (exe + WebView2 native loader) into
+       SignInHelper\ next to our exe, where BrowserSignIn looks for it first. -->
+  <Target Name="BundleSignInHelper" AfterTargets="Build;Publish">
+    <PropertyGroup>
+      <_HelperOut>$(MSBuildProjectDirectory)\..\CleverPoint.Migrator.SignInHelper\bin\$(Configuration)\net8.0-windows\</_HelperOut>
+    </PropertyGroup>
+    <ItemGroup>
+      <_HelperFiles Include="$(_HelperOut)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_HelperFiles)"
+          DestinationFiles="@(_HelperFiles->'$(OutDir)SignInHelper\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true"
+          Condition="'@(_HelperFiles)' != ''" />
+  </Target>
 
   <!-- Guard against the single-file publish trap: PublishSingleFile self-extracts to a
        temp dir, moving AppContext.BaseDirectory away from wwwroot -> Photino's file

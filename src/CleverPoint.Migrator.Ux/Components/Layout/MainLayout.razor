@@ -40,7 +40,7 @@
         <nav class="app-nav @(_navCollapsed ? "collapsed" : "")">
             <div class="nav-item nav-toggle-item" role="button" @onclick="ToggleNav"
                  title="@(_navCollapsed ? "Expand the navigation" : "Collapse the navigation")">
-                <FluentIcon Value="@_navIcon" /> <span>Collapse</span>
+                <FluentIcon Value="@_navIcon" />
             </div>
             <div class="nav-top-gap"></div>
             <NavLink class="nav-item" href="" Match="NavLinkMatch.All" ActiveClass="active" title="Home">
