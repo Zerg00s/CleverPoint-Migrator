@@ -3,8 +3,19 @@
 @inject SiteBrowser Browser
 @inject BrowserSignIn SignIn
 @inject IToastService Toasts
+@inject DragState Drag
+@implements IDisposable
 
-<div class="exp-pane">
+<div class="exp-pane @(!IsSource && Drag.Active ? "drop-ready" : "") @(_dragOver ? "drop-hot" : "")"
+     @ondragenter="OnDragEnter" @ondragover="OnDragOver" @ondragover:preventDefault="true"
+     @ondragleave="OnDragLeave" @ondrop="OnDrop" @ondrop:preventDefault="true">
+    @if (!IsSource && Drag.Active)
+    {
+        <div class="drop-overlay">
+            <FluentIcon Value="@(new Icons.Regular.Size32.ArrowDownload())" />
+            <span>Drop to copy @Drag.Count item@(Drag.Count == 1 ? "" : "s") here</span>
+        </div>
+    }
     <div class="exp-pane-head">
         <span class="role">@Role</span>
         <div class="exp-row">
@@ -12,9 +23,11 @@
                                 Placeholder="Search or pick a connection…"
                                 Items="@_siteChoices" OptionText="@(s => s)"
                                 OnOptionsSearch="OnSiteSearch" MaximumSelectedOptions="1"
+                                autocomplete="off" name="@($"conn-{Role}")" spellcheck="false"
                                 @bind-SelectedOptions="_selectedSites" @bind-SelectedOptions:after="OnSiteSelected" />
             <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Add())" Title="Add a connection" @onclick="AddConnection" />
-            <FluentButton Appearance="Appearance.Accent" Loading="_loading" @onclick="OpenAsync" Title="Open the selected connection">Open</FluentButton>
+            <FluentButton Appearance="Appearance.Stealth" Loading="_loading" Disabled="@(string.IsNullOrWhiteSpace(_site))"
+                          IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" Title="Reload this connection" @onclick="OpenAsync" />
         </div>
     </div>
 
@@ -79,12 +92,15 @@
                         </TemplateColumn>
                     }
                     <TemplateColumn Title="Name">
-                        <FluentIcon Value="@EntryIcon(context)" Color="Color.Accent" />
-                        <span class="@(context.IsFolder ? "entry-folder" : "")" style="margin-left:6px;">@context.Name</span>
-                        @if (context.IsFolder)
-                        {
-                            <FluentIcon Value="@(new Icons.Regular.Size16.ChevronRight())" Class="entry-go" Title="Open" />
-                        }
+                        <div class="entry-cell" draggable="@(IsSource ? "true" : "false")"
+                             @ondragstart="@(() => OnDragStart(context))" @ondragend="OnDragEnd">
+                            <FluentIcon Value="@EntryIcon(context)" Color="Color.Accent" />
+                            <span class="entry-name @(context.IsFolder ? "entry-folder" : "")">@context.Name</span>
+                            @if (context.IsFolder)
+                            {
+                                <FluentIcon Value="@(new Icons.Regular.Size16.ChevronRight())" Class="entry-go" Title="Open" />
+                            }
+                        </div>
                     </TemplateColumn>
                     <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" />
                     <PropertyColumn Property="@(i => i.ModifiedBy)" Title="Modified by" Sortable="true" />
@@ -108,8 +124,11 @@
     [Parameter] public string Role { get; set; } = "Source";
     [Parameter] public bool IsSource { get; set; }
     [Parameter] public EventCallback OnChanged { get; set; }
+    /// <summary>Raised on the target pane when items are dropped onto it.</summary>
+    [Parameter] public EventCallback OnDropRequested { get; set; }
 
     private AddConnectionDialog? _addDialog;
+    private bool _dragOver;
 
     /// <summary>
     /// Source is ready when a list is open (to pick items) or one or more lists are
@@ -158,6 +177,50 @@
     {
         Settings.EnsureLoaded();
         _siteChoices = Settings.Connections.Select(c => c.SiteUrl).ToList();
+        Drag.Changed += OnDragChanged;
+    }
+
+    private void OnDragChanged() => InvokeAsync(StateHasChanged);
+    public void Dispose() => Drag.Changed -= OnDragChanged;
+
+    // ---- Drag from source, drop on target -----------------------------------
+    private void OnDragStart(SpFolderEntry entry)
+    {
+        if (!IsSource || CurrentList is null || string.IsNullOrWhiteSpace(_site)) return;
+        // Dragging a ticked item drags the whole selection; otherwise just this one.
+        List<string> paths; List<int> ids;
+        if (entry.Selected && (_pickedPaths.Count > 0 || _pickedIds.Count > 0))
+        {
+            paths = _pickedPaths.ToList(); ids = _pickedIds.ToList();
+        }
+        else if (CurrentList.IsLibrary)
+        {
+            paths = new() { entry.ServerRelativeUrl }; ids = new();
+        }
+        else
+        {
+            paths = new(); ids = new() { entry.ItemId };
+        }
+        Drag.Begin(_site!, CurrentList.Title, CurrentList.IsLibrary, paths, ids);
+    }
+
+    private void OnDragEnd() => Drag.End();
+
+    private void OnDragEnter() { if (!IsSource && Drag.Active) _dragOver = true; }
+    private void OnDragOver() { if (!IsSource && Drag.Active) _dragOver = true; }
+    private void OnDragLeave() => _dragOver = false;
+
+    private async Task OnDrop()
+    {
+        _dragOver = false;
+        if (IsSource || !Drag.Active) return;
+        if (string.IsNullOrWhiteSpace(_site) || Connection is null)
+        {
+            _status = "Open a target connection here first, then drop.";
+            Drag.End();
+            return;
+        }
+        await OnDropRequested.InvokeAsync();
     }
 
     private async Task OpenAsync()

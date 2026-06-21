@@ -13,6 +13,21 @@
     --cp-fail: #b02a37;
 }
 
+/* Theme-aware text colors. Links/accents and status text need lighter shades on
+   the dark background or they're unreadable (the dark teal vanishes on dark). */
+.app-shell {
+    --cp-link: #0f6f64;
+    --cp-ok-text: #1e7e34;
+    --cp-warn-text: #9a7209;
+    --cp-fail-text: #b02a37;
+}
+.app-shell.dark {
+    --cp-link: #4fd1c0;
+    --cp-ok-text: #4ade80;
+    --cp-warn-text: #e6c15a;
+    --cp-fail-text: #f08a93;
+}
+
 html, body {
     margin: 0; padding: 0; height: 100%;
     font-family: var(--body-font, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif);
@@ -194,7 +209,13 @@ html, body {
 .explorer { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 /* Bound the panes to the viewport so each list scrolls INTERNALLY and the
    "Copy to target" bar below stays visible without scrolling the page. */
-.exp-pane { display: flex; flex-direction: column; height: calc(100vh - 320px); min-height: 280px; border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; background: var(--neutral-layer-1); overflow: hidden; }
+.exp-pane { position: relative; display: flex; flex-direction: column; height: calc(100vh - 320px); min-height: 280px; border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; background: var(--neutral-layer-1); overflow: hidden; }
+/* Drag files/folders from source and drop on the target pane. */
+.exp-pane.drop-ready { outline: 2px dashed color-mix(in srgb, var(--cp-accent) 55%, transparent); outline-offset: -5px; }
+.exp-pane.drop-hot { outline: 2px solid var(--cp-accent); }
+.drop-overlay { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; pointer-events: none; border-radius: 12px; font-weight: 600; color: var(--cp-link); background: color-mix(in srgb, var(--cp-accent) 16%, var(--neutral-layer-1)); }
+.entry-cell[draggable="true"] { cursor: grab; }
+.entry-cell[draggable="true"]:active { cursor: grabbing; }
 .exp-pane-head { padding: 12px 14px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #eee); }
 .exp-pane-head .role { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--cp-primary); }
 .exp-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
@@ -202,31 +223,48 @@ html, body {
 .exp-status { padding: 8px 14px; font-size: 12px; opacity: .6; border-top: 1px solid var(--neutral-stroke-divider-rest, #eee); }
 /* Folder breadcrumb above the item grid. */
 .exp-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 8px 14px; font-size: 13px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #eee); }
-.exp-crumbs .crumb { color: var(--cp-accent-dark); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.exp-crumbs .crumb { color: var(--cp-link); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
 .exp-crumbs .crumb:hover { background: color-mix(in srgb, var(--cp-accent) 14%, transparent); }
 .exp-crumbs .crumb.current { color: inherit; font-weight: 600; cursor: default; }
 .exp-crumbs .crumb.current:hover { background: transparent; }
 .exp-crumbs .crumb-sep { opacity: .4; padding: 0 2px; }
 /* "Up" control lives in the breadcrumb bar, right above the table. */
-.exp-crumbs .crumb-up { display: inline-flex; align-items: center; gap: 4px; color: var(--cp-accent-dark); font-weight: 600; cursor: pointer; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--neutral-stroke-divider-rest, #ddd); }
+.exp-crumbs .crumb-up { display: inline-flex; align-items: center; gap: 4px; color: var(--cp-link); font-weight: 600; cursor: pointer; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--neutral-stroke-divider-rest, #ddd); }
 .exp-crumbs .crumb-up:hover { background: color-mix(in srgb, var(--cp-accent) 16%, transparent); }
 /* The whole folder/list row is the click target (big, easy hit area). */
 .cp-grid .folder-row, .cp-grid .folder-row *,
 .cp-grid .click-row, .cp-grid .click-row * { cursor: pointer !important; }
 .cp-grid .folder-row:hover, .cp-grid .click-row:hover { background: color-mix(in srgb, var(--cp-accent) 8%, transparent); }
-.entry-folder { color: var(--cp-accent-dark); font-weight: 500; }
-.entry-go { margin-left: auto; opacity: .55; }
+.entry-cell { display: flex; align-items: center; gap: 6px; width: 100%; }
+.entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry-folder { color: var(--cp-link); font-weight: 500; }
+.entry-go { margin-left: auto; flex: 0 0 auto; opacity: .5; }
 .copy-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 4px 0; }
 /* Prominent call-to-action button (Fluent buttons are control-height by default). */
 .cp-cta::part(control) { height: 46px; padding: 0 36px; font-size: 15px; font-weight: 600; }
 .cp-cta { min-width: 240px; }
 
 /* ---- Misc ----------------------------------------------------------------- */
-/* Make grid text selectable + copyable (Fluent sets user-select:none by default). */
-.cp-grid, .cp-grid * { user-select: text !important; -webkit-user-select: text !important; cursor: text; }
+/* Make grid text selectable + copyable (Fluent sets user-select:none by default).
+   Note: do NOT force cursor:text here — it makes the scrollbar show an I-beam.
+   Selection still works on drag; the cursor stays a normal arrow. */
+.cp-grid, .cp-grid * { user-select: text !important; -webkit-user-select: text !important; }
 .cp-grid a, .cp-grid button, .cp-grid [role="button"], .cp-grid fluent-checkbox { cursor: pointer; }
 /* One continuous scroll region for a virtualized grid (no pagination). */
 .cp-scroll { overflow: auto; border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 10px; background: var(--neutral-layer-1); }
+
+/* Wider, easier-to-hit scrollbars with a normal cursor (not the text caret). */
+.cp-scroll, .exp-list { scrollbar-width: auto; }
+.cp-scroll::-webkit-scrollbar, .exp-list::-webkit-scrollbar, .app-content::-webkit-scrollbar { width: 14px; height: 14px; }
+.cp-scroll::-webkit-scrollbar-thumb, .exp-list::-webkit-scrollbar-thumb, .app-content::-webkit-scrollbar-thumb {
+    background: var(--neutral-stroke-strong-rest, #9a9a9a); border-radius: 8px; border: 3px solid transparent; background-clip: content-box;
+}
+.cp-scroll::-webkit-scrollbar-thumb:hover, .exp-list::-webkit-scrollbar-thumb:hover, .app-content::-webkit-scrollbar-thumb:hover {
+    background: var(--neutral-foreground-rest, #666); background-clip: content-box;
+}
+.cp-scroll::-webkit-scrollbar-track, .exp-list::-webkit-scrollbar-track, .app-content::-webkit-scrollbar-track { background: transparent; }
+/* Scrollbars use the default arrow cursor, never the I-beam. */
+.cp-scroll, .exp-list, .app-content { cursor: default; }
 
 /* ---- Run history table ---------------------------------------------------- */
 /* Footer: count on the left, page-size + paginator on the right, never crammed. */
@@ -251,9 +289,9 @@ html, body {
 .run-meta > div { display: flex; flex-direction: column; gap: 2px; word-break: break-all; }
 .run-counts { display: flex; gap: 18px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--neutral-stroke-divider-rest, #eee); }
 .run-counts .count { font-weight: 600; }
-.run-counts .count.ok { color: #1e7e34; }
-.run-counts .count.warn { color: #b8860b; }
-.run-counts .count.fail { color: #b02a37; }
+.run-counts .count.ok { color: var(--cp-ok-text); }
+.run-counts .count.warn { color: var(--cp-warn-text); }
+.run-counts .count.fail { color: var(--cp-fail-text); }
 
 .spacer-12 { height: 12px; }
 .inline-gap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

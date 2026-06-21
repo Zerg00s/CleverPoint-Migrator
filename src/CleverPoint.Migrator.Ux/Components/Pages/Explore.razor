@@ -3,6 +3,7 @@
 @inject NavigationManager Nav
 @inject IToastService Toasts
 @inject PendingMigration Pending
+@inject DragState Drag
 
 <div class="page-head">
     <h1>Copy</h1>
@@ -11,7 +12,7 @@
 
 <div class="explorer">
     <ExplorerPane @ref="_source" Role="Source" IsSource="true" OnChanged="OnPaneChanged" />
-    <ExplorerPane @ref="_target" Role="Target" IsSource="false" OnChanged="OnPaneChanged" />
+    <ExplorerPane @ref="_target" Role="Target" IsSource="false" OnChanged="OnPaneChanged" OnDropRequested="OnDropToTarget" />
 </div>
 
 <div class="copy-bar">
@@ -29,6 +30,22 @@
     {
         _canCopy = (_source?.IsReady ?? false) && (_target?.IsReady ?? false);
         StateHasChanged();
+    }
+
+    // Files/folders dragged from the source were dropped on the target pane.
+    private void OnDropToTarget()
+    {
+        if (!Drag.Active || _target?.SiteUrl is null) return;
+        Pending.Reset(Drag.SourceSite, _target.SiteUrl);
+        Pending.Jobs.Add(new PendingJob
+        {
+            SourceListTitle = Drag.SourceListTitle,
+            IsLibrary = Drag.IsLibrary,
+            SelectedPaths = Drag.Paths.ToList(),
+            SelectedItemIds = Drag.ItemIds.ToList(),
+        });
+        Drag.End();
+        Nav.NavigateTo("/wizard");
     }
 
     private void StartCopy()

@@ -8,7 +8,7 @@
 
 <FluentDesignTheme @bind-Mode="@_mode" StorageName="theme" />
 
-<div class="app-shell">
+<div class="app-shell @(_mode == DesignThemeModes.Dark ? "dark" : "light")">
 
     <header class="app-header">
         <div class="app-header-left">

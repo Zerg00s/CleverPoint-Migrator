@@ -26,6 +26,7 @@ internal class Program
         builder.Services.AddSingleton<BrowserSignIn>();
         builder.Services.AddSingleton<UxMigrationService>();
         builder.Services.AddSingleton<PendingMigration>();
+        builder.Services.AddSingleton<DragState>();
 
         builder.RootComponents.Add<App>("#app");
 
