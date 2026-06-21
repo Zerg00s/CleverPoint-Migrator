@@ -72,3 +72,16 @@ Notes:
   Windows WebView2 target the shell fills the window.
 - Background `&` launches inside the agent shell report a non-zero code but the app still detaches
   and survives; check with `pgrep -f CleverPoint.Migrator.Ux`.
+
+## Browser sign-in helper (Windows)
+
+The new Fluent UI app can't read the WebView's sign-in cookie itself, so browser
+connections use a small WebView2 popup helper. Build it once so the app can find it:
+
+```
+dotnet build src\CleverPoint.Migrator.SignInHelper
+```
+
+App + certificate connections need no helper (they authenticate silently). On
+Linux/WSL the helper can't run (WebView2 is Windows-only), so use app + certificate
+there.

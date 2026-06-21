@@ -12,7 +12,12 @@ namespace CleverPoint.Migrator.Ux.Services;
 public class UxMigrationService
 {
     private readonly UxSettings _settings;
-    public UxMigrationService(UxSettings settings) => _settings = settings;
+    private readonly BrowserSignIn _browser;
+    public UxMigrationService(UxSettings settings, BrowserSignIn browser)
+    {
+        _settings = settings;
+        _browser = browser;
+    }
 
     public bool CanRun(string sourceSite, string targetSite, out string? why)
     {
@@ -20,10 +25,9 @@ public class UxMigrationService
         var s = UxConnectionResolver.Find(_settings, sourceSite);
         var t = UxConnectionResolver.Find(_settings, targetSite);
         if (s is null || t is null) { why = "Both the source and target need a saved connection."; return false; }
-        if (!UxConnectionResolver.CanRunHeadless(s, t))
+        if (!UxConnectionResolver.CanResolve(s, _browser) || !UxConnectionResolver.CanResolve(t, _browser))
         {
-            why = "Live runs currently require app + certificate connections on both sides. "
-                + "Browser sign-in execution is coming next.";
+            why = "Sign in to both connections first (Connect on the Connections page or the explorer).";
             return false;
         }
         return true;
@@ -36,8 +40,8 @@ public class UxMigrationService
     {
         var sConn = UxConnectionResolver.Find(_settings, sourceSite)!;
         var tConn = UxConnectionResolver.Find(_settings, targetSite)!;
-        var source = UxConnectionResolver.ResolveCert(sConn, sourceSite);
-        var target = UxConnectionResolver.ResolveCert(tConn, targetSite);
+        var source = UxConnectionResolver.Resolve(sConn, sourceSite, _browser);
+        var target = UxConnectionResolver.Resolve(tConn, targetSite, _browser);
 
         using var store = new HistoryStore(UxSettings.HistoryDbPath);
         var runId = store.StartRun(new MigrationRun

@@ -1,6 +1,7 @@
 @namespace CleverPoint.Migrator.Ux.Components
 @inject UxSettings Settings
 @inject SiteBrowser Browser
+@inject BrowserSignIn SignIn
 @inject IToastService Toasts
 
 <div class="exp-pane">
@@ -106,16 +107,21 @@
         CurrentList = null;
         _items.Clear();
         if (Connection is null) { _status = "No saved connection for that site."; return; }
-        if (!UxConnectionResolver.IsCert(Connection))
+
+        // Browser connections sign in via the WebView2 helper popup, then reuse
+        // the captured session for this site and every other on the tenant.
+        if (!UxConnectionResolver.IsCert(Connection) && !SignIn.HasSession(_site))
         {
-            _lists.Clear();
-            _status = "Browser sign-in isn't wired in this build yet. Use an app + certificate connection to browse live.";
-            return;
+            _loading = true; _status = "Opening sign-in…"; StateHasChanged();
+            var (ok, msg) = await SignIn.SignInAsync(_site);
+            _loading = false;
+            if (!ok) { _status = msg; await OnChanged.InvokeAsync(); return; }
         }
+
         _loading = true; _status = "Loading lists…"; StateHasChanged();
         try
         {
-            var conn = UxConnectionResolver.ResolveCert(Connection, _site);
+            var conn = UxConnectionResolver.Resolve(Connection, _site, SignIn);
             _lists = await Browser.GetListsAsync(conn);
             _status = $"{_lists.Count} lists and libraries";
         }
@@ -141,7 +147,7 @@
         _loading = true; _status = $"Loading {list.Title}…"; CurrentList = list; StateHasChanged();
         try
         {
-            var conn = UxConnectionResolver.ResolveCert(Connection, _site);
+            var conn = UxConnectionResolver.Resolve(Connection, _site, SignIn);
             _items = list.IsLibrary
                 ? await Browser.GetFolderAsync(conn, list.ServerRelativeUrl, list.ServerRelativeUrl)
                 : await Browser.GetListItemsAsync(conn, list);

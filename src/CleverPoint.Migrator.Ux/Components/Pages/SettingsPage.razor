@@ -8,37 +8,6 @@
 </div>
 
 <FluentTabs @bind-ActiveTabId="_tab">
-    <FluentTab Id="conn" Label="Connections">
-        <div style="padding-top:16px;">
-            <div class="btn-row" style="margin-bottom:14px;">
-                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Add())" @onclick="OpenAdd">Add connection</FluentButton>
-            </div>
-
-            @if (Settings.Connections.Count == 0)
-            {
-                <FluentCard>
-                    <p class="hint">No connections yet. Add a SharePoint site to get started.</p>
-                </FluentCard>
-            }
-            else
-            {
-                <FluentCard>
-                    <FluentDataGrid Items="@Settings.Connections.AsQueryable()" GridTemplateColumns="1.2fr 0.7fr 2.2fr 1.1fr 0.5fr"
-                                    ShowHover="true" Style="width:100%;">
-                        <PropertyColumn Property="@(c => c.Name)" Title="Name" />
-                        <PropertyColumn Property="@(c => c.AuthMode == "AppCertificate" ? "App + cert" : "Browser")" Title="Sign-in" />
-                        <PropertyColumn Property="@(c => c.SiteUrl)" Title="Site" />
-                        <PropertyColumn Property="@(c => string.IsNullOrEmpty(c.LastStatus) ? "Not tested" : c.LastStatus)" Title="Status" />
-                        <TemplateColumn Title="" Align="Align.End">
-                            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size16.Delete())"
-                                          Title="Remove" OnClick="@(() => Remove(context))" />
-                        </TemplateColumn>
-                    </FluentDataGrid>
-                </FluentCard>
-            }
-        </div>
-    </FluentTab>
-
     <FluentTab Id="perf" Label="Performance">
         <div style="padding-top:16px; max-width:640px;">
             <div class="field" style="margin-bottom:18px;">
@@ -117,12 +86,8 @@
     </FluentTab>
 </FluentTabs>
 
-@* ---- Add connection dialog (shared component, no Display name field) ---- *@
-<AddConnectionDialog @ref="_addDialog" OnAdded="OnConnectionAdded" />
-
 @code {
-    private string _tab = "conn";
-    private AddConnectionDialog? _addDialog;
+    private string _tab = "perf";
     private string _defaultVersions = "1";
 
     protected override void OnInitialized()
@@ -131,25 +96,11 @@
         _defaultVersions = Settings.DefaultMaxVersions.ToString();
     }
 
-    private async Task OpenAdd()
-    {
-        if (_addDialog is not null) await _addDialog.OpenAsync();
-    }
-
-    private void OnConnectionAdded(SavedConnection _) => StateHasChanged();
-
     private void OpenSettingsFile()
     {
         // Ensure the file exists, then open it with the OS default editor.
         if (!File.Exists(UxSettings.SettingsPath)) Settings.Save();
         Browser.Open(UxSettings.SettingsPath);
-    }
-
-    private void Remove(SavedConnection c)
-    {
-        Settings.Connections.Remove(c);
-        Settings.Save();
-        Toasts.ShowInfo($"Removed '{c.Name}'.");
     }
 
     private void SavePrefs()

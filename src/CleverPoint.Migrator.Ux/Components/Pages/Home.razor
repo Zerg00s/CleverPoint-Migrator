@@ -18,11 +18,10 @@
 else
 {
     <section class="hero section">
-        <h1>Migrate SharePoint content with confidence</h1>
+        <h1>Migrate SharePoint Online content with ease</h1>
         <p>
             Copy lists, libraries, files, folders and pages across sites, subsites and tenants, preserving
-            authors, dates, versions, content types and permissions. Pick what to copy in the explorer, then
-            run, watch live progress, and re-run incrementally.
+            authors, dates, versions, content types and permissions.
         </p>
         <div class="btn-row">
             <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Nav.NavigateTo("/explore"))"
@@ -33,50 +32,8 @@ else
     </section>
 
     <div class="section">
-        <h2 class="section-title">At a glance</h2>
-        <div class="grid cols-4">
-            <div class="stat">
-                <div class="stat-label">Connections</div>
-                <div class="stat-value">@Settings.Connections.Count</div>
-                <div class="stat-delta">saved tenants &amp; sites</div>
-            </div>
-            <div class="stat">
-                <div class="stat-label">Migrations run</div>
-                <div class="stat-value">@_runs.Count</div>
-                <div class="stat-delta">recorded in history</div>
-            </div>
-            <div class="stat">
-                <div class="stat-label">Items copied</div>
-                <div class="stat-value">@_totalCopied.ToString("N0")</div>
-                <div class="stat-delta up">across all runs</div>
-            </div>
-            <div class="stat">
-                <div class="stat-label">With issues</div>
-                <div class="stat-value">@_withIssues</div>
-                <div class="stat-delta @(_withIssues > 0 ? "down" : "up")">runs needing attention</div>
-            </div>
-        </div>
-    </div>
-
-    <div class="section">
         <h2 class="section-title">Recent migrations</h2>
-        <FluentCard>
-            @if (_runs.Count == 0)
-            {
-                <p class="hint">No migrations yet. Your runs will show up here.</p>
-            }
-            else
-            {
-                <FluentDataGrid Items="@_recent" GridTemplateColumns="2fr 1.2fr 1fr 1.4fr" ShowHover="true" Style="width:100%;">
-                    <PropertyColumn Property="@(r => r.Name)" Title="Name" />
-                    <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" />
-                    <TemplateColumn Title="Status">
-                        <FluentBadge BackgroundColor="@StatusColor(context)" Color="white">@Pretty(context.Status)</FluentBadge>
-                    </TemplateColumn>
-                    <PropertyColumn Property="@(r => $"{r.Copied} copied, {r.Skipped} skipped, {r.Failed} failed")" Title="Result" />
-                </FluentDataGrid>
-            }
-        </FluentCard>
+        <RunsTable PageSize="8" />
     </div>
 }
 

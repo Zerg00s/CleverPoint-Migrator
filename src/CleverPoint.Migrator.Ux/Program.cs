@@ -23,6 +23,7 @@ internal class Program
         builder.Services.AddSingleton<AppStatusService>();
         builder.Services.AddSingleton<ActivityService>();
         builder.Services.AddSingleton<SiteBrowser>();
+        builder.Services.AddSingleton<BrowserSignIn>();
         builder.Services.AddSingleton<UxMigrationService>();
 
         builder.RootComponents.Add<App>("#app");

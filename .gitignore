@@ -27,3 +27,7 @@ appsettings.local.json
 src/CleverPoint.Migrator.Ux/bin/
 src/CleverPoint.Migrator.Ux/obj/
 src/CleverPoint.Migrator.Ux/publish/
+
+# Sign-in helper build output
+src/CleverPoint.Migrator.SignInHelper/bin/
+src/CleverPoint.Migrator.SignInHelper/obj/

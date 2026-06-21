@@ -1,0 +1,122 @@
+@page "/connections"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@inject UxSettings Settings
+@inject BrowserSignIn SignIn
+@inject IToastService Toasts
+
+<div class="page-head">
+    <h1>Connections</h1>
+</div>
+
+<div class="btn-row" style="margin-bottom:14px;">
+    <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Add())" @onclick="OpenAdd">Add connection</FluentButton>
+</div>
+
+@if (Settings.Connections.Count == 0)
+{
+    <FluentCard><p class="hint">No connections yet. Add a SharePoint site to get started.</p></FluentCard>
+}
+else
+{
+    <div class="conn-table">
+        <div class="conn-row conn-head">
+            <div class="conn-name">Name</div>
+            <div class="conn-signin">Sign-in</div>
+            <div class="conn-site">Site</div>
+            <div class="conn-status">Status</div>
+            <div class="conn-actions"></div>
+        </div>
+        @foreach (var c in Settings.Connections)
+        {
+            <div class="conn-row">
+                <div class="conn-name">@c.Name</div>
+                <div class="conn-signin">@(c.AuthMode == "AppCertificate" ? "App + certificate" : "Browser")</div>
+                <div class="conn-site" title="@c.SiteUrl">@c.SiteUrl</div>
+                <div class="conn-status">
+                    <span class="conn-dot @StatusClass(c)"></span>
+                    <span>@StatusText(c)</span>
+                </div>
+                <div class="conn-actions">
+                    @if (_busy == c.SiteUrl)
+                    {
+                        <FluentProgressRing Style="width:20px;height:20px;" />
+                    }
+                    else
+                    {
+                        <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Connect(c, false))">
+                            @(IsConnected(c) ? "Reconnect" : "Connect")
+                        </FluentButton>
+                        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Delete())"
+                                      Title="Remove" @onclick="@(() => Remove(c))" />
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<AddConnectionDialog @ref="_addDialog" OnAdded="OnConnectionAdded" />
+
+@code {
+    private AddConnectionDialog? _addDialog;
+    private string? _busy;
+
+    protected override void OnInitialized() => Settings.EnsureLoaded();
+
+    private async Task OpenAdd() { if (_addDialog is not null) await _addDialog.OpenAsync(); }
+
+    // New connections authenticate immediately so you see status right away.
+    private async Task OnConnectionAdded(SavedConnection c)
+    {
+        StateHasChanged();
+        await Connect(c, false);
+    }
+
+    private async Task Connect(SavedConnection c, bool _)
+    {
+        _busy = c.SiteUrl;
+        StateHasChanged();
+        try
+        {
+            if (c.AuthMode == "AppCertificate")
+            {
+                UxConnectionResolver.Invalidate(c);
+                var (ok, msg) = await UxConnectionResolver.TestAsync(c);
+                Toasts.ShowToast(ok ? ToastIntent.Success : ToastIntent.Error, msg);
+            }
+            else
+            {
+                var fresh = SignIn.HasSession(c.SiteUrl);
+                var (ok, msg) = await SignIn.SignInAsync(c.SiteUrl, fresh);
+                c.LastStatus = ok ? "Connected (browser)" : msg;
+                c.LastVerifiedUtc = DateTime.UtcNow;
+                Toasts.ShowToast(ok ? ToastIntent.Success : ToastIntent.Warning, ok ? "Signed in." : msg);
+            }
+            Settings.Save();
+        }
+        finally { _busy = null; StateHasChanged(); }
+    }
+
+    private void Remove(SavedConnection c)
+    {
+        Settings.Connections.Remove(c);
+        Settings.Save();
+        Toasts.ShowInfo($"Removed '{c.Name}'.");
+    }
+
+    private bool IsConnected(SavedConnection c) =>
+        c.AuthMode == "AppCertificate"
+            ? c.LastStatus.StartsWith("Connected", StringComparison.OrdinalIgnoreCase)
+            : SignIn.HasSession(c.SiteUrl);
+
+    private string StatusText(SavedConnection c)
+    {
+        if (IsConnected(c)) return c.AuthMode == "AppCertificate" ? c.LastStatus : "Connected";
+        if (!string.IsNullOrEmpty(c.LastStatus) && c.LastStatus.StartsWith("Failed", StringComparison.OrdinalIgnoreCase)) return c.LastStatus;
+        return "Not connected";
+    }
+
+    private string StatusClass(SavedConnection c) =>
+        IsConnected(c) ? "ok"
+        : c.LastStatus.StartsWith("Failed", StringComparison.OrdinalIgnoreCase) ? "fail" : "idle";
+}

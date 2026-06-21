@@ -12,9 +12,6 @@
 
     <header class="app-header">
         <div class="app-header-left">
-            <FluentButton Appearance="Appearance.Stealth" @onclick="ToggleNav"
-                          Title="@(_navCollapsed ? "Expand the navigation" : "Collapse the navigation")"
-                          IconStart="@_navIcon" Class="nav-toggle" />
             <div class="app-brand">
                 <span class="app-brand-mark">C</span>
                 <div class="app-brand-text">
@@ -41,17 +38,24 @@
 
     <div class="app-main">
         <nav class="app-nav @(_navCollapsed ? "collapsed" : "")">
+            <div class="nav-item nav-toggle-item" role="button" @onclick="ToggleNav"
+                 title="@(_navCollapsed ? "Expand the navigation" : "Collapse the navigation")">
+                <FluentIcon Value="@_navIcon" /> <span>Collapse</span>
+            </div>
             <div class="nav-top-gap"></div>
-            <NavLink class="nav-item" href="" Match="NavLinkMatch.All" ActiveClass="active">
+            <NavLink class="nav-item" href="" Match="NavLinkMatch.All" ActiveClass="active" title="Home">
                 <FluentIcon Value="@(new Icons.Regular.Size20.Home())" /> <span>Home</span>
             </NavLink>
-            <NavLink class="nav-item" href="explore" ActiveClass="active">
+            <NavLink class="nav-item" href="explore" ActiveClass="active" title="Copy">
                 <FluentIcon Value="@(new Icons.Regular.Size20.ArrowSwap())" /> <span>Copy</span>
             </NavLink>
-            <NavLink class="nav-item" href="history" ActiveClass="active">
+            <NavLink class="nav-item" href="connections" ActiveClass="active" title="Connections">
+                <FluentIcon Value="@(new Icons.Regular.Size20.PlugConnected())" /> <span>Connections</span>
+            </NavLink>
+            <NavLink class="nav-item" href="history" ActiveClass="active" title="Run History">
                 <FluentIcon Value="@(new Icons.Regular.Size20.History())" /> <span>Run History</span>
             </NavLink>
-            <NavLink class="nav-item" href="settings" ActiveClass="active">
+            <NavLink class="nav-item" href="settings" ActiveClass="active" title="Settings">
                 <FluentIcon Value="@(new Icons.Regular.Size20.Settings())" /> <span>Settings</span>
             </NavLink>
 
