@@ -17,16 +17,31 @@
    the dark background or they're unreadable (the dark teal vanishes on dark). */
 .app-shell {
     --cp-link: #0f6f64;
+    --cp-source: #1f4e79;
     --cp-ok-text: #1e7e34;
     --cp-warn-text: #9a7209;
     --cp-fail-text: #b02a37;
 }
 .app-shell.dark {
     --cp-link: #4fd1c0;
+    --cp-source: #6aa9e0;
     --cp-ok-text: #4ade80;
     --cp-warn-text: #e6c15a;
     --cp-fail-text: #f08a93;
 }
+
+/* ---- New Copy Task (wizard) source -> target layout ----------------------- */
+.copy-setup { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: start; }
+.cs-side { border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; padding: 16px; background: var(--neutral-layer-1); }
+.cs-source { border-top: 3px solid var(--cp-source); }
+.cs-target { border-top: 3px solid var(--cp-accent); }
+.cs-head { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 14px; }
+.cs-source .cs-head { color: var(--cp-source); }
+.cs-target .cs-head { color: var(--cp-link); }
+.cs-arrow { display: flex; align-items: center; justify-content: center; color: var(--cp-link); padding-top: 40px; }
+.ro-field { margin-bottom: 14px; }
+.ro-value { margin-top: 4px; padding: 7px 10px; border-radius: 6px; font-size: 13px; word-break: break-all; background: color-mix(in srgb, var(--neutral-foreground-rest) 8%, transparent); }
+.cs-side .batch-list { margin: 6px 0 0; padding-left: 18px; }
 
 html, body {
     margin: 0; padding: 0; height: 100%;

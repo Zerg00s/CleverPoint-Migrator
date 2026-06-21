@@ -36,7 +36,7 @@ public class UxMigrationService
     /// <summary>Runs one list/library copy. Returns the final result and status.</summary>
     public async Task<(CopyResult Result, string Status)> RunAsync(
         string sourceSite, string targetSite, string sourceListTitle, CopyOptions options,
-        Action<ItemCopyRecord> onRecord, CancellationToken ct, string engine = "Classic")
+        Action<ItemCopyRecord> onRecord, CancellationToken ct, string engine = "Classic", string? runName = null)
     {
         var sConn = UxConnectionResolver.Find(_settings, sourceSite)!;
         var tConn = UxConnectionResolver.Find(_settings, targetSite)!;
@@ -46,7 +46,7 @@ public class UxMigrationService
         using var store = new HistoryStore(UxSettings.HistoryDbPath);
         var runId = store.StartRun(new MigrationRun
         {
-            Name = $"{sourceListTitle} -> {options.TargetListTitle}",
+            Name = string.IsNullOrWhiteSpace(runName) ? $"{sourceListTitle} -> {options.TargetListTitle}" : runName,
             SourceUrl = sourceSite, SourceList = sourceListTitle,
             TargetUrl = targetSite, TargetList = options.TargetListTitle,
             Engine = engine == "MigrationApi" ? "MigrationApi" : "Classic",

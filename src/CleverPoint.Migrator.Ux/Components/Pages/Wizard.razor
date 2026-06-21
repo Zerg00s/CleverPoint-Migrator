@@ -9,73 +9,116 @@
 @implements IDisposable
 
 <div class="page-head">
-    <h1>Copy</h1>
-    <p>Review the source and target, choose what to preserve, then start. Everything runs in C#.</p>
+    <h1>New Copy Task</h1>
 </div>
 
 <FluentCard>
-    <div class="grid cols-2" style="margin-bottom:18px;">
-        <div class="field"><span class="field-label">Source site</span><FluentTextField @bind-Value="_src" Style="width:100%;" /></div>
-        <div class="field"><span class="field-label">Target site</span><FluentTextField @bind-Value="_tgt" Style="width:100%;" /></div>
-        @if (!_batch)
-        {
-            <div class="field"><span class="field-label">Source list / library</span><FluentTextField @bind-Value="_list" Style="width:100%;" /></div>
-            <div class="field"><span class="field-label">Target list title</span><FluentTextField @bind-Value="_targetTitle" Style="width:100%;" /></div>
-        }
+    @if (!_batch)
+    {
+        <div class="field" style="max-width:520px; margin-bottom:18px;">
+            <span class="field-label">Task name</span>
+            <FluentTextField @bind-Value="_taskName" Style="width:100%;" Disabled="_running" />
+        </div>
+    }
+
+    <div class="copy-setup">
+        <div class="cs-side cs-source">
+            <div class="cs-head">Source</div>
+            <div class="ro-field">
+                <span class="field-label">Site</span>
+                <div class="ro-value">@_src</div>
+            </div>
+            <div class="ro-field">
+                <span class="field-label">@(_batch ? "Lists & libraries" : "List / library")</span>
+                @if (_batch)
+                {
+                    <ul class="batch-list">
+                        @foreach (var j in _jobs)
+                        {
+                            <li>@j.SourceListTitle @(j.WholeList ? "" : $"({(j.IsLibrary ? j.SelectedPaths.Count : j.SelectedItemIds.Count)} selected)")</li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <div class="ro-value">@_list</div>
+                    @if (_jobs.Count == 1 && !_jobs[0].WholeList)
+                    {
+                        <span class="hint">Copying @(_jobs[0].IsLibrary ? _jobs[0].SelectedPaths.Count : _jobs[0].SelectedItemIds.Count) selected
+                            @(_jobs[0].IsLibrary ? "files/folders" : "items") only. Folders bring their contents.</span>
+                    }
+                }
+            </div>
+        </div>
+
+        <div class="cs-arrow"><FluentIcon Value="@(new Icons.Regular.Size32.ArrowRight())" /></div>
+
+        <div class="cs-side cs-target">
+            <div class="cs-head">Target</div>
+            <div class="ro-field">
+                <span class="field-label">Site</span>
+                <div class="ro-value">@_tgt</div>
+            </div>
+            @if (_batch)
+            {
+                <span class="hint">Each list is created on the target under its own name@(_sameSite ? " with “ - Copy” appended" : "").</span>
+            }
+            else
+            {
+                <div class="field" style="margin-bottom:10px;">
+                    <span class="field-label">Target list title</span>
+                    <FluentTextField @bind-Value="_targetTitle" Style="width:100%;" Disabled="_running" />
+                </div>
+                <div class="field">
+                    <span class="field-label">Target list URL (the part after the site)</span>
+                    <FluentTextField @bind-Value="_targetUrl" Style="width:100%;" Disabled="_running" Placeholder="e.g. Lists/MyList or MyLibrary" />
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="section-title" style="margin-top:22px;">Options</div>
+    <div class="grid cols-2" style="gap:14px 28px; margin-bottom:6px;">
+        <div class="field">
+            <span class="field-label">Copy mode</span>
+            <FluentSelect TOption="string" @bind-Value="_copyMode" Style="width:100%;" Disabled="_running">
+                <FluentOption Value="full">Structure + content (recreate the list, then copy items)</FluentOption>
+                <FluentOption Value="content">Content only (target list already exists)</FluentOption>
+            </FluentSelect>
+        </div>
         <div class="field">
             <span class="field-label">Engine</span>
-            <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;">
+            <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;" Disabled="_running">
                 <FluentOption Value="Classic">Classic copy (recommended for most migrations)</FluentOption>
                 <FluentOption Value="MigrationApi">Migration API (best for very large libraries)</FluentOption>
             </FluentSelect>
         </div>
-    </div>
-
-    @if (_batch)
-    {
-        <div class="section-title">Lists and libraries to copy (@_jobs.Count)</div>
-        <ul class="batch-list" style="margin:0 0 16px 0; padding-left:18px;">
-            @foreach (var j in _jobs)
-            {
-                <li>@j.SourceListTitle @(j.WholeList ? "" : $"({(j.IsLibrary ? j.SelectedPaths.Count : j.SelectedItemIds.Count)} selected)")</li>
-            }
-        </ul>
-        <p class="hint" style="margin-top:-8px;">Each is copied in turn under its own name on the target. The live log below covers the whole batch.</p>
-    }
-    else if (_jobs.Count == 1 && !_jobs[0].WholeList)
-    {
-        <p class="hint" style="margin:-6px 0 14px 0;">
-            Copying @(_jobs[0].IsLibrary ? _jobs[0].SelectedPaths.Count : _jobs[0].SelectedItemIds.Count) selected
-            @(_jobs[0].IsLibrary ? "files/folders" : "items") only. Folders bring their contents.
-        </p>
-    }
-
-    <div class="section-title">What to copy</div>
-    <div class="grid cols-2" style="margin-bottom:8px;">
-        <FluentCheckbox @bind-Value="_preserve" Label="Preserve authors and dates" />
-        <FluentCheckbox @bind-Value="_attachments" Label="Copy attachments" />
-        <FluentCheckbox @bind-Value="_permissions" Label="Copy unique permissions" />
-        <FluentCheckbox @bind-Value="_contentTypes" Label="Copy content types &amp; site columns" />
-    </div>
-
-    <div class="field-row" style="margin:14px 0 6px 0;">
-        <div class="field" style="min-width:220px;">
-            <span class="field-label">File versions</span>
-            <FluentSelect TOption="string" @bind-Value="_versions" Style="width:100%;">
-                <FluentOption Value="1">Latest version only</FluentOption>
-                <FluentOption Value="5">Last 5 versions</FluentOption>
-                <FluentOption Value="10">Last 10 versions</FluentOption>
-                <FluentOption Value="50">All versions (up to 50)</FluentOption>
-            </FluentSelect>
+        <div class="field">
+            <span class="field-label">File versions to copy</span>
+            <FluentNumberField @bind-Value="_maxVersions" Min="1" Max="50" Style="width:140px;" Disabled="_running" />
+            <span class="hint">1 = latest only. Up to 50.</span>
         </div>
     </div>
 
-    <div class="btn-row" style="margin-top:18px;">
-        <FluentButton Appearance="Appearance.Accent" Loading="_running" IconStart="@(new Icons.Regular.Size20.ArrowSwap())"
-                      @onclick="@(() => Start(false))">Copy structure + content</FluentButton>
-        <FluentButton Appearance="Appearance.Neutral" Disabled="_running" @onclick="@(() => Start(true))">Copy content only</FluentButton>
-        <FluentButton Appearance="Appearance.Stealth" Disabled="_running" @onclick="Cancel" Visible="_running">Cancel run</FluentButton>
-        <FluentButton Appearance="Appearance.Stealth" Disabled="_running" @onclick="@(() => Nav.NavigateTo("/explore"))">Back to explorer</FluentButton>
+    <div class="grid cols-2" style="gap:8px 28px; margin:10px 0 4px;">
+        <FluentCheckbox @bind-Value="_preserve" Label="Preserve authors and dates" Disabled="_running" />
+        <FluentCheckbox @bind-Value="_attachments" Label="Copy attachments" Disabled="_running" />
+        <FluentCheckbox @bind-Value="_permissions" Label="Copy unique permissions" Disabled="_running" />
+        <FluentCheckbox @bind-Value="_contentTypes" Label="Copy content types &amp; site columns" Disabled="_running" />
+    </div>
+
+    <div class="btn-row" style="margin-top:22px;">
+        <FluentButton Appearance="Appearance.Accent" Loading="_running" IconStart="@(new Icons.Regular.Size20.Play())"
+                      @onclick="Start">Begin copy</FluentButton>
+        @if (_running)
+        {
+            <FluentButton Appearance="Appearance.Neutral" @onclick="Cancel">Cancel</FluentButton>
+        }
+        else
+        {
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
+                          @onclick="@(() => Nav.NavigateTo("/explore"))">Back to explorer</FluentButton>
+        }
     </div>
 
     @if (_status is not null)
@@ -96,7 +139,7 @@
                 <PropertyColumn Property="@(r => r.ItemType)" Title="Type" />
                 <PropertyColumn Property="@(r => r.SourcePath)" Title="Item" />
                 <TemplateColumn Title="Status">
-                    <FluentBadge BackgroundColor="@StatusColor(context.Status)" Color="white">@context.Status</FluentBadge>
+                    <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
                 </TemplateColumn>
                 <PropertyColumn Property="@(r => r.Message)" Title="Detail" />
             </FluentDataGrid>
@@ -109,9 +152,11 @@
     [SupplyParameterFromQuery(Name = "tgt")] public string? Tgt { get; set; }
     [SupplyParameterFromQuery(Name = "lists")] public string? Lists { get; set; }
 
-    private string _src = "", _tgt = "", _list = "", _targetTitle = "", _versions = "1", _engine = "Classic";
+    private string _src = "", _tgt = "", _list = "", _taskName = "", _targetTitle = "", _targetUrl = "", _engine = "Classic";
+    private string _copyMode = "full";
+    private int _maxVersions = 1;
     private List<PendingJob> _jobs = new();
-    private bool _batch;
+    private bool _batch, _sameSite;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
     private bool _running;
     private string? _status;
@@ -143,18 +188,22 @@
         }
         _batch = _jobs.Count > 1;
         _list = _jobs.FirstOrDefault()?.SourceListTitle ?? "";
-        var sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
-        _targetTitle = sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
+        _sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+        _targetTitle = _sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
+        _targetUrl = DefaultUrl(_targetTitle);
+        _taskName = _list.Length > 0 ? _list : "Copy task";
         Settings.EnsureLoaded();
         _engine = Settings.DefaultEngine == "MigrationApi" ? "MigrationApi" : "Classic";
-        _versions = Settings.DefaultMaxVersions.ToString();
+        _maxVersions = Math.Clamp(Settings.DefaultMaxVersions, 1, 50);
     }
 
-    private async Task Start(bool contentOnly)
+    private static string DefaultUrl(string title) => string.Concat(title.Where(char.IsLetterOrDigit));
+
+    private async Task Start()
     {
-        if (string.IsNullOrWhiteSpace(_src) || string.IsNullOrWhiteSpace(_tgt) || string.IsNullOrWhiteSpace(_list))
+        if (string.IsNullOrWhiteSpace(_src) || string.IsNullOrWhiteSpace(_tgt) || _jobs.Count == 0)
         {
-            Toasts.ShowWarning("Fill in the source, target and source list first.");
+            Toasts.ShowWarning("Nothing to copy. Go back to the explorer and pick a source.");
             return;
         }
         if (!Migrations.CanRun(_src, _tgt, out var why))
@@ -164,11 +213,7 @@
             return;
         }
 
-        // One run per job. In single-list mode the target title comes from the editable
-        // field; in batch mode each list keeps its name on the target (or " - Copy" when
-        // source and target are the same site). Each job carries its own selection.
-        var sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
-
+        var contentOnly = _copyMode == "content";
         _running = true;
         _log.Clear();
         _statusIntent = MessageIntent.Info;
@@ -182,19 +227,23 @@
             {
                 if (_cts.Token.IsCancellationRequested) break;
                 doneLists++;
-                var target = _batch
-                    ? (sameSite ? $"{job.SourceListTitle} - Copy" : job.SourceListTitle)
+                // Single job uses the editable title/URL; batch keeps each list's own name.
+                var title = _batch
+                    ? (_sameSite ? $"{job.SourceListTitle} - Copy" : job.SourceListTitle)
                     : (string.IsNullOrWhiteSpace(_targetTitle) ? job.SourceListTitle : _targetTitle);
+                var url = _batch || string.IsNullOrWhiteSpace(_targetUrl) ? DefaultUrl(title) : _targetUrl.Trim();
+                var runName = _batch ? null : (string.IsNullOrWhiteSpace(_taskName) ? null : _taskName);
+
                 _status = _batch
                     ? $"Copying {doneLists} of {_jobs.Count}: {job.SourceListTitle}…"
-                    : $"Running {(contentOnly ? "content-only" : "structure + content")} copy…";
-                Activity.SetBusy($"Migrating {job.SourceListTitle}…");
+                    : "Copying…";
+                Activity.SetBusy($"Copying {job.SourceListTitle}…");
                 StateHasChanged();
 
                 var options = new CopyOptions
                 {
-                    TargetListTitle = target,
-                    TargetListUrl = string.Concat(target.Where(char.IsLetterOrDigit)),
+                    TargetListTitle = title,
+                    TargetListUrl = url,
                     PreserveAuthorsAndDates = _preserve,
                     CopyAttachments = _attachments,
                     CopyPermissions = _permissions,
@@ -202,14 +251,14 @@
                     MergeSchema = !contentOnly,
                     CopyViews = !contentOnly,
                     CopyListSettings = !contentOnly,
-                    MaxVersions = int.TryParse(_versions, out var v) ? v : 1,
+                    MaxVersions = _maxVersions,
                     SelectedPaths = job.SelectedPaths,
                     ItemIds = job.SelectedItemIds,
                 };
 
                 try
                 {
-                    var (result, status) = await Migrations.RunAsync(_src, _tgt, job.SourceListTitle, options, OnRecord, _cts.Token, _engine);
+                    var (result, status) = await Migrations.RunAsync(_src, _tgt, job.SourceListTitle, options, OnRecord, _cts.Token, _engine, runName);
                     copied += result.Copied; skipped += result.Skipped;
                     warnings += result.Warnings; failed += result.Failed;
                     if (status == "Failed") failedLists++;
@@ -231,7 +280,7 @@
             _status = $"{prefix}{copied} copied, {skipped} skipped, {warnings} warnings, {failed} failed"
                 + (failedLists > 0 ? $", {failedLists} list(s) could not be copied." : ".");
             if (_statusIntent != MessageIntent.Error && Settings.ShowCompletionToasts)
-                Toasts.ShowSuccess(_batch ? "Batch migration finished." : "Migration finished.");
+                Toasts.ShowSuccess(_batch ? "Batch copy finished." : "Copy finished.");
         }
         catch (Exception ex)
         {
@@ -260,12 +309,12 @@
 
     private void Cancel() => _cts?.Cancel();
 
-    private static string StatusColor(ItemCopyStatus s) => s switch
+    private static string ItemStatusClass(ItemCopyStatus s) => s switch
     {
-        ItemCopyStatus.Copied => "#1e7e34",
-        ItemCopyStatus.Warning => "#b8860b",
-        ItemCopyStatus.Failed => "#b02a37",
-        _ => "#8a8886",
+        ItemCopyStatus.Copied => "st-ok",
+        ItemCopyStatus.Warning => "st-issues",
+        ItemCopyStatus.Failed => "st-failed",
+        _ => "st-interrupted",
     };
 
     public void Dispose() => _cts?.Cancel();
