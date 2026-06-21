@@ -168,6 +168,7 @@
     // Selection persists across folder navigation (it spans folders), so it lives
     // in sets keyed by what the engine needs: paths for libraries, IDs for lists.
     private readonly HashSet<string> _pickedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _pickedFolders = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _pickedIds = new();
 
     public SpListInfo? CurrentList { get; private set; }
@@ -181,6 +182,10 @@
 
     /// <summary>Generic-list item IDs ticked (empty = whole list).</summary>
     public List<int> SelectedItemIds => _pickedIds.ToList();
+
+    /// <summary>Folder vs file/item counts in the current selection (for naming).</summary>
+    public int SelectedFolderCount => CurrentListIsLibrary ? _pickedFolders.Count : 0;
+    public int SelectedFileCount => CurrentListIsLibrary ? _pickedPaths.Count - _pickedFolders.Count : _pickedIds.Count;
 
     /// <summary>Anything ticked inside the open list/library.</summary>
     public bool HasItemSelection => _pickedPaths.Count > 0 || _pickedIds.Count > 0;
@@ -203,20 +208,20 @@
     {
         if (!IsSource || CurrentList is null || string.IsNullOrWhiteSpace(_site)) return;
         // Dragging a ticked item drags the whole selection; otherwise just this one.
-        List<string> paths; List<int> ids;
+        List<string> paths; List<int> ids; int folders;
         if (entry.Selected && (_pickedPaths.Count > 0 || _pickedIds.Count > 0))
         {
-            paths = _pickedPaths.ToList(); ids = _pickedIds.ToList();
+            paths = _pickedPaths.ToList(); ids = _pickedIds.ToList(); folders = _pickedFolders.Count;
         }
         else if (CurrentList.IsLibrary)
         {
-            paths = new() { entry.ServerRelativeUrl }; ids = new();
+            paths = new() { entry.ServerRelativeUrl }; ids = new(); folders = entry.IsFolder ? 1 : 0;
         }
         else
         {
-            paths = new(); ids = new() { entry.ItemId };
+            paths = new(); ids = new() { entry.ItemId }; folders = 0;
         }
-        Drag.Begin(_site!, CurrentList.Title, CurrentList.IsLibrary, paths, ids);
+        Drag.Begin(_site!, CurrentList.Title, CurrentList.IsLibrary, paths, ids, folders);
     }
 
     private void OnDragEnd() => Drag.End();
@@ -324,7 +329,7 @@
     {
         if (Connection is null || _site is null) return;
         CurrentList = list;
-        _pickedPaths.Clear(); _pickedIds.Clear();
+        _pickedPaths.Clear(); _pickedFolders.Clear(); _pickedIds.Clear();
         _crumbs.Clear();
         _crumbs.Add((list.Title, list.ServerRelativeUrl));
         _folderUrl = list.ServerRelativeUrl;
@@ -376,8 +381,16 @@
     {
         if (CurrentList?.IsLibrary == true)
         {
-            if (entry.Selected) _pickedPaths.Add(entry.ServerRelativeUrl);
-            else _pickedPaths.Remove(entry.ServerRelativeUrl);
+            if (entry.Selected)
+            {
+                _pickedPaths.Add(entry.ServerRelativeUrl);
+                if (entry.IsFolder) _pickedFolders.Add(entry.ServerRelativeUrl);
+            }
+            else
+            {
+                _pickedPaths.Remove(entry.ServerRelativeUrl);
+                _pickedFolders.Remove(entry.ServerRelativeUrl);
+            }
         }
         else
         {
@@ -408,7 +421,7 @@
     private async Task BackToLists()
     {
         CurrentList = null; _items.Clear(); _crumbs.Clear();
-        _pickedPaths.Clear(); _pickedIds.Clear();
+        _pickedPaths.Clear(); _pickedFolders.Clear(); _pickedIds.Clear();
         _status = $"{_lists.Count} lists and libraries"
             + (IsSource ? "  ·  tick several to copy them all, or click one to open it" : "");
         await OnChanged.InvokeAsync();

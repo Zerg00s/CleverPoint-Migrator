@@ -337,7 +337,9 @@ html, body {
 .inline-gap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 /* ---- Connections table (clean rows, no DataGrid cell gaps) ---------------- */
 .conn-table { border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; overflow: hidden; background: var(--neutral-layer-1); }
-.conn-row { display: grid; grid-template-columns: 1.2fr 1fr 2.4fr 1.4fr auto; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #ececec); }
+/* Fixed last column (not auto) so every row's grid resolves identically and the
+   header lines up with the data rows. */
+.conn-row { display: grid; grid-template-columns: 1.2fr 1fr 2.4fr 1.4fr 210px; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #ececec); }
 .conn-row:last-child { border-bottom: none; }
 .conn-head { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; opacity: .55; background: var(--neutral-layer-2, #fafafa); }
 .conn-site { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }

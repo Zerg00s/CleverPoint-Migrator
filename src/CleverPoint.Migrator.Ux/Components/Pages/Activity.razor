@@ -12,7 +12,7 @@
     <FluentToolbar Style="width:100%;">
         <span class="hint">@Runner.RunningCount running · @Runner.QueuedCount queued · @_tasks.Count total</span>
         <FluentSpacer />
-        <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowSwap())"
+        <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowRight())"
                       @onclick="@(() => Nav.NavigateTo("/explore"))">New copy task</FluentButton>
         <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Broom())"
                       Disabled="@(!_tasks.Any(t => !t.IsActive))" @onclick="Runner.ClearFinished">Clear finished</FluentButton>

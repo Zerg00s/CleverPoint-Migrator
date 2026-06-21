@@ -170,6 +170,7 @@
             {
                 SourceListTitle = j.SourceListTitle, IsLibrary = j.IsLibrary,
                 SelectedPaths = j.SelectedPaths.ToList(), SelectedItemIds = j.SelectedItemIds.ToList(),
+                SelectedFolderCount = j.SelectedFolderCount, SelectedFileCount = j.SelectedFileCount,
             }).ToList();
         }
         else
@@ -199,16 +200,41 @@
             _targetTitle = _sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
             _targetUrl = DefaultUrl(_targetTitle);
         }
-        // Sensible, incremental default: aligns with the next run number and names what's copied.
-        var next = (History.GetRuns(1).FirstOrDefault()?.Id ?? 0) + 1;
-        var what = _batch ? $"{_jobs.Count} lists" : (_list.Length > 0 ? _list : "copy");
-        _taskName = $"Copy task {next}: {what}";
+        // Name the task by what it copies. A specific selection reads
+        // "Copy 2 folders and 3 files from LMAS to cleverpointlab".
+        var sel = _jobs.Count == 1 && !_jobs[0].WholeList ? _jobs[0] : null;
+        if (sel is not null)
+        {
+            var parts = new List<string>();
+            if (sel.SelectedFolderCount > 0) parts.Add($"{sel.SelectedFolderCount} folder{(sel.SelectedFolderCount == 1 ? "" : "s")}");
+            if (sel.SelectedFileCount > 0) parts.Add($"{sel.SelectedFileCount} {(sel.IsLibrary ? "file" : "item")}{(sel.SelectedFileCount == 1 ? "" : "s")}");
+            var sub = parts.Count > 0 ? string.Join(" and ", parts) : "selected items";
+            _taskName = $"Copy {sub} from {SiteName(_src)} to {SiteName(_tgt)}";
+        }
+        else
+        {
+            var next = (History.GetRuns(1).FirstOrDefault()?.Id ?? 0) + 1;
+            var what = _batch ? $"{_jobs.Count} lists" : (_list.Length > 0 ? _list : "copy");
+            _taskName = $"Copy task {next}: {what}";
+        }
         Settings.EnsureLoaded();
         _engine = Settings.DefaultEngine == "MigrationApi" ? "MigrationApi" : "Classic";
         _maxVersions = Math.Clamp(Settings.DefaultMaxVersions, 1, 2000);
     }
 
     private static string DefaultUrl(string title) => string.Concat(title.Where(char.IsLetterOrDigit));
+
+    // Friendly site name for the task title: the /sites/<name> segment, else the host label.
+    private static string SiteName(string url)
+    {
+        try
+        {
+            var u = new Uri(url.TrimEnd('/'));
+            var seg = u.Segments.LastOrDefault()?.Trim('/');
+            return string.IsNullOrEmpty(seg) ? u.Host.Split('.')[0] : seg;
+        }
+        catch { return url; }
+    }
 
     // Live preview of where the list will live on the target as the user types.
     private string FullTargetUrl()

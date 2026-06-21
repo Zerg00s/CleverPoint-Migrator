@@ -78,8 +78,9 @@
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Bug())"
                               @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator/issues"))">Report an issue</FluentButton>
             </div>
-            <p class="hint" style="margin-top:16px;">
-                Version 1.0 · settings stored at
+            <p class="hint" style="margin-top:16px;">Version 1.0</p>
+            <p class="hint" style="margin-top:4px;">
+                Settings stored at
                 <a href="#" @onclick:preventDefault @onclick="OpenSettingsFile" style="color:var(--cp-link); cursor:pointer;"><code>@UxSettings.SettingsPath</code></a>
             </p>
         </div>

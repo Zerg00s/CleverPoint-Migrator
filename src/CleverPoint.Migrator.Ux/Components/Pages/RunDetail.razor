@@ -26,7 +26,7 @@ else
                 <span class="run-name">@_run.Name</span>
             </div>
             <div class="btn-row">
-                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowSwap())" @onclick="RunAgain">Run again</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
                               @onclick="@(() => Nav.NavigateTo("/history"))">Back</FluentButton>
             </div>

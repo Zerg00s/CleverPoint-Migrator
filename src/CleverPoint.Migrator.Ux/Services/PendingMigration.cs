@@ -41,5 +41,9 @@ public class PendingJob
     /// <summary>Generic-list item IDs to copy. Empty = whole list.</summary>
     public List<int> SelectedItemIds { get; set; } = new();
 
+    /// <summary>Folder vs file/item split of the selection (for the task name).</summary>
+    public int SelectedFolderCount { get; set; }
+    public int SelectedFileCount { get; set; }
+
     public bool WholeList => SelectedPaths.Count == 0 && SelectedItemIds.Count == 0;
 }

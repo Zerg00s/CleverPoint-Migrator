@@ -13,19 +13,22 @@ public class DragState
     public bool IsLibrary { get; private set; }
     public List<string> Paths { get; private set; } = new();
     public List<int> ItemIds { get; private set; } = new();
+    public int FolderCount { get; private set; }
 
     /// <summary>Items being dragged (for the drop-zone hint text).</summary>
     public int Count => IsLibrary ? Paths.Count : ItemIds.Count;
+    public int FileCount => IsLibrary ? Paths.Count - FolderCount : ItemIds.Count;
 
     public event Action? Changed;
 
-    public void Begin(string site, string list, bool isLibrary, List<string> paths, List<int> ids)
+    public void Begin(string site, string list, bool isLibrary, List<string> paths, List<int> ids, int folderCount)
     {
         SourceSite = site;
         SourceListTitle = list;
         IsLibrary = isLibrary;
         Paths = paths;
         ItemIds = ids;
+        FolderCount = folderCount;
         Active = true;
         Changed?.Invoke();
     }

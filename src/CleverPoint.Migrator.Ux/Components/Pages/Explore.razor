@@ -25,8 +25,8 @@
 
 <div class="copy-bar">
     <FluentButton Appearance="Appearance.Accent" Class="cp-cta" Disabled="@(!_canCopy)"
-                  IconStart="@(new Icons.Regular.Size24.ArrowSwap())" @onclick="StartCopy"
-                  Title="@(_canCopy ? "Start the migration" : "Open a source list and a target connection first")">Copy to target&nbsp;&nbsp;&gt;</FluentButton>
+                  IconEnd="@(new Icons.Regular.Size24.ArrowRight())" @onclick="StartCopy"
+                  Title="@(_canCopy ? "Start the migration" : "Open a source list and a target connection first")">Copy to target</FluentButton>
 </div>
 
 @code {
@@ -68,6 +68,8 @@
             IsLibrary = Drag.IsLibrary,
             SelectedPaths = Drag.Paths.ToList(),
             SelectedItemIds = Drag.ItemIds.ToList(),
+            SelectedFolderCount = Drag.FolderCount,
+            SelectedFileCount = Drag.FileCount,
         });
         Drag.End();
         Nav.NavigateTo("/wizard");
@@ -116,6 +118,8 @@
                 IsLibrary = _source.CurrentListIsLibrary,
                 SelectedPaths = _source.SelectedPaths,
                 SelectedItemIds = _source.SelectedItemIds,
+                SelectedFolderCount = _source.SelectedFolderCount,
+                SelectedFileCount = _source.SelectedFileCount,
             });
         }
         else
