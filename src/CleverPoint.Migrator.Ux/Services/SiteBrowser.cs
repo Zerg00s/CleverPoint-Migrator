@@ -6,7 +6,11 @@ namespace CleverPoint.Migrator.Ux.Services;
 public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary, int ItemCount);
 public record SpWebInfo(string Title, string Url);
 public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,
-    string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "");
+    string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "")
+{
+    /// <summary>UI selection state (source-pane checkbox).</summary>
+    public bool Selected { get; set; }
+}
 
 /// <summary>
 /// Read-only browsing for the explorer panes (ported from the WinForms app):

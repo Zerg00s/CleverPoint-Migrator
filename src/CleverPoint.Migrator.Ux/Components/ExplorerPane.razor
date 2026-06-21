@@ -1,0 +1,137 @@
+@namespace CleverPoint.Migrator.Ux.Components
+@inject UxSettings Settings
+@inject SiteBrowser Browser
+@inject IToastService Toasts
+
+<div class="exp-pane">
+    <div class="exp-pane-head">
+        <span class="role">@Role</span>
+        <div class="exp-row">
+            <FluentSelect TOption="string" @bind-Value="_site" Style="flex:1 1 auto;"
+                          Items="@_siteChoices" OptionText="@(s => s)" OptionValue="@(s => s)" Placeholder="Choose a connection…" />
+            <FluentButton Appearance="Appearance.Accent" Loading="_loading" @onclick="OpenAsync">Open</FluentButton>
+            @if (CurrentList is not null)
+            {
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowUp())" Title="Back to lists" @onclick="BackToLists" />
+            }
+        </div>
+    </div>
+
+    <div class="exp-list cp-grid">
+        @if (_loading)
+        {
+            <div class="empty-state" style="padding:40px 16px;"><FluentProgressRing /> <span class="hint">@_status</span></div>
+        }
+        else if (CurrentList is null && _lists.Count > 0)
+        {
+            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()" GridTemplateColumns="2fr 1fr" ShowHover="true" Style="width:100%;"
+                            OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is not null) await OpenList(r.Item); })">
+                <TemplateColumn Title="Name">
+                    <FluentIcon Value="@ListIcon(context)" Color="Color.Accent" />
+                    <span style="margin-left:6px;">@context.Title</span>
+                </TemplateColumn>
+                <PropertyColumn Property="@(l => (l.IsLibrary ? "Library" : "List") + ", " + l.ItemCount + " items")" Title="Details" />
+            </FluentDataGrid>
+        }
+        else if (CurrentList is not null)
+        {
+            <div class="cp-scroll" style="height:100%; border:none;">
+                <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
+                                GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1.2fr 1.2fr" : "2fr 1.2fr 1.2fr")" ShowHover="true" Style="width:100%;">
+                    @if (IsSource)
+                    {
+                        <TemplateColumn><FluentCheckbox @bind-Value="context.Selected" /></TemplateColumn>
+                    }
+                    <TemplateColumn Title="Name">
+                        <FluentIcon Value="@EntryIcon(context)" Color="Color.Accent" />
+                        <span style="margin-left:6px;">@context.Name</span>
+                    </TemplateColumn>
+                    <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" />
+                    <PropertyColumn Property="@(i => i.ModifiedBy)" Title="Modified by" Sortable="true" />
+                </FluentDataGrid>
+            </div>
+        }
+        else
+        {
+            <div class="empty-state" style="padding:40px 16px;">
+                <FluentIcon Value="@(new Icons.Regular.Size32.Folder())" Color="Color.Neutral" />
+                <span class="hint">@_status</span>
+            </div>
+        }
+    </div>
+    <div class="exp-status">@_status</div>
+</div>
+
+@code {
+    [Parameter] public string Role { get; set; } = "Source";
+    [Parameter] public bool IsSource { get; set; }
+
+    private string? _site;
+    private bool _loading;
+    private string _status = "Not connected.";
+    private List<SpListInfo> _lists = new();
+    private List<SpFolderEntry> _items = new();
+    private List<string> _siteChoices = new();
+
+    public SpListInfo? CurrentList { get; private set; }
+    public string? SiteUrl => _site;
+    public SavedConnection? Connection { get; private set; }
+    public List<SpFolderEntry> SelectedEntries => _items.Where(i => i.Selected).ToList();
+
+    protected override void OnInitialized()
+    {
+        Settings.EnsureLoaded();
+        _siteChoices = Settings.Connections.Select(c => c.SiteUrl).ToList();
+    }
+
+    private async Task OpenAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_site)) { Toasts.ShowWarning("Choose a connection first."); return; }
+        Connection = UxConnectionResolver.Find(Settings, _site);
+        CurrentList = null;
+        _items.Clear();
+        if (Connection is null) { _status = "No saved connection for that site."; return; }
+        if (!UxConnectionResolver.IsCert(Connection))
+        {
+            _lists.Clear();
+            _status = "Browser sign-in isn't wired in this build yet — use an app + certificate connection to browse live.";
+            return;
+        }
+        _loading = true; _status = "Loading lists…"; StateHasChanged();
+        try
+        {
+            var conn = UxConnectionResolver.ResolveCert(Connection, _site);
+            _lists = await Browser.GetListsAsync(conn);
+            _status = $"{_lists.Count} lists and libraries";
+        }
+        catch (Exception ex) { _status = $"Could not open: {Short(ex.Message)}"; }
+        finally { _loading = false; }
+    }
+
+    private async Task OpenList(SpListInfo list)
+    {
+        if (Connection is null || _site is null) return;
+        _loading = true; _status = $"Loading {list.Title}…"; CurrentList = list; StateHasChanged();
+        try
+        {
+            var conn = UxConnectionResolver.ResolveCert(Connection, _site);
+            _items = list.IsLibrary
+                ? await Browser.GetFolderAsync(conn, list.ServerRelativeUrl, list.ServerRelativeUrl)
+                : await Browser.GetListItemsAsync(conn, list);
+            var shown = _items.Count >= Browser.MaxItemsLoaded ? $"first {Browser.MaxItemsLoaded:N0}" : $"{_items.Count:N0}";
+            _status = $"{list.Title}: {shown} items"
+                + (IsSource ? "  ·  tick rows to copy just those (none = whole list)" : "");
+        }
+        catch (Exception ex) { _status = $"Could not open {list.Title}: {Short(ex.Message)}"; CurrentList = null; }
+        finally { _loading = false; }
+    }
+
+    private void BackToLists() { CurrentList = null; _items.Clear(); _status = $"{_lists.Count} lists and libraries"; }
+
+    private static Icon ListIcon(SpListInfo l) => l.IsLibrary
+        ? new Icons.Regular.Size20.DocumentMultiple() : new Icons.Regular.Size20.AppsListDetail();
+    private static Icon EntryIcon(SpFolderEntry e) => e.IsFolder
+        ? new Icons.Regular.Size20.Folder() : new Icons.Regular.Size20.Document();
+
+    private static string Short(string m) => m.Length > 140 ? m[..140] + "…" : m;
+}

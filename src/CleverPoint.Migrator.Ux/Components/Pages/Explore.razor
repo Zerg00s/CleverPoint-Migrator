@@ -1,127 +1,45 @@
 @page "/explore"
 @namespace CleverPoint.Migrator.Ux.Components.Pages
-@inject UxSettings Settings
 @inject NavigationManager Nav
 @inject IToastService Toasts
 
 <div class="page-head">
     <h1>Explore &amp; copy</h1>
-    <p>Pick a source on the left and a target on the right, choose what to copy, then start the migration.</p>
+    <p>Open a source on the left and a target on the right, tick what to copy, then start the migration.</p>
 </div>
 
 <div class="explorer">
-    <div class="exp-pane">
-        <div class="exp-pane-head">
-            <span class="role">Source</span>
-            <div class="exp-row">
-                <FluentSelect TOption="string" @bind-Value="_sourceSite" Style="flex:1 1 auto;"
-                              Items="@_siteChoices" OptionText="@(s => s)" OptionValue="@(s => s)" Placeholder="Choose a connection…" />
-                <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Open(true))">Open</FluentButton>
-            </div>
-        </div>
-        <div class="exp-list">
-            @if (_sourceItems.Count == 0)
-            {
-                <div class="empty-state" style="padding:40px 16px;">
-                    <FluentIcon Value="@(new Icons.Regular.Size32.Folder())" Color="Color.Neutral" />
-                    <span class="hint">@(_sourceSite is null ? "Choose a source connection and click Open." : "No lists loaded yet.")</span>
-                </div>
-            }
-            else
-            {
-                <FluentDataGrid Items="@_sourceItems.AsQueryable()" GridTemplateColumns="0.3fr 2fr 1fr" ShowHover="true" Style="width:100%;">
-                    <TemplateColumn><FluentCheckbox @bind-Value="context.Selected" /></TemplateColumn>
-                    <TemplateColumn Title="Name">
-                        <FluentIcon Value="@Icon(context)" Color="Color.Accent" /> <span style="margin-left:6px;">@context.Name</span>
-                    </TemplateColumn>
-                    <PropertyColumn Property="@(i => i.Detail)" Title="Details" />
-                </FluentDataGrid>
-            }
-        </div>
-        <div class="exp-status">@_sourceStatus</div>
-    </div>
-
-    <div class="exp-pane">
-        <div class="exp-pane-head">
-            <span class="role">Target</span>
-            <div class="exp-row">
-                <FluentSelect TOption="string" @bind-Value="_targetSite" Style="flex:1 1 auto;"
-                              Items="@_siteChoices" OptionText="@(s => s)" OptionValue="@(s => s)" Placeholder="Choose a connection…" />
-                <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Open(false))">Open</FluentButton>
-            </div>
-        </div>
-        <div class="exp-list">
-            @if (_targetItems.Count == 0)
-            {
-                <div class="empty-state" style="padding:40px 16px;">
-                    <FluentIcon Value="@(new Icons.Regular.Size32.Folder())" Color="Color.Neutral" />
-                    <span class="hint">@(_targetSite is null ? "Choose a target connection and click Open." : "No lists loaded yet.")</span>
-                </div>
-            }
-            else
-            {
-                <FluentDataGrid Items="@_targetItems.AsQueryable()" GridTemplateColumns="2fr 1fr" ShowHover="true" Style="width:100%;">
-                    <TemplateColumn Title="Name">
-                        <FluentIcon Value="@Icon(context)" Color="Color.Accent" /> <span style="margin-left:6px;">@context.Name</span>
-                    </TemplateColumn>
-                    <PropertyColumn Property="@(i => i.Detail)" Title="Details" />
-                </FluentDataGrid>
-            }
-        </div>
-        <div class="exp-status">@_targetStatus</div>
-    </div>
+    <ExplorerPane @ref="_source" Role="Source" IsSource="true" />
+    <ExplorerPane @ref="_target" Role="Target" IsSource="false" />
 </div>
 
 <div class="copy-bar">
     <FluentButton Appearance="Appearance.Accent" Style="padding:6px 32px;" IconStart="@(new Icons.Regular.Size20.ArrowSwap())"
-                  Disabled="@(!CanCopy)" @onclick="StartCopy">Copy to target&nbsp;&nbsp;&gt;</FluentButton>
+                  @onclick="StartCopy">Copy to target&nbsp;&nbsp;&gt;</FluentButton>
 </div>
 
 @code {
-    private sealed class Entry { public string Name = ""; public string Detail = ""; public bool IsLibrary; public bool Selected; }
-
-    private List<string> _siteChoices = new();
-    private string? _sourceSite, _targetSite;
-    private string _sourceStatus = "Not connected.";
-    private string _targetStatus = "Not connected.";
-    private List<Entry> _sourceItems = new();
-    private List<Entry> _targetItems = new();
-
-    private bool CanCopy => _sourceItems.Any(i => i.Selected) && _targetSite is not null;
-
-    protected override void OnInitialized()
-    {
-        Settings.EnsureLoaded();
-        _siteChoices = Settings.Connections.Select(c => c.SiteUrl).ToList();
-    }
-
-    private void Open(bool source)
-    {
-        var site = source ? _sourceSite : _targetSite;
-        if (string.IsNullOrWhiteSpace(site)) { Toasts.ShowWarning("Choose a connection first."); return; }
-
-        // Live browsing (lists/libraries via SiteBrowser) is wired on Windows
-        // through the saved connection's auth. Until a session is established
-        // the pane shows the site's standard libraries as a starting point.
-        var sample = new List<Entry>
-        {
-            new() { Name = "Documents", Detail = "Library", IsLibrary = true },
-            new() { Name = "Site Pages", Detail = "Library", IsLibrary = true },
-            new() { Name = "Site Assets", Detail = "Library", IsLibrary = true },
-            new() { Name = "Tasks", Detail = "List", IsLibrary = false },
-            new() { Name = "Events", Detail = "List", IsLibrary = false },
-        };
-        if (source) { _sourceItems = sample; _sourceStatus = $"Connected to {site}"; }
-        else { _targetItems = sample.Select(e => new Entry { Name = e.Name, Detail = e.Detail, IsLibrary = e.IsLibrary }).ToList(); _targetStatus = $"Connected to {site}"; }
-    }
-
-    private Icon Icon(Entry e) => e.IsLibrary ? new Icons.Regular.Size20.DocumentMultiple() : new Icons.Regular.Size20.AppsListDetail();
+    private ExplorerPane? _source;
+    private ExplorerPane? _target;
 
     private void StartCopy()
     {
-        var picked = _sourceItems.Where(i => i.Selected).Select(i => i.Name).ToList();
-        if (picked.Count == 0) return;
-        var q = $"?src={Uri.EscapeDataString(_sourceSite ?? "")}&tgt={Uri.EscapeDataString(_targetSite ?? "")}&lists={Uri.EscapeDataString(string.Join("|", picked))}";
+        if (_source?.CurrentList is null || _source.SiteUrl is null)
+        {
+            Toasts.ShowWarning("Open a source list or library first.");
+            return;
+        }
+        if (_target?.SiteUrl is null)
+        {
+            Toasts.ShowWarning("Open a target connection on the right.");
+            return;
+        }
+        var selected = _source.SelectedEntries;
+        var lists = _source.CurrentList.Title;
+        var q = $"?src={Uri.EscapeDataString(_source.SiteUrl)}&tgt={Uri.EscapeDataString(_target.SiteUrl)}"
+              + $"&lists={Uri.EscapeDataString(lists)}";
+        if (selected.Count > 0)
+            q += $"&items={selected.Count}";
         Nav.NavigateTo("/wizard" + q);
     }
 }
