@@ -33,10 +33,24 @@
     }
 
     // Files/folders dragged from the source were dropped on the target pane.
+    // Dropped items go INTO the library/list currently open on the target.
     private void OnDropToTarget()
     {
-        if (!Drag.Active || _target?.SiteUrl is null) return;
+        if (!Drag.Active) return;
+        if (_target?.SiteUrl is null)
+        {
+            Toasts.ShowWarning("Open a target connection on the right first.");
+            return;
+        }
+        if (_target.CurrentList is null)
+        {
+            Toasts.ShowWarning("Open the target library or list on the right, then drop the items into it.");
+            Drag.End();
+            return;
+        }
         Pending.Reset(Drag.SourceSite, _target.SiteUrl);
+        Pending.TargetListTitle = _target.CurrentList.Title;
+        Pending.ContentOnly = true;
         Pending.Jobs.Add(new PendingJob
         {
             SourceListTitle = Drag.SourceListTitle,
@@ -72,6 +86,19 @@
         }
         else if (_source.CurrentList is not null)
         {
+            // A specific item selection is content-only: it must go into an existing
+            // target list, so require one to be open on the right.
+            var hasSelection = _source.SelectedPaths.Count > 0 || _source.SelectedItemIds.Count > 0;
+            if (hasSelection)
+            {
+                if (_target.CurrentList is null)
+                {
+                    Toasts.ShowWarning("Open the target library or list on the right to copy the selected items into it.");
+                    return;
+                }
+                Pending.TargetListTitle = _target.CurrentList.Title;
+                Pending.ContentOnly = true;
+            }
             Pending.Jobs.Add(new PendingJob
             {
                 SourceListTitle = _source.CurrentList.Title,

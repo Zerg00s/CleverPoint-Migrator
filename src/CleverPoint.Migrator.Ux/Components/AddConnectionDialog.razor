@@ -66,15 +66,37 @@
             Toasts.ShowWarning("Enter a site URL first.");
             return;
         }
+        // Normalize the URL so "…/site" and "…/site/" are the same connection.
+        _new.SiteUrl = _new.SiteUrl.Trim().TrimEnd('/');
         _new.AuthMode = _authMode;
-        // Name is derived from the host — no separate field needed.
-        _new.Name = new Uri(_new.SiteUrl.TrimEnd('/')).Host.Split('.')[0];
-        _new.CertPasswordProtected = OperatingSystem.IsWindows() ? _certPwd : _certPwd; // plain off-Windows; Windows WinForms uses DPAPI
+        _new.Name = new Uri(_new.SiteUrl).Host.Split('.')[0];
+        _new.CertPasswordProtected = _certPwd;
         Settings.EnsureLoaded();
-        Settings.Connections.Add(_new);
+
+        // Merge instead of duplicating: if this site already exists, update its
+        // auth in place and reuse it (re-associating the sign-in with the original).
+        var existing = Settings.Connections.FirstOrDefault(c =>
+            c.SiteUrl.TrimEnd('/').Equals(_new.SiteUrl, StringComparison.OrdinalIgnoreCase));
+        SavedConnection saved;
+        if (existing is not null)
+        {
+            existing.AuthMode = _new.AuthMode;
+            existing.TenantId = _new.TenantId;
+            existing.AppId = _new.AppId;
+            existing.CertPfxPath = _new.CertPfxPath;
+            existing.CertPasswordProtected = _new.CertPasswordProtected;
+            existing.SiteUrl = _new.SiteUrl;
+            saved = existing;
+            Toasts.ShowInfo($"Updated the existing connection '{existing.Name}'.");
+        }
+        else
+        {
+            Settings.Connections.Add(_new);
+            saved = _new;
+            Toasts.ShowSuccess($"Added connection '{_new.Name}'.");
+        }
         Settings.Save();
-        Toasts.ShowSuccess($"Added connection '{_new.Name}'.");
-        await OnAdded.InvokeAsync(_new);
+        await OnAdded.InvokeAsync(saved);
         await Close();
     }
 }

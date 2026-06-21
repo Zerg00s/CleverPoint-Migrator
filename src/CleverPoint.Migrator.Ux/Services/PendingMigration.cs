@@ -11,11 +11,21 @@ public class PendingMigration
     public string TargetSite { get; set; } = "";
     public List<PendingJob> Jobs { get; } = new();
 
+    /// <summary>When set, copy into this existing target list (content-only) instead
+    /// of creating one named after the source. Used when dropping/copying a specific
+    /// selection into an already-open target library.</summary>
+    public string? TargetListTitle { get; set; }
+    public string? TargetListUrl { get; set; }
+    public bool ContentOnly { get; set; }
+
     public void Reset(string source, string target)
     {
         SourceSite = source;
         TargetSite = target;
         Jobs.Clear();
+        TargetListTitle = null;
+        TargetListUrl = null;
+        ContentOnly = false;
     }
 }
 

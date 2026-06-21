@@ -229,7 +229,7 @@ html, body {
 /* Drag files/folders from source and drop on the target pane. */
 .exp-pane.drop-ready { outline: 2px dashed color-mix(in srgb, var(--cp-accent) 55%, transparent); outline-offset: -5px; }
 .exp-pane.drop-hot { outline: 2px solid var(--cp-accent); }
-.drop-overlay { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; pointer-events: none; border-radius: 12px; font-weight: 600; color: var(--cp-link); background: color-mix(in srgb, var(--cp-accent) 16%, var(--neutral-layer-1)); }
+.drop-overlay { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; pointer-events: none; border-radius: 12px; font-weight: 600; color: var(--cp-link); background: var(--neutral-layer-1); border: 2px dashed var(--cp-accent); }
 .entry-cell[draggable="true"] { cursor: grab; }
 .entry-cell[draggable="true"]:active { cursor: grabbing; }
 .exp-pane-head { padding: 12px 14px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #eee); }
@@ -251,7 +251,8 @@ html, body {
 .cp-grid .folder-row, .cp-grid .folder-row *,
 .cp-grid .click-row, .cp-grid .click-row * { cursor: pointer !important; }
 .cp-grid .folder-row:hover, .cp-grid .click-row:hover { background: color-mix(in srgb, var(--cp-accent) 8%, transparent); }
-.entry-cell { display: flex; align-items: center; gap: 6px; width: 100%; }
+.entry-cell { display: flex; align-items: center; gap: 8px; width: 100%; }
+.ft-icon { width: 20px; height: 20px; flex: 0 0 auto; }
 .entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry-folder { color: var(--cp-link); font-weight: 500; }
 .entry-go { margin-left: auto; flex: 0 0 auto; opacity: .5; }
@@ -266,6 +267,9 @@ html, body {
    Selection still works on drag; the cursor stays a normal arrow. */
 .cp-grid, .cp-grid * { user-select: text !important; -webkit-user-select: text !important; }
 .cp-grid a, .cp-grid button, .cp-grid [role="button"], .cp-grid fluent-checkbox { cursor: pointer; }
+/* Kill the inter-cell gap that makes hover/selection render as separate boxes. */
+.cp-grid .fluent-data-grid.grid { column-gap: 0 !important; row-gap: 0 !important; gap: 0 !important; }
+.cp-grid .fluent-data-grid th, .cp-grid .fluent-data-grid td { border-radius: 0 !important; }
 /* One continuous scroll region for a virtualized grid (no pagination). */
 .cp-scroll { overflow: auto; border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 10px; background: var(--neutral-layer-1); }
 

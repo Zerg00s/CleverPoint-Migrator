@@ -201,12 +201,22 @@
         _batch = _jobs.Count > 1;
         // Picking specific files/folders/items means there's no structure to recreate;
         // lock to content-only so "Structure + content" isn't offered.
-        _lockContentOnly = _jobs.Any(j => !j.WholeList);
+        _lockContentOnly = Pending.ContentOnly || _jobs.Any(j => !j.WholeList);
         if (_lockContentOnly) _copyMode = "content";
         _list = _jobs.FirstOrDefault()?.SourceListTitle ?? "";
         _sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
-        _targetTitle = _sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
-        _targetUrl = DefaultUrl(_targetTitle);
+        // When copying a selection into an already-open target list, use that list
+        // (content-only); otherwise default to a new list named after the source.
+        if (!string.IsNullOrWhiteSpace(Pending.TargetListTitle))
+        {
+            _targetTitle = Pending.TargetListTitle!;
+            _targetUrl = string.IsNullOrWhiteSpace(Pending.TargetListUrl) ? DefaultUrl(_targetTitle) : Pending.TargetListUrl!;
+        }
+        else
+        {
+            _targetTitle = _sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
+            _targetUrl = DefaultUrl(_targetTitle);
+        }
         // Sensible, incremental default: aligns with the next run number and names what's copied.
         var next = (History.GetRuns(1).FirstOrDefault()?.Id ?? 0) + 1;
         var what = _batch ? $"{_jobs.Count} lists" : (_list.Length > 0 ? _list : "copy");

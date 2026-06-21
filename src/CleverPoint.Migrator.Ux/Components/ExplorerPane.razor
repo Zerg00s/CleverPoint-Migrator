@@ -13,7 +13,18 @@
     {
         <div class="drop-overlay">
             <FluentIcon Value="@(new Icons.Regular.Size32.ArrowDownload())" />
-            <span>Drop to copy @Drag.Count item@(Drag.Count == 1 ? "" : "s") here</span>
+            @if (Connection is not null && CurrentList is not null)
+            {
+                <span>Drop to copy @Drag.Count item@(Drag.Count == 1 ? "" : "s") into &ldquo;@CurrentList.Title&rdquo;</span>
+            }
+            else if (Connection is not null)
+            {
+                <span>Open a target library or list first, then drop here</span>
+            }
+            else
+            {
+                <span>Pick a target connection first</span>
+            }
         </div>
     }
     <div class="exp-pane-head">
@@ -39,7 +50,7 @@
         else if (CurrentList is null && _lists.Count > 0)
         {
             <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()"
-                            GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1fr" : "2fr 1fr")" ShowHover="true" Style="width:100%;"
+                            GridTemplateColumns="@(IsSource ? "40px 1fr auto" : "1fr auto")" ShowHover="true" Style="width:100%;"
                             RowClass="@(_ => "click-row")"
                             OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is not null) await OpenList(r.Item); })">
                 @if (IsSource)
@@ -52,10 +63,12 @@
                     </TemplateColumn>
                 }
                 <TemplateColumn Title="Name">
-                    <FluentIcon Value="@ListIcon(context)" Color="Color.Accent" />
-                    <span style="margin-left:6px;">@context.Title</span>
+                    <div class="entry-cell">
+                        <img class="ft-icon" src="@FileIcons.ForList(context.IsLibrary)" alt="" />
+                        <span class="entry-name">@context.Title</span>
+                    </div>
                 </TemplateColumn>
-                <PropertyColumn Property="@(l => (l.IsLibrary ? "Library" : "List") + ", " + l.ItemCount + " items")" Title="Details" />
+                <PropertyColumn Property="@(l => (l.IsLibrary ? "Library" : "List") + ", " + l.ItemCount + " items")" Title="Details" Align="Align.End" />
             </FluentDataGrid>
         }
         else if (CurrentList is not null)
@@ -79,7 +92,7 @@
             </div>
             <div class="cp-scroll" style="height:100%; border:none;">
                 <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
-                                GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1.2fr 1.2fr" : "2fr 1.2fr 1.2fr")" ShowHover="true" Style="width:100%;"
+                                GridTemplateColumns="@(IsSource ? "40px 1fr auto auto" : "1fr auto auto")" ShowHover="true" Style="width:100%;"
                                 RowClass="@(e => e.IsFolder ? "folder-row" : "")"
                                 OnRowClick="@(async (FluentDataGridRow<SpFolderEntry> r) => { if (r.Item?.IsFolder == true) await OpenFolder(r.Item); })">
                     @if (IsSource)
@@ -94,7 +107,7 @@
                     <TemplateColumn Title="Name">
                         <div class="entry-cell" draggable="@(IsSource ? "true" : "false")"
                              @ondragstart="@(() => OnDragStart(context))" @ondragend="OnDragEnd">
-                            <FluentIcon Value="@EntryIcon(context)" Color="Color.Accent" />
+                            <img class="ft-icon" src="@FileIcons.ForEntry(context)" alt="" />
                             <span class="entry-name @(context.IsFolder ? "entry-folder" : "")">@context.Name</span>
                             @if (context.IsFolder)
                             {
@@ -102,8 +115,8 @@
                             }
                         </div>
                     </TemplateColumn>
-                    <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" />
-                    <PropertyColumn Property="@(i => i.ModifiedBy)" Title="Modified by" Sortable="true" />
+                    <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" Align="Align.End" />
+                    <PropertyColumn Property="@(i => i.ModifiedBy)" Title="Modified by" Sortable="true" Align="Align.End" />
                 </FluentDataGrid>
             </div>
         }
@@ -176,7 +189,7 @@
     protected override void OnInitialized()
     {
         Settings.EnsureLoaded();
-        _siteChoices = Settings.Connections.Select(c => c.SiteUrl).ToList();
+        _siteChoices = Settings.Connections.Select(c => c.SiteUrl.TrimEnd('/')).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         Drag.Changed += OnDragChanged;
     }
 
@@ -299,7 +312,7 @@
 
     private async Task OnConnectionAdded(SavedConnection c)
     {
-        _siteChoices = Settings.Connections.Select(x => x.SiteUrl).ToList();
+        _siteChoices = Settings.Connections.Select(x => x.SiteUrl.TrimEnd('/')).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         _site = c.SiteUrl;
         _selectedSites = new List<string> { c.SiteUrl };
         await OpenAsync();
@@ -398,11 +411,6 @@
             + (IsSource ? "  ·  tick several to copy them all, or click one to open it" : "");
         await OnChanged.InvokeAsync();
     }
-
-    private static Icon ListIcon(SpListInfo l) => l.IsLibrary
-        ? new Icons.Regular.Size20.DocumentMultiple() : new Icons.Regular.Size20.AppsListDetail();
-    private static Icon EntryIcon(SpFolderEntry e) => e.IsFolder
-        ? new Icons.Regular.Size20.Folder() : new Icons.Regular.Size20.Document();
 
     private static string Short(string m) => m.Length > 140 ? m[..140] + "…" : m;
 }
