@@ -1,0 +1,103 @@
+@page "/wizard"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@inject NavigationManager Nav
+@inject IToastService Toasts
+
+<div class="page-head">
+    <h1>New migration</h1>
+    <p>Review the source and target, choose what to preserve, then start. Everything runs in C#.</p>
+</div>
+
+<FluentCard>
+    <div class="grid cols-2" style="margin-bottom:18px;">
+        <div class="field">
+            <span class="field-label">Source site</span>
+            <FluentTextField @bind-Value="_src" Style="width:100%;" />
+        </div>
+        <div class="field">
+            <span class="field-label">Target site</span>
+            <FluentTextField @bind-Value="_tgt" Style="width:100%;" />
+        </div>
+        <div class="field">
+            <span class="field-label">Lists / libraries</span>
+            <FluentTextField @bind-Value="_lists" Style="width:100%;" />
+        </div>
+        <div class="field">
+            <span class="field-label">Engine</span>
+            <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;">
+                <FluentOption Value="Classic">Classic copy — recommended for most migrations</FluentOption>
+                <FluentOption Value="MigrationApi">Migration API — best for very large libraries (1,000+ files)</FluentOption>
+            </FluentSelect>
+        </div>
+    </div>
+
+    <div class="section-title">What to copy</div>
+    <div class="grid cols-2" style="margin-bottom:8px;">
+        <FluentCheckbox @bind-Value="_preserve" Label="Preserve authors and dates" />
+        <FluentCheckbox @bind-Value="_attachments" Label="Copy attachments" />
+        <FluentCheckbox @bind-Value="_permissions" Label="Copy unique permissions" />
+        <FluentCheckbox @bind-Value="_contentTypes" Label="Copy content types &amp; site columns" />
+    </div>
+
+    <div class="field-row" style="margin:14px 0 6px 0;">
+        <div class="field" style="min-width:220px;">
+            <span class="field-label">File versions</span>
+            <FluentSelect TOption="string" @bind-Value="_versions" Style="width:100%;">
+                <FluentOption Value="1">Latest version only</FluentOption>
+                <FluentOption Value="5">Last 5 versions</FluentOption>
+                <FluentOption Value="10">Last 10 versions</FluentOption>
+                <FluentOption Value="50">All versions (up to 50)</FluentOption>
+            </FluentSelect>
+        </div>
+        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.PeopleTeam())">User mapping: none</FluentButton>
+        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.CalendarLtr())">Date filter: none</FluentButton>
+    </div>
+
+    <div class="btn-row" style="margin-top:18px;">
+        <FluentButton Appearance="Appearance.Accent" Loading="_running" IconStart="@(new Icons.Regular.Size20.ArrowSwap())"
+                      @onclick="@(() => Start(false))">Copy structure + content</FluentButton>
+        <FluentButton Appearance="Appearance.Neutral" Disabled="_running" @onclick="@(() => Start(true))">Copy content only</FluentButton>
+        <FluentButton Appearance="Appearance.Stealth" Disabled="_running" @onclick="@(() => Nav.NavigateTo("/explore"))">Back to explorer</FluentButton>
+    </div>
+
+    @if (_status is not null)
+    {
+        <div style="margin-top:14px;">
+            <FluentMessageBar Intent="MessageIntent.Info">@_status</FluentMessageBar>
+        </div>
+    }
+</FluentCard>
+
+@code {
+    [SupplyParameterFromQuery(Name = "src")] public string? Src { get; set; }
+    [SupplyParameterFromQuery(Name = "tgt")] public string? Tgt { get; set; }
+    [SupplyParameterFromQuery(Name = "lists")] public string? Lists { get; set; }
+
+    private string _src = "", _tgt = "", _lists = "", _engine = "Classic", _versions = "1";
+    private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
+    private bool _running;
+    private string? _status;
+
+    protected override void OnInitialized()
+    {
+        _src = Src ?? "";
+        _tgt = Tgt ?? "";
+        _lists = (Lists ?? "").Replace("|", ", ");
+    }
+
+    private async Task Start(bool contentOnly)
+    {
+        if (string.IsNullOrWhiteSpace(_src) || string.IsNullOrWhiteSpace(_tgt))
+        {
+            Toasts.ShowWarning("Fill in the source and target sites first.");
+            return;
+        }
+        _running = true;
+        _status = $"Preparing {(contentOnly ? "content-only" : "structure + content")} copy of '{_lists}' ({_engine} engine)…";
+        StateHasChanged();
+        await Task.Delay(1200);   // the engine call is wired through Core on the desktop target
+        _running = false;
+        _status = "Connect with a signed-in session on the desktop build to execute this run. The plan above is ready.";
+        Toasts.ShowInfo("Migration plan prepared.");
+    }
+}
