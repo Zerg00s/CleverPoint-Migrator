@@ -22,3 +22,8 @@ Secrets/
 App-Credentials_*.txt
 *secrets*.json
 appsettings.local.json
+
+# UX (Photino) build output
+src/CleverPoint.Migrator.Ux/bin/
+src/CleverPoint.Migrator.Ux/obj/
+src/CleverPoint.Migrator.Ux/publish/

@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>CleverPoint.Migrator.Ux</RootNamespace>
+    <AssemblyName>CleverPoint.Migrator.Ux</AssemblyName>
+    <!-- Keep publish output (its own wwwroot/_content) out of subsequent source scans. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish\**;publish/**</DefaultItemExcludes>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="wwwroot/favicon.ico" Link="favicon.ico" CopyToOutputDirectory="PreserveNewest" Condition="Exists('wwwroot/favicon.ico')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Photino.Blazor" Version="4.0.13" />
+    <PackageReference Include="Microsoft.FluentUI.AspNetCore.Components" Version="4.14.2" />
+    <PackageReference Include="Microsoft.FluentUI.AspNetCore.Components.Icons" Version="4.14.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the real migration engine + history store unchanged. -->
+    <ProjectReference Include="..\CleverPoint.Migrator.Core\CleverPoint.Migrator.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Photino serves UI from a physical wwwroot next to the exe. A plain build keeps
+       static web assets in a manifest and does NOT copy them; this target does, so
+       `dotnet run` works the same as publish. (See photino-fluent-findings.md.) -->
+  <Target Name="CopyStaticWebAssetsToOutputDir" AfterTargets="Build" Condition="'$(_IsPublishing)' != 'true'">
+    <ItemGroup>
+      <_AppWwwroot Include="$(MSBuildProjectDirectory)\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_AppWwwroot)"
+          DestinationFiles="@(_AppWwwroot->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" />
+    <Copy SourceFiles="@(StaticWebAsset)"
+          DestinationFiles="@(StaticWebAsset->'$(OutDir)wwwroot\%(BasePath)\%(RelativePath)')"
+          Condition="'%(StaticWebAsset.SourceType)' == 'Package'"
+          SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" />
+    <Copy SourceFiles="$(IntermediateOutputPath)scopedcss\bundle\$(AssemblyName).styles.css"
+          DestinationFiles="$(OutDir)wwwroot\$(AssemblyName).styles.css"
+          Condition="Exists('$(IntermediateOutputPath)scopedcss\bundle\$(AssemblyName).styles.css')"
+          SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" />
+  </Target>
+
+</Project>

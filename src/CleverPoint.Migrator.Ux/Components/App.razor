@@ -1,0 +1,17 @@
+@namespace CleverPoint.Migrator.Ux.Components
+
+<Router AppAssembly="@typeof(Program).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="@typeof(MainLayout)">
+            <FluentCard Style="margin:2rem;">
+                <h1>Page not found</h1>
+                <p>The page you requested does not exist.</p>
+                <FluentAnchor Href="/" Appearance="Appearance.Accent">Back to Home</FluentAnchor>
+            </FluentCard>
+        </LayoutView>
+    </NotFound>
+</Router>

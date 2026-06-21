@@ -1,0 +1,140 @@
+@namespace CleverPoint.Migrator.Ux.Components.Layout
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject AppStatusService Status
+@inject NavigationManager Nav
+
+<FluentDesignTheme @bind-Mode="@_mode" StorageName="theme" />
+
+<div class="app-shell">
+
+    <header class="app-header">
+        <div class="app-header-left">
+            <FluentButton Appearance="Appearance.Stealth" @onclick="ToggleNav" Title="Toggle navigation"
+                          IconStart="@(new Icons.Regular.Size20.Navigation())" />
+            <div class="app-brand">
+                <span class="app-brand-mark">C</span>
+                <div class="app-brand-text">
+                    <span class="app-brand-title">CleverPoint Migrator</span>
+                    <span class="app-brand-sub">SharePoint Online migration · by Denis Molodtsov</span>
+                </div>
+            </div>
+        </div>
+        <div class="app-header-right">
+            <FluentButton Appearance="Appearance.Stealth" Title="Toggle light / dark theme"
+                          @onclick="ToggleTheme" IconStart="@_themeIcon" />
+        </div>
+    </header>
+
+    @if (Status.Current is not null)
+    {
+        <div class="app-status">
+            <FluentMessageBar Intent="@MapIntent(Status.Current.Intent)" AllowDismiss="true"
+                              Title="@Status.Current.Intent.ToString()" OnDismiss="@(() => Status.Clear())">
+                @Status.Current.Message
+            </FluentMessageBar>
+        </div>
+    }
+
+    <div class="app-main">
+        <nav class="app-nav @(_navCollapsed ? "collapsed" : "")">
+            <div class="nav-section">Navigation</div>
+            <NavLink class="nav-item" href="" Match="NavLinkMatch.All" ActiveClass="active">
+                <FluentIcon Value="@(new Icons.Regular.Size20.Home())" /> <span>Home</span>
+            </NavLink>
+            <NavLink class="nav-item" href="explore" ActiveClass="active">
+                <FluentIcon Value="@(new Icons.Regular.Size20.ArrowSwap())" /> <span>Explore &amp; copy</span>
+            </NavLink>
+            <NavLink class="nav-item" href="history" ActiveClass="active">
+                <FluentIcon Value="@(new Icons.Regular.Size20.History())" /> <span>History</span>
+            </NavLink>
+            <NavLink class="nav-item" href="settings" ActiveClass="active">
+                <FluentIcon Value="@(new Icons.Regular.Size20.Settings())" /> <span>Settings</span>
+            </NavLink>
+
+            <div class="nav-section">Help</div>
+            <a class="nav-item" href="https://github.com/Zerg00s/CleverPoint-Migrator" target="_blank" rel="noopener">
+                <FluentIcon Value="@(new Icons.Regular.Size20.Link())" /> <span>GitHub project</span>
+            </a>
+            <a class="nav-item" href="https://github.com/Zerg00s/CleverPoint-Migrator/issues" target="_blank" rel="noopener">
+                <FluentIcon Value="@(new Icons.Regular.Size20.Bug())" /> <span>Report an issue</span>
+            </a>
+        </nav>
+
+        <main class="app-content">
+            <div class="page-transition" @key="_currentPath">
+                @Body
+            </div>
+        </main>
+    </div>
+
+    <footer class="app-footer">
+        <div class="footer-group">
+            <span class="footer-dot online"></span><span>Ready</span>
+            <span class="footer-sep">·</span><span>v1.0</span>
+        </div>
+        <div class="footer-group footer-center">
+            <span>CleverPoint Migrator</span>
+        </div>
+        <div class="footer-group">
+            <span>@_clock</span>
+        </div>
+    </footer>
+
+</div>
+
+<FluentToastProvider MaxToastCount="6" />
+<FluentDialogProvider />
+<FluentTooltipProvider />
+<FluentMessageBarProvider />
+<FluentMenuProvider />
+<FluentKeyCodeProvider />
+
+@code {
+    private DesignThemeModes _mode = DesignThemeModes.Light;
+    private bool _navCollapsed;
+    private string _clock = DateTime.Now.ToString("HH:mm:ss");
+    private string _currentPath = "";
+    private System.Threading.Timer? _timer;
+
+    private Icon _themeIcon => _mode == DesignThemeModes.Dark
+        ? new Icons.Regular.Size20.WeatherSunny()
+        : new Icons.Regular.Size20.WeatherMoon();
+
+    protected override void OnInitialized()
+    {
+        Status.OnChange += OnStatusChanged;
+        Nav.LocationChanged += OnLocationChanged;
+        _currentPath = Nav.Uri;
+        _timer = new System.Threading.Timer(_ =>
+        {
+            _clock = DateTime.Now.ToString("HH:mm:ss");
+            InvokeAsync(StateHasChanged);
+        }, null, 1000, 1000);
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _currentPath = e.Location;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnStatusChanged() => InvokeAsync(StateHasChanged);
+    private void ToggleNav() => _navCollapsed = !_navCollapsed;
+    private void ToggleTheme() => _mode = _mode == DesignThemeModes.Dark ? DesignThemeModes.Light : DesignThemeModes.Dark;
+
+    private static MessageIntent MapIntent(StatusIntent intent) => intent switch
+    {
+        StatusIntent.Success => MessageIntent.Success,
+        StatusIntent.Warning => MessageIntent.Warning,
+        StatusIntent.Error => MessageIntent.Error,
+        _ => MessageIntent.Info,
+    };
+
+    public void Dispose()
+    {
+        Status.OnChange -= OnStatusChanged;
+        Nav.LocationChanged -= OnLocationChanged;
+        _timer?.Dispose();
+    }
+}

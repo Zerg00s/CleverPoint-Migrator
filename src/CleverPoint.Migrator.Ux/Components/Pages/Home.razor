@@ -1,0 +1,109 @@
+@page "/"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@inject NavigationManager Nav
+@inject UxSettings Settings
+@inject HistoryService History
+
+@if (_noConnections)
+{
+    <div class="empty-state">
+        <div class="empty-art">
+            <FluentIcon Value="@(new Icons.Regular.Size48.PlugConnected())" Color="Color.Accent" />
+        </div>
+        <h1 style="margin:0;">Welcome to CleverPoint Migrator</h1>
+        <p class="hint" style="font-size:14px; max-width:520px;">
+            Connect a SharePoint tenant to start copying lists, libraries and files between sites and tenants
+            with full metadata fidelity.
+        </p>
+        <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Add())"
+                      @onclick="@(() => Nav.NavigateTo("/settings"))">Add your first connection</FluentButton>
+    </div>
+}
+else
+{
+    <section class="hero section">
+        <h1>Migrate SharePoint content with confidence</h1>
+        <p>
+            Copy lists, libraries, files, folders and pages across sites, subsites and tenants — preserving
+            authors, dates, versions, content types and permissions. Pick what to copy in the explorer, then
+            run, watch live progress, and re-run incrementally.
+        </p>
+        <div class="btn-row">
+            <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Nav.NavigateTo("/explore"))"
+                          IconStart="@(new Icons.Regular.Size20.ArrowSwap())">New migration</FluentButton>
+            <FluentButton Appearance="Appearance.Lightweight" @onclick="@(() => Nav.NavigateTo("/history"))"
+                          IconStart="@(new Icons.Regular.Size20.History())">View history</FluentButton>
+        </div>
+    </section>
+
+    <div class="section">
+        <h2 class="section-title">At a glance</h2>
+        <div class="grid cols-4">
+            <div class="stat">
+                <div class="stat-label">Connections</div>
+                <div class="stat-value">@Settings.Connections.Count</div>
+                <div class="stat-delta">saved tenants &amp; sites</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Migrations run</div>
+                <div class="stat-value">@_runs.Count</div>
+                <div class="stat-delta">recorded in history</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Items copied</div>
+                <div class="stat-value">@_totalCopied.ToString("N0")</div>
+                <div class="stat-delta up">across all runs</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">With issues</div>
+                <div class="stat-value">@_withIssues</div>
+                <div class="stat-delta @(_withIssues > 0 ? "down" : "up")">runs needing attention</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2 class="section-title">Recent migrations</h2>
+        <FluentCard>
+            @if (_runs.Count == 0)
+            {
+                <p class="hint">No migrations yet. Your runs will show up here.</p>
+            }
+            else
+            {
+                <FluentDataGrid Items="@_recent" GridTemplateColumns="2fr 1.2fr 1fr 1.4fr" ShowHover="true" Style="width:100%;">
+                    <PropertyColumn Property="@(r => r.Name)" Title="Name" />
+                    <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" />
+                    <TemplateColumn Title="Status">
+                        <FluentBadge BackgroundColor="@StatusColor(context)" Color="white">@Pretty(context.Status)</FluentBadge>
+                    </TemplateColumn>
+                    <PropertyColumn Property="@(r => $"{r.Copied} copied, {r.Skipped} skipped, {r.Failed} failed")" Title="Result" />
+                </FluentDataGrid>
+            }
+        </FluentCard>
+    </div>
+}
+
+@code {
+    private bool _noConnections;
+    private List<Core.History.MigrationRun> _runs = new();
+    private IQueryable<Core.History.MigrationRun> _recent = Enumerable.Empty<Core.History.MigrationRun>().AsQueryable();
+    private long _totalCopied;
+    private int _withIssues;
+
+    protected override void OnInitialized()
+    {
+        Settings.EnsureLoaded();
+        _noConnections = Settings.Connections.Count == 0;
+        _runs = History.GetRuns();
+        _recent = _runs.Take(12).AsQueryable();
+        _totalCopied = _runs.Sum(r => (long)r.Copied);
+        _withIssues = _runs.Count(r => r.Failed > 0 || r.Status is "Failed" or "CompletedWithIssues");
+    }
+
+    private static string Pretty(string status) => status == "CompletedWithIssues" ? "Completed with issues" : status;
+
+    private static string StatusColor(Core.History.MigrationRun r) =>
+        r.Failed > 0 || r.Status == "Failed" ? "#b02a37"
+        : r.Warnings > 0 || r.Status is "CompletedWithIssues" or "Interrupted" ? "#b8860b" : "#1e7e34";
+}
