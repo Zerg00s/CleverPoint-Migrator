@@ -1,0 +1,139 @@
+@page "/activity"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@inject MigrationRunner Runner
+@inject NavigationManager Nav
+@implements IDisposable
+
+<div class="page-head">
+    <h1>Activity</h1>
+</div>
+
+<FluentCard>
+    <FluentToolbar Style="width:100%;">
+        <span class="hint">@Runner.RunningCount running · @Runner.QueuedCount queued · @_tasks.Count total</span>
+        <FluentSpacer />
+        <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowSwap())"
+                      @onclick="@(() => Nav.NavigateTo("/explore"))">New copy task</FluentButton>
+        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Broom())"
+                      Disabled="@(!_tasks.Any(t => !t.IsActive))" @onclick="Runner.ClearFinished">Clear finished</FluentButton>
+    </FluentToolbar>
+
+    @if (_tasks.Count == 0)
+    {
+        <div style="padding:48px 16px; text-align:center;">
+            <FluentIcon Value="@(new Icons.Regular.Size32.Folder())" Color="Color.Neutral" />
+            <p class="hint">No copy tasks yet. Start one from the explorer.</p>
+        </div>
+    }
+    else
+    {
+        <div class="task-list" style="margin-top:8px;">
+            @foreach (var t in _tasks)
+            {
+                <div class="task-row @(t.Id == _selectedId ? "sel" : "")" @onclick="@(() => _selectedId = t.Id)" role="button">
+                    <span class="status-pill @StateClass(t.State)">@StateLabel(t.State)</span>
+                    <div class="task-main">
+                        <div class="task-name">@t.Name</div>
+                        <div class="task-sub hint">@t.SourceList &rarr; @t.Options.TargetListTitle</div>
+                    </div>
+                    <div class="task-stat">
+                        @if (t.State == CopyTaskState.Running)
+                        {
+                            <FluentProgressRing Style="width:18px;height:18px;" />
+                            <span class="hint">@t.LogCount processed</span>
+                        }
+                        else if (t.State == CopyTaskState.Queued)
+                        {
+                            <span class="hint">Waiting…</span>
+                        }
+                        else
+                        {
+                            <span class="hint">@t.Copied copied · @t.Failed failed</span>
+                        }
+                    </div>
+                    <div @onclick:stopPropagation="true">
+                        @if (t.IsActive)
+                        {
+                            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.DismissCircle())"
+                                          Title="Cancel this task" OnClick="@(() => Runner.Cancel(t.Id))" />
+                        }
+                        else
+                        {
+                            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Open())"
+                                          Title="Open in run history" OnClick="@(() => OpenInHistory(t))" />
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</FluentCard>
+
+@if (_selected is not null)
+{
+    <FluentCard style="margin-top:16px;">
+        <div class="section-title">@_selected.Name · live log (@_selected.LogCount items@(_selected.State == CopyTaskState.Running ? ", running…" : ""))</div>
+        @{ var rows = _selected.Log.AsEnumerable().Reverse().ToList(); }
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px;">
+            <FluentDataGrid Items="@rows.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
+                            GridTemplateColumns="0.7fr 2.4fr 0.9fr 2fr" ShowHover="true" Style="width:100%;">
+                <PropertyColumn Property="@(r => r.ItemType)" Title="Type" />
+                <PropertyColumn Property="@(r => r.SourcePath)" Title="Item" />
+                <TemplateColumn Title="Status">
+                    <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
+                </TemplateColumn>
+                <PropertyColumn Property="@(r => r.Message)" Title="Detail" />
+            </FluentDataGrid>
+        </div>
+    </FluentCard>
+}
+
+@code {
+    private IReadOnlyList<CopyTask> _tasks = Array.Empty<CopyTask>();
+    private int _selectedId;
+    private CopyTask? _selected => _tasks.FirstOrDefault(t => t.Id == _selectedId);
+
+    protected override void OnInitialized()
+    {
+        Runner.Changed += OnChanged;
+        Refresh();
+        // Default selection to the first running/most recent task.
+        _selectedId = _tasks.FirstOrDefault(t => t.State == CopyTaskState.Running)?.Id
+            ?? _tasks.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+    private void Refresh() => _tasks = Runner.Snapshot();
+
+    private void OpenInHistory(CopyTask t) => Nav.NavigateTo("/history");
+
+    private static string StateLabel(CopyTaskState s) => s switch
+    {
+        CopyTaskState.Queued => "Queued",
+        CopyTaskState.Running => "Running",
+        CopyTaskState.Completed => "Completed",
+        CopyTaskState.CompletedWithIssues => "Issues",
+        CopyTaskState.Failed => "Failed",
+        CopyTaskState.Cancelled => "Cancelled",
+        _ => s.ToString(),
+    };
+
+    private static string StateClass(CopyTaskState s) => s switch
+    {
+        CopyTaskState.Running => "st-running",
+        CopyTaskState.Completed => "st-ok",
+        CopyTaskState.CompletedWithIssues => "st-issues",
+        CopyTaskState.Failed => "st-failed",
+        _ => "st-interrupted",
+    };
+
+    private static string ItemStatusClass(Core.Model.ItemCopyStatus s) => s switch
+    {
+        Core.Model.ItemCopyStatus.Copied => "st-ok",
+        Core.Model.ItemCopyStatus.Warning => "st-issues",
+        Core.Model.ItemCopyStatus.Failed => "st-failed",
+        _ => "st-interrupted",
+    };
+
+    public void Dispose() => Runner.Changed -= OnChanged;
+}

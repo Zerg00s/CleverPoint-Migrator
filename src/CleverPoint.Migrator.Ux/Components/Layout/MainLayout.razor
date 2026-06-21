@@ -5,6 +5,7 @@
 @inject ActivityService Activity
 @inject UxSettings Settings
 @inject NavigationManager Nav
+@inject MigrationRunner Runner
 
 <FluentDesignTheme @bind-Mode="@_mode" StorageName="theme" />
 
@@ -49,6 +50,13 @@
             <NavLink class="nav-item" href="explore" ActiveClass="active" title="Copy">
                 <FluentIcon Value="@(new Icons.Regular.Size20.ArrowSwap())" /> <span>Copy</span>
             </NavLink>
+            <NavLink class="nav-item" href="activity" ActiveClass="active" title="Activity">
+                <FluentIcon Value="@(new Icons.Regular.Size20.TaskListSquareLtr())" /> <span>Activity</span>
+                @if (Runner.ActiveCount > 0)
+                {
+                    <span class="nav-badge">@Runner.ActiveCount</span>
+                }
+            </NavLink>
             <NavLink class="nav-item" href="connections" ActiveClass="active" title="Connections">
                 <FluentIcon Value="@(new Icons.Regular.Size20.PlugConnected())" /> <span>Connections</span>
             </NavLink>
@@ -79,8 +87,17 @@
 
     <footer class="app-footer">
         <div class="footer-group">
-            <span class="footer-dot @(Activity.IsBusy ? "busy" : "online")"></span>
-            <span>@Activity.Message</span>
+            <span class="footer-dot @(Runner.ActiveCount > 0 ? "busy" : "online")"></span>
+            @if (Runner.ActiveCount > 0)
+            {
+                <span class="footer-link" role="button" @onclick="@(() => Nav.NavigateTo("/activity"))">
+                    @Runner.RunningCount running@(Runner.QueuedCount > 0 ? $", {Runner.QueuedCount} queued" : "")
+                </span>
+            }
+            else
+            {
+                <span>Ready</span>
+            }
             <span class="footer-sep">·</span><span>v1.0</span>
         </div>
         <div class="footer-group footer-center">
@@ -117,6 +134,7 @@
         _mode = Settings.Theme == "Dark" ? DesignThemeModes.Dark : DesignThemeModes.Light;
         Status.OnChange += OnStatusChanged;
         Activity.OnChange += OnStatusChanged;
+        Runner.Changed += OnStatusChanged;
         Nav.LocationChanged += OnLocationChanged;
         _currentPath = Nav.Uri;
     }
@@ -148,6 +166,7 @@
     {
         Status.OnChange -= OnStatusChanged;
         Activity.OnChange -= OnStatusChanged;
+        Runner.Changed -= OnStatusChanged;
         Nav.LocationChanged -= OnLocationChanged;
     }
 }

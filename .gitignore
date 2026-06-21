@@ -31,3 +31,14 @@ src/CleverPoint.Migrator.Ux/publish/
 # Sign-in helper build output
 src/CleverPoint.Migrator.SignInHelper/bin/
 src/CleverPoint.Migrator.SignInHelper/obj/
+
+# Claude AI working notes / planning docs (not part of the product)
+PLAN.md
+NOTES.md
+notes/
+*.claude.md
+CLAUDE.local.md
+.claude/
+
+# Captured browser sessions / local app state
+sessions.dat

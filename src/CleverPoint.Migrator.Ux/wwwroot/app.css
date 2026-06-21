@@ -30,6 +30,19 @@
     --cp-fail-text: #f08a93;
 }
 
+/* ---- Activity (background runner) ----------------------------------------- */
+.nav-badge { margin-left: auto; background: var(--cp-accent); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 7px; min-width: 18px; text-align: center; }
+.footer-link { cursor: pointer; }
+.footer-link:hover { text-decoration: underline; }
+.task-list { display: flex; flex-direction: column; margin-top: 6px; }
+.task-row { display: flex; align-items: center; gap: 14px; padding: 11px 10px; border-radius: 8px; cursor: pointer; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #eee); }
+.task-row:hover { background: color-mix(in srgb, var(--cp-accent) 8%, transparent); }
+.task-row.sel { background: color-mix(in srgb, var(--cp-accent) 14%, transparent); }
+.task-main { flex: 1 1 auto; min-width: 0; }
+.task-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-stat { display: flex; align-items: center; gap: 8px; min-width: 150px; justify-content: flex-end; }
+
 /* ---- New Copy Task (wizard) ----------------------------------------------- */
 .wizard-head { display: flex; align-items: center; gap: 14px; }
 .wizard-head h1 { margin: 0; }

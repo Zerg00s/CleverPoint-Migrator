@@ -7,7 +7,7 @@
 @inject UxSettings Settings
 @inject PendingMigration Pending
 @inject HistoryService History
-@implements IDisposable
+@inject MigrationRunner Runner
 
 <div class="page-head wizard-head">
     <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
@@ -129,12 +129,9 @@
     </div>
 
     <div class="btn-row" style="margin-top:22px;">
-        <FluentButton Appearance="Appearance.Accent" Loading="_running" IconStart="@(new Icons.Regular.Size20.Play())"
+        <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Play())"
                       @onclick="Start">Begin copy</FluentButton>
-        @if (_running)
-        {
-            <FluentButton Appearance="Appearance.Neutral" @onclick="Cancel">Cancel</FluentButton>
-        }
+        <span class="hint">Runs in the background. You can keep working or queue more; watch progress on the Activity screen.</span>
     </div>
 
     @if (_status is not null)
@@ -144,24 +141,6 @@
         </div>
     }
 </FluentCard>
-
-@if (_log.Count > 0)
-{
-    <FluentCard style="margin-top:16px;">
-        <div class="section-title">Live log · @_log.Count items @(_running ? "(running…)" : "")</div>
-        <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px;">
-            <FluentDataGrid Items="@_log.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
-                            GridTemplateColumns="0.7fr 2.4fr 0.9fr 2fr" ShowHover="true" Style="width:100%;">
-                <PropertyColumn Property="@(r => r.ItemType)" Title="Type" />
-                <PropertyColumn Property="@(r => r.SourcePath)" Title="Item" />
-                <TemplateColumn Title="Status">
-                    <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
-                </TemplateColumn>
-                <PropertyColumn Property="@(r => r.Message)" Title="Detail" />
-            </FluentDataGrid>
-        </div>
-    </FluentCard>
-}
 
 @code {
     [SupplyParameterFromQuery(Name = "src")] public string? Src { get; set; }
@@ -176,12 +155,9 @@
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
-    private bool _running;
+    private const bool _running = false;   // execution moved to the background runner
     private string? _status;
     private MessageIntent _statusIntent = MessageIntent.Info;
-    private readonly List<ItemCopyRecord> _log = new();
-    private CancellationTokenSource? _cts;
-    private DateTime _lastRender = DateTime.MinValue;
 
     protected override void OnInitialized()
     {
@@ -242,7 +218,10 @@
         return $"{_tgt.TrimEnd('/')}/{path}";
     }
 
-    private async Task Start()
+    // Queue the task(s) into the background runner and go watch them on Activity.
+    // Running in the runner (not this page) means navigating away never cancels them,
+    // and several can run at once with the rest queued.
+    private void Start()
     {
         if (string.IsNullOrWhiteSpace(_src) || string.IsNullOrWhiteSpace(_tgt) || _jobs.Count == 0)
         {
@@ -257,108 +236,36 @@
         }
 
         var contentOnly = _copyMode == "content";
-        _running = true;
-        _log.Clear();
-        _statusIntent = MessageIntent.Info;
-        _cts = new CancellationTokenSource();
-        StateHasChanged();
-
-        int copied = 0, skipped = 0, warnings = 0, failed = 0, doneLists = 0, failedLists = 0;
-        try
+        var queued = 0;
+        foreach (var job in _jobs)
         {
-            foreach (var job in _jobs)
+            var title = _batch
+                ? (_sameSite ? $"{job.SourceListTitle} - Copy" : job.SourceListTitle)
+                : (string.IsNullOrWhiteSpace(_targetTitle) ? job.SourceListTitle : _targetTitle);
+            var url = _batch || string.IsNullOrWhiteSpace(_targetUrl) ? DefaultUrl(title) : _targetUrl.Trim();
+            var name = _batch ? $"{_taskName} — {job.SourceListTitle}" : _taskName;
+
+            var options = new CopyOptions
             {
-                if (_cts.Token.IsCancellationRequested) break;
-                doneLists++;
-                // Single job uses the editable title/URL; batch keeps each list's own name.
-                var title = _batch
-                    ? (_sameSite ? $"{job.SourceListTitle} - Copy" : job.SourceListTitle)
-                    : (string.IsNullOrWhiteSpace(_targetTitle) ? job.SourceListTitle : _targetTitle);
-                var url = _batch || string.IsNullOrWhiteSpace(_targetUrl) ? DefaultUrl(title) : _targetUrl.Trim();
-                var runName = _batch ? null : (string.IsNullOrWhiteSpace(_taskName) ? null : _taskName);
+                TargetListTitle = title,
+                TargetListUrl = url,
+                PreserveAuthorsAndDates = _preserve,
+                CopyAttachments = _attachments,
+                CopyPermissions = _permissions,
+                CopyContent = true,
+                MergeSchema = !contentOnly,
+                CopyViews = !contentOnly,
+                CopyListSettings = !contentOnly,
+                MaxVersions = _maxVersions,
+                SelectedPaths = job.SelectedPaths,
+                ItemIds = job.SelectedItemIds,
+            };
 
-                _status = _batch
-                    ? $"Copying {doneLists} of {_jobs.Count}: {job.SourceListTitle}…"
-                    : "Copying…";
-                Activity.SetBusy($"Copying {job.SourceListTitle}…");
-                StateHasChanged();
-
-                var options = new CopyOptions
-                {
-                    TargetListTitle = title,
-                    TargetListUrl = url,
-                    PreserveAuthorsAndDates = _preserve,
-                    CopyAttachments = _attachments,
-                    CopyPermissions = _permissions,
-                    CopyContent = true,
-                    MergeSchema = !contentOnly,
-                    CopyViews = !contentOnly,
-                    CopyListSettings = !contentOnly,
-                    MaxVersions = _maxVersions,
-                    SelectedPaths = job.SelectedPaths,
-                    ItemIds = job.SelectedItemIds,
-                };
-
-                try
-                {
-                    var (result, status) = await Migrations.RunAsync(_src, _tgt, job.SourceListTitle, options, OnRecord, _cts.Token, _engine, runName);
-                    copied += result.Copied; skipped += result.Skipped;
-                    warnings += result.Warnings; failed += result.Failed;
-                    if (status == "Failed") failedLists++;
-                }
-                catch (Exception ex)
-                {
-                    failedLists++;
-                    _log.Add(new ItemCopyRecord
-                    {
-                        ItemType = "List", SourcePath = job.SourceListTitle, Status = ItemCopyStatus.Failed,
-                        Message = ex.Message, TimestampUtc = DateTime.UtcNow,
-                    });
-                }
-            }
-
-            _statusIntent = failedLists > 0 || failed > 0 ? MessageIntent.Error
-                : warnings > 0 ? MessageIntent.Warning : MessageIntent.Success;
-            var prefix = _batch ? $"{doneLists - failedLists} of {_jobs.Count} lists done.  " : "";
-            _status = $"{prefix}{copied} copied, {skipped} skipped, {warnings} warnings, {failed} failed"
-                + (failedLists > 0 ? $", {failedLists} list(s) could not be copied." : ".");
-            if (_statusIntent != MessageIntent.Error && Settings.ShowCompletionToasts)
-                Toasts.ShowSuccess(_batch ? "Batch copy finished." : "Copy finished.");
+            Runner.Enqueue(name, _src, _tgt, job.SourceListTitle, options, _engine);
+            queued++;
         }
-        catch (Exception ex)
-        {
-            _statusIntent = MessageIntent.Error;
-            _status = $"The run hit a problem: {ex.Message}";
-        }
-        finally
-        {
-            _running = false;
-            Activity.SetIdle();
-            StateHasChanged();
-        }
+
+        Toasts.ShowSuccess(queued == 1 ? "Copy queued." : $"{queued} copies queued.");
+        Nav.NavigateTo("/activity");
     }
-
-    private void OnRecord(ItemCopyRecord rec)
-    {
-        _log.Add(rec);
-        // Throttle re-renders so a fast run doesn't flood the UI thread.
-        var now = DateTime.UtcNow;
-        if ((now - _lastRender).TotalMilliseconds > 200)
-        {
-            _lastRender = now;
-            InvokeAsync(StateHasChanged);
-        }
-    }
-
-    private void Cancel() => _cts?.Cancel();
-
-    private static string ItemStatusClass(ItemCopyStatus s) => s switch
-    {
-        ItemCopyStatus.Copied => "st-ok",
-        ItemCopyStatus.Warning => "st-issues",
-        ItemCopyStatus.Failed => "st-failed",
-        _ => "st-interrupted",
-    };
-
-    public void Dispose() => _cts?.Cancel();
 }
