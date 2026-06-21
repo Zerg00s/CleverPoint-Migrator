@@ -7,6 +7,10 @@ public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary,
 {
     /// <summary>UI selection state (source-pane multi-select for batch copy).</summary>
     public bool Selected { get; set; }
+    /// <summary>SharePoint list template id (picks the type-specific fallback icon).</summary>
+    public int BaseTemplate { get; set; }
+    /// <summary>The list's own official icon URL from SharePoint (ImageUrl), absolute.</summary>
+    public string IconUrl { get; set; } = "";
 }
 public record SpWebInfo(string Title, string Url);
 public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,
@@ -36,17 +40,22 @@ public class SiteBrowser
         if (useCache && TryReadCache<List<SpListInfo>>(cacheKey, out var cached)) return cached!;
 
         using var doc = await conn.Rest.GetJsonAsync(
-            $"{conn.SiteUrl}/_api/web/lists?$select=Title,Hidden,BaseTemplate,BaseType,ItemCount,RootFolder/ServerRelativeUrl&$expand=RootFolder&$filter=Hidden eq false&$top=500");
+            $"{conn.SiteUrl}/_api/web/lists?$select=Title,Hidden,BaseTemplate,BaseType,ItemCount,ImageUrl,RootFolder/ServerRelativeUrl&$expand=RootFolder&$filter=Hidden eq false&$top=500");
+        var authority = new Uri(conn.SiteUrl).GetLeftPart(UriPartial.Authority);
         var lists = new List<SpListInfo>();
         foreach (var element in doc.RootElement.GetProperty("value").EnumerateArray())
         {
             var template = element.GetProperty("BaseTemplate").GetInt32();
             if (template is 116 or 117 or 118 or 121 or 122 or 123 or 175 or 851 or 3300) continue;
+            // The list's own official icon from SharePoint (e.g. /_layouts/15/images/itdl.png).
+            var imageUrl = element.TryGetProperty("ImageUrl", out var iu) && iu.ValueKind == JsonValueKind.String ? iu.GetString() ?? "" : "";
+            var iconUrl = imageUrl.Length == 0 ? "" : imageUrl.StartsWith("http") ? imageUrl : authority + imageUrl;
             lists.Add(new SpListInfo(
                 element.GetProperty("Title").GetString() ?? "",
                 element.GetProperty("RootFolder").GetProperty("ServerRelativeUrl").GetString() ?? "",
                 element.GetProperty("BaseType").GetInt32() == 1,
-                element.GetProperty("ItemCount").GetInt32()));
+                element.GetProperty("ItemCount").GetInt32())
+            { BaseTemplate = template, IconUrl = iconUrl });
         }
         lists = lists.OrderByDescending(l => l.IsLibrary).ThenBy(l => l.Title).ToList();
         WriteCache(cacheKey, lists);

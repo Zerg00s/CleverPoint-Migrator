@@ -64,7 +64,8 @@
                 }
                 <TemplateColumn Title="Name">
                     <div class="entry-cell">
-                        <img class="ft-icon" src="@FileIcons.ForList(context.IsLibrary)" alt="" />
+                        <img class="ft-icon" src="@(string.IsNullOrEmpty(context.IconUrl) ? FileIcons.ForList(context) : context.IconUrl)"
+                             onerror="@($"this.onerror=null;this.src='{FileIcons.ForList(context)}'")" alt="" />
                         <span class="entry-name">@context.Title</span>
                     </div>
                 </TemplateColumn>

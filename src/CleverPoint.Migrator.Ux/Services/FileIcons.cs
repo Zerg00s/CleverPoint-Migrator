@@ -8,7 +8,23 @@ public static class FileIcons
 {
     public static string Url(string name, int size = 48) => $"file-icons/{size}/{name}.svg";
 
-    public static string ForList(bool isLibrary) => Url(isLibrary ? "documentsfolder" : "splist");
+    /// <summary>Type-specific icon for a list/library by its SharePoint template.</summary>
+    public static string ForList(SpListInfo l) => Url(IconForTemplate(l.BaseTemplate, l.IsLibrary));
+
+    private static string IconForTemplate(int template, bool isLibrary) => template switch
+    {
+        101 or 700 => "documentsfolder",         // Document library
+        109 => "picturesfolder",                  // Picture library
+        851 => "picturesfolder",                  // Asset library (Site Assets)
+        115 => "form",                            // Form library (XML forms)
+        119 or 544 or 850 => "sponews",           // Wiki / Site Pages library
+        106 => "calendar",                        // Events / calendar
+        105 => "contact",                         // Contacts
+        103 or 170 => "link",                     // Links / promoted links
+        107 or 171 => "todoitem",                 // Tasks
+        100 => "splist",                          // Generic / custom list
+        _ => isLibrary ? "documentsfolder" : "splist",
+    };
 
     public static string ForEntry(SpFolderEntry e) =>
         e.IsFolder ? Url("folder") : Url(ForExtension(Path.GetExtension(e.Name)));
