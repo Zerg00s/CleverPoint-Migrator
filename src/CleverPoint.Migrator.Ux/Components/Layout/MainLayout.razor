@@ -53,12 +53,12 @@
             </NavLink>
 
             <div class="nav-section">Help</div>
-            <a class="nav-item" href="https://github.com/Zerg00s/CleverPoint-Migrator" target="_blank" rel="noopener">
+            <div class="nav-item" role="link" @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator"))">
                 <FluentIcon Value="@(new Icons.Regular.Size20.Link())" /> <span>GitHub project</span>
-            </a>
-            <a class="nav-item" href="https://github.com/Zerg00s/CleverPoint-Migrator/issues" target="_blank" rel="noopener">
+            </div>
+            <div class="nav-item" role="link" @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator/issues"))">
                 <FluentIcon Value="@(new Icons.Regular.Size20.Bug())" /> <span>Report an issue</span>
-            </a>
+            </div>
         </nav>
 
         <main class="app-content">

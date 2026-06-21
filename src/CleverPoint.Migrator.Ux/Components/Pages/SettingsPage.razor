@@ -77,8 +77,10 @@
             <p class="hint">A ShareGate-style SharePoint Online migration tool. REST + CSOM + the SPO Migration API —
                 no Graph API for SharePoint data. Created by Denis Molodtsov.</p>
             <div class="btn-row" style="margin-top:14px;">
-                <FluentAnchor Href="https://github.com/Zerg00s/CleverPoint-Migrator" Target="_blank" Appearance="Appearance.Accent">GitHub project</FluentAnchor>
-                <FluentAnchor Href="https://github.com/Zerg00s/CleverPoint-Migrator/issues" Target="_blank" Appearance="Appearance.Neutral">Report an issue</FluentAnchor>
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Link())"
+                              @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator"))">GitHub project</FluentButton>
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Bug())"
+                              @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator/issues"))">Report an issue</FluentButton>
             </div>
             <p class="hint" style="margin-top:16px;">Version 1.0 · settings stored at <code>@UxSettings.SettingsPath</code></p>
         </div>

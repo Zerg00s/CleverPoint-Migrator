@@ -42,7 +42,10 @@ html, body {
 /* ---- App shell layout ----------------------------------------------------- */
 .app-shell {
     display: grid; grid-template-rows: auto auto 1fr auto;
-    height: 100%; flex: 1 1 auto; min-height: 0; width: 100%; overflow: hidden;
+    /* 100vh (not 100%) pins the shell to the WINDOW height regardless of the
+       html/body chain, so the footer row always sits at the very bottom and
+       only .app-content scrolls. */
+    height: 100vh; flex: 1 1 auto; min-height: 0; width: 100%; overflow: hidden;
 }
 
 .app-header {
