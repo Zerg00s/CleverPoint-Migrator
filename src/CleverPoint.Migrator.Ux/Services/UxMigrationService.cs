@@ -36,7 +36,8 @@ public class UxMigrationService
     /// <summary>Runs one list/library copy. Returns the final result and status.</summary>
     public async Task<(CopyResult Result, string Status)> RunAsync(
         string sourceSite, string targetSite, string sourceListTitle, CopyOptions options,
-        Action<ItemCopyRecord> onRecord, CancellationToken ct, string engine = "Classic", string? runName = null)
+        Action<ItemCopyRecord> onRecord, CancellationToken ct, string engine = "Classic", string? runName = null,
+        Action<long>? onRunStarted = null)
     {
         var sConn = UxConnectionResolver.Find(_settings, sourceSite)!;
         var tConn = UxConnectionResolver.Find(_settings, targetSite)!;
@@ -51,6 +52,7 @@ public class UxMigrationService
             TargetUrl = targetSite, TargetList = options.TargetListTitle,
             Engine = engine == "MigrationApi" ? "MigrationApi" : "Classic",
         });
+        onRunStarted?.Invoke(runId);
 
         var result = new CopyResult();
         var gate = new object();

@@ -23,7 +23,17 @@ else
         <div class="run-head">
             <div class="run-title">
                 <span class="status-pill @StatusClass(_run)">@Pretty(_run.Status)</span>
-                <span class="run-name">@_run.Name</span>
+                @if (_editingName)
+                {
+                    <FluentTextField @bind-Value="_nameEdit" Style="min-width:340px;" @onkeydown="NameKey" />
+                    <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Checkmark())" Title="Save" OnClick="SaveName" />
+                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Cancel" OnClick="@(() => _editingName = false)" />
+                }
+                else
+                {
+                    <span class="run-name">@_run.Name</span>
+                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Edit())" Title="Rename this task" OnClick="StartRename" />
+                }
             </div>
             <div class="btn-row">
                 <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
@@ -110,6 +120,32 @@ else
         if (_logStatus != "All")
             q = q.Where(i => i.Status == _logStatus);
         _filteredItems = q.ToList();
+    }
+
+    private bool _editingName;
+    private string _nameEdit = "";
+
+    private void StartRename()
+    {
+        _nameEdit = _run?.Name ?? "";
+        _editingName = true;
+    }
+
+    private void SaveName()
+    {
+        var name = _nameEdit.Trim();
+        if (_run is not null && name.Length > 0 && name != _run.Name)
+        {
+            History.RenameRun(_run.Id, name);
+            _run.Name = name;
+        }
+        _editingName = false;
+    }
+
+    private void NameKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") SaveName();
+        else if (e.Key == "Escape") _editingName = false;
     }
 
     private void RunAgain()

@@ -8,13 +8,14 @@ public enum CopyTaskState { Queued, Running, Completed, CompletedWithIssues, Fai
 public class CopyTask
 {
     public int Id { get; init; }
-    public string Name { get; init; } = "";
+    public string Name { get; set; } = "";           // settable: tasks can be renamed
     public string SourceSite { get; init; } = "";
     public string TargetSite { get; init; } = "";
     public string SourceList { get; init; } = "";
     public string Engine { get; init; } = "Classic";
     public CopyOptions Options { get; init; } = new();
 
+    public long HistoryRunId { get; set; }
     public CopyTaskState State { get; set; } = CopyTaskState.Queued;
     public int Copied { get; set; }
     public int Skipped { get; set; }
@@ -91,6 +92,17 @@ public class MigrationRunner
         t?.Cts.Cancel();
     }
 
+    /// <summary>Rename a task (in-memory display); returns its history run id (0 if none yet).</summary>
+    public long Rename(int id, string newName)
+    {
+        CopyTask? t;
+        lock (_gate) t = _tasks.FirstOrDefault(x => x.Id == id);
+        if (t is null) return 0;
+        t.Name = newName;
+        Raise(force: true);
+        return t.HistoryRunId;
+    }
+
     public void ClearFinished()
     {
         lock (_gate) _tasks.RemoveAll(t => !t.IsActive);
@@ -123,7 +135,8 @@ public class MigrationRunner
         {
             var (result, status) = await _mig.RunAsync(
                 t.SourceSite, t.TargetSite, t.SourceList, t.Options,
-                rec => AddRecord(t, rec), t.Cts.Token, t.Engine, t.Name);
+                rec => AddRecord(t, rec), t.Cts.Token, t.Engine, t.Name,
+                onRunStarted: id => t.HistoryRunId = id);
             t.Copied = result.Copied; t.Skipped = result.Skipped;
             t.Warnings = result.Warnings; t.Failed = result.Failed;
             t.State = status switch

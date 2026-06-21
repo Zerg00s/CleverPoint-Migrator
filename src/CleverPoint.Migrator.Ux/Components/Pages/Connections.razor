@@ -43,7 +43,8 @@ else
                     }
                     else
                     {
-                        <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Connect(c, false))">
+                        <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Connect(c, false))"
+                                      IconStart="@(IsConnected(c) ? (Icon)new Icons.Regular.Size20.ArrowClockwise() : new Icons.Regular.Size20.PlugConnected())">
                             @(IsConnected(c) ? "Reconnect" : "Connect")
                         </FluentButton>
                         <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Delete())"

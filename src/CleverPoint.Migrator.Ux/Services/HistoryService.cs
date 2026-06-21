@@ -44,6 +44,16 @@ public class HistoryService
         }
     }
 
+    public void RenameRun(long runId, string newName)
+    {
+        try
+        {
+            using var store = new HistoryStore(UxSettings.HistoryDbPath);
+            store.RenameRun(runId, newName);
+        }
+        catch { /* best-effort */ }
+    }
+
     public void DeleteRuns(IEnumerable<long> ids)
     {
         try

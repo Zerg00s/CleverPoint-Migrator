@@ -1,6 +1,7 @@
 @page "/activity"
 @namespace CleverPoint.Migrator.Ux.Components.Pages
 @inject MigrationRunner Runner
+@inject HistoryService History
 @inject NavigationManager Nav
 @implements IDisposable
 
@@ -33,8 +34,19 @@
                 <div class="task-row @(t.Id == _selectedId ? "sel" : "")" @onclick="@(() => _selectedId = t.Id)" role="button">
                     <span class="status-pill @StateClass(t.State)">@StateLabel(t.State)</span>
                     <div class="task-main">
-                        <div class="task-name">@t.Name</div>
-                        <div class="task-sub hint">@t.SourceList &rarr; @t.Options.TargetListTitle</div>
+                        @if (_editId == t.Id)
+                        {
+                            <div @onclick:stopPropagation="true" style="display:flex; gap:6px; align-items:center;">
+                                <FluentTextField @bind-Value="_editName" Style="min-width:300px;" @onkeydown="@(e => NameKey(e, t))" />
+                                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Checkmark())" Title="Save" OnClick="@(() => SaveName(t))" />
+                                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Cancel" OnClick="@(() => _editId = 0)" />
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="task-name">@t.Name</div>
+                            <div class="task-sub hint">@t.SourceList &rarr; @t.Options.TargetListTitle</div>
+                        }
                     </div>
                     <div class="task-stat">
                         @if (t.State == CopyTaskState.Running)
@@ -51,7 +63,9 @@
                             <span class="hint">@t.Copied copied · @t.Failed failed</span>
                         }
                     </div>
-                    <div @onclick:stopPropagation="true">
+                    <div @onclick:stopPropagation="true" style="display:flex; gap:4px;">
+                        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Edit())"
+                                      Title="Rename this task" OnClick="@(() => StartRename(t))" />
                         @if (t.IsActive)
                         {
                             <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.DismissCircle())"
@@ -106,6 +120,28 @@
     private void Refresh() => _tasks = Runner.Snapshot();
 
     private void OpenInHistory(CopyTask t) => Nav.NavigateTo("/history");
+
+    private int _editId;
+    private string _editName = "";
+
+    private void StartRename(CopyTask t) { _editId = t.Id; _editName = t.Name; }
+
+    private void SaveName(CopyTask t)
+    {
+        var name = _editName.Trim();
+        if (name.Length > 0 && name != t.Name)
+        {
+            var runId = Runner.Rename(t.Id, name);          // updates the live task
+            if (runId > 0) History.RenameRun(runId, name);  // and the persisted run
+        }
+        _editId = 0;
+    }
+
+    private void NameKey(KeyboardEventArgs e, CopyTask t)
+    {
+        if (e.Key == "Enter") SaveName(t);
+        else if (e.Key == "Escape") _editId = 0;
+    }
 
     private static string StateLabel(CopyTaskState s) => s switch
     {

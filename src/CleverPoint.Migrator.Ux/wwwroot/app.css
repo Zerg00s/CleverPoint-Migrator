@@ -197,7 +197,7 @@ html, body {
 .page-head p  { margin: 0; opacity: .65; font-size: 14px; }
 
 .section { margin-bottom: 26px; }
-.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; opacity: .55; margin: 0 0 12px 0; }
+.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--neutral-foreground-rest); opacity: .8; margin: 0 0 12px 0; }
 
 .grid { display: grid; gap: 16px; }
 .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -209,7 +209,7 @@ html, body {
 .field-row { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
 .field > label, .field-label { font-size: 12.5px; font-weight: 600; opacity: .8; }
-.hint { font-size: 11.5px; opacity: .55; }
+.hint { font-size: 11.5px; color: var(--neutral-foreground-rest); opacity: .68; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 
 /* ---- Hero ----------------------------------------------------------------- */
