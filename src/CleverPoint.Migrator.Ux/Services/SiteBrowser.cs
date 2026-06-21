@@ -3,7 +3,11 @@ using CleverPoint.Migrator.Core.Csom;
 
 namespace CleverPoint.Migrator.Ux.Services;
 
-public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary, int ItemCount);
+public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary, int ItemCount)
+{
+    /// <summary>UI selection state (source-pane multi-select for batch copy).</summary>
+    public bool Selected { get; set; }
+}
 public record SpWebInfo(string Title, string Url);
 public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,
     string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "")
@@ -77,7 +81,10 @@ public class SiteBrowser
                     RenderOptions = 2,
                     FolderServerRelativeUrl = folderServerRelativeUrl,
                     Paging = paging,
-                    ViewXml = "<View Scope='RecursiveAll'><Query><OrderBy><FieldRef Name='FileLeafRef'/></OrderBy></Query>"
+                    // No <OrderBy>: sorting on the non-indexed FileLeafRef across a library
+                    // past the 5000-row list-view threshold returns HTTP 500. Paging by the
+                    // default (indexed) order is threshold-safe; we sort client-side below.
+                    ViewXml = "<View Scope='RecursiveAll'><Query></Query>"
                         + "<ViewFields><FieldRef Name='FileLeafRef'/><FieldRef Name='FileRef'/><FieldRef Name='FSObjType'/><FieldRef Name='File_x0020_Size'/>"
                         + "<FieldRef Name='Created'/><FieldRef Name='Modified'/><FieldRef Name='Author'/><FieldRef Name='Editor'/></ViewFields>"
                         + "<RowLimit Paged='TRUE'>500</RowLimit></View>",

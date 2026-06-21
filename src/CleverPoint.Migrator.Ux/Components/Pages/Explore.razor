@@ -32,9 +32,9 @@
 
     private void StartCopy()
     {
-        if (_source?.CurrentList is null || _source.SiteUrl is null)
+        if (_source?.SiteUrl is null)
         {
-            Toasts.ShowWarning("Open a source list or library first.");
+            Toasts.ShowWarning("Open a source connection on the left.");
             return;
         }
         if (_target?.SiteUrl is null)
@@ -42,12 +42,31 @@
             Toasts.ShowWarning("Open a target connection on the right.");
             return;
         }
-        var selected = _source.SelectedEntries;
-        var lists = _source.CurrentList.Title;
+
+        // Ticked lists take priority: copy each whole list/library in one batch.
+        // Otherwise fall back to the open list (with optional per-item selection).
+        var ticked = _source.SelectedLists;
+        string lists;
+        int? items = null;
+        if (ticked.Count > 0)
+        {
+            lists = string.Join("|", ticked.Select(l => l.Title));
+        }
+        else if (_source.CurrentList is not null)
+        {
+            lists = _source.CurrentList.Title;
+            var selected = _source.SelectedEntries;
+            if (selected.Count > 0) items = selected.Count;
+        }
+        else
+        {
+            Toasts.ShowWarning("Tick one or more lists, or open a list to pick items.");
+            return;
+        }
+
         var q = $"?src={Uri.EscapeDataString(_source.SiteUrl)}&tgt={Uri.EscapeDataString(_target.SiteUrl)}"
               + $"&lists={Uri.EscapeDataString(lists)}";
-        if (selected.Count > 0)
-            q += $"&items={selected.Count}";
+        if (items is not null) q += $"&items={items}";
         Nav.NavigateTo("/wizard" + q);
     }
 }

@@ -15,6 +15,11 @@ public static class Program
     public static SpConnection Target = null!;
     public static SpConnection? TestSite;
 
+    // Exposed so scenarios can spin up extra connections (other site collections,
+    // e.g. /sites/LMAS) using the same app-only cert credentials.
+    public static AppCredentials SourceCreds = null!;
+    public static AppCredentials TargetCreds = null!;
+
     private static readonly List<(string Name, string Detail, bool Pass, string? Error)> Results = new();
 
     public static async Task<int> Main(string[] args)
@@ -22,6 +27,8 @@ public static class Program
         var repoRoot = FindRepoRoot();
         var sourceCreds = AppCredentials.LoadFromFile(Path.Combine(repoRoot, "Secrets", "Source Tenant - Migrator App.txt"));
         var targetCreds = AppCredentials.LoadFromFile(Path.Combine(repoRoot, "Secrets", "Target Tenant - Migrator App.txt"));
+        SourceCreds = sourceCreds;
+        TargetCreds = targetCreds;
 
         Source = new SpConnection("https://gocleverpointcom.sharepoint.com/sites/DemoLargeSite", new CertTokenProvider(sourceCreds));
         Target = new SpConnection("https://cleverpointlab.sharepoint.com", new CertTokenProvider(targetCreds));
@@ -69,6 +76,9 @@ public static class Program
             ["chars"] = Scenarios.SpecialCharTests.RunAsync,
             ["versions"] = Scenarios.VersionTests.RunAsync,
             ["bench"] = Scenarios.BenchmarkTests.RunAsync,
+            ["browse-lmas"] = Scenarios.BatchAndBrowseTests.BrowseLargeLibFixAsync,
+            ["batch"] = Scenarios.BatchAndBrowseTests.BatchSameTenantAsync,
+            ["batch-cross"] = Scenarios.BatchAndBrowseTests.BatchCrossTenantAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();

@@ -16,8 +16,11 @@
     <div class="grid cols-2" style="margin-bottom:18px;">
         <div class="field"><span class="field-label">Source site</span><FluentTextField @bind-Value="_src" Style="width:100%;" /></div>
         <div class="field"><span class="field-label">Target site</span><FluentTextField @bind-Value="_tgt" Style="width:100%;" /></div>
-        <div class="field"><span class="field-label">Source list / library</span><FluentTextField @bind-Value="_list" Style="width:100%;" /></div>
-        <div class="field"><span class="field-label">Target list title</span><FluentTextField @bind-Value="_targetTitle" Style="width:100%;" /></div>
+        @if (!_batch)
+        {
+            <div class="field"><span class="field-label">Source list / library</span><FluentTextField @bind-Value="_list" Style="width:100%;" /></div>
+            <div class="field"><span class="field-label">Target list title</span><FluentTextField @bind-Value="_targetTitle" Style="width:100%;" /></div>
+        }
         <div class="field">
             <span class="field-label">Engine</span>
             <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;">
@@ -26,6 +29,18 @@
             </FluentSelect>
         </div>
     </div>
+
+    @if (_batch)
+    {
+        <div class="section-title">Lists and libraries to copy (@_allLists.Count)</div>
+        <ul class="batch-list" style="margin:0 0 16px 0; padding-left:18px;">
+            @foreach (var l in _allLists)
+            {
+                <li>@l</li>
+            }
+        </ul>
+        <p class="hint" style="margin-top:-8px;">Each is copied in turn under its own name on the target. The live log below covers the whole batch.</p>
+    }
 
     <div class="section-title">What to copy</div>
     <div class="grid cols-2" style="margin-bottom:8px;">
@@ -87,6 +102,8 @@
     [SupplyParameterFromQuery(Name = "lists")] public string? Lists { get; set; }
 
     private string _src = "", _tgt = "", _list = "", _targetTitle = "", _versions = "1", _engine = "Classic";
+    private List<string> _allLists = new();
+    private bool _batch;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
     private bool _running;
     private string? _status;
@@ -99,7 +116,9 @@
     {
         _src = Src ?? "";
         _tgt = Tgt ?? "";
-        _list = (Lists ?? "").Split('|')[0];
+        _allLists = (Lists ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        _batch = _allLists.Count > 1;
+        _list = _allLists.FirstOrDefault() ?? "";
         var sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
         _targetTitle = sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
         Settings.EnsureLoaded();
@@ -121,35 +140,72 @@
             return;
         }
 
+        // One job per list. In single-list mode the source title and target title come
+        // from the editable fields; in batch mode each list keeps its name on the target
+        // (or " - Copy" when source and target are the same site).
+        var sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+        var jobs = _batch
+            ? _allLists.Select(l => (Source: l, Target: sameSite ? $"{l} - Copy" : l)).ToList()
+            : new List<(string Source, string Target)> { (_list, string.IsNullOrWhiteSpace(_targetTitle) ? _list : _targetTitle) };
+
         _running = true;
         _log.Clear();
-        _status = $"Running {(contentOnly ? "content-only" : "structure + content")} copy…";
         _statusIntent = MessageIntent.Info;
-        Activity.SetBusy($"Migrating {_list}…");
         _cts = new CancellationTokenSource();
         StateHasChanged();
 
-        var options = new CopyOptions
-        {
-            TargetListTitle = string.IsNullOrWhiteSpace(_targetTitle) ? _list : _targetTitle,
-            TargetListUrl = string.Concat((string.IsNullOrWhiteSpace(_targetTitle) ? _list : _targetTitle).Where(char.IsLetterOrDigit)),
-            PreserveAuthorsAndDates = _preserve,
-            CopyAttachments = _attachments,
-            CopyPermissions = _permissions,
-            CopyContent = true,
-            MergeSchema = !contentOnly,
-            CopyViews = !contentOnly,
-            CopyListSettings = !contentOnly,
-            MaxVersions = int.TryParse(_versions, out var v) ? v : 1,
-        };
-
+        int copied = 0, skipped = 0, warnings = 0, failed = 0, doneLists = 0, failedLists = 0;
         try
         {
-            var (result, status) = await Migrations.RunAsync(_src, _tgt, _list, options, OnRecord, _cts.Token, _engine);
-            _statusIntent = status == "Completed" ? MessageIntent.Success
-                : status == "Failed" ? MessageIntent.Error : MessageIntent.Warning;
-            _status = $"{status}: {result.Copied} copied, {result.Skipped} skipped, {result.Warnings} warnings, {result.Failed} failed.";
-            if (_settingsToast(status)) Toasts.ShowSuccess("Migration finished.");
+            foreach (var job in jobs)
+            {
+                if (_cts.Token.IsCancellationRequested) break;
+                doneLists++;
+                _status = _batch
+                    ? $"Copying {doneLists} of {jobs.Count}: {job.Source}…"
+                    : $"Running {(contentOnly ? "content-only" : "structure + content")} copy…";
+                Activity.SetBusy($"Migrating {job.Source}…");
+                StateHasChanged();
+
+                var options = new CopyOptions
+                {
+                    TargetListTitle = job.Target,
+                    TargetListUrl = string.Concat(job.Target.Where(char.IsLetterOrDigit)),
+                    PreserveAuthorsAndDates = _preserve,
+                    CopyAttachments = _attachments,
+                    CopyPermissions = _permissions,
+                    CopyContent = true,
+                    MergeSchema = !contentOnly,
+                    CopyViews = !contentOnly,
+                    CopyListSettings = !contentOnly,
+                    MaxVersions = int.TryParse(_versions, out var v) ? v : 1,
+                };
+
+                try
+                {
+                    var (result, status) = await Migrations.RunAsync(_src, _tgt, job.Source, options, OnRecord, _cts.Token, _engine);
+                    copied += result.Copied; skipped += result.Skipped;
+                    warnings += result.Warnings; failed += result.Failed;
+                    if (status == "Failed") failedLists++;
+                }
+                catch (Exception ex)
+                {
+                    failedLists++;
+                    _log.Add(new ItemCopyRecord
+                    {
+                        ItemType = "List", SourcePath = job.Source, Status = ItemCopyStatus.Failed,
+                        Message = ex.Message, TimestampUtc = DateTime.UtcNow,
+                    });
+                }
+            }
+
+            _statusIntent = failedLists > 0 || failed > 0 ? MessageIntent.Error
+                : warnings > 0 ? MessageIntent.Warning : MessageIntent.Success;
+            var prefix = _batch ? $"{doneLists - failedLists} of {jobs.Count} lists done.  " : "";
+            _status = $"{prefix}{copied} copied, {skipped} skipped, {warnings} warnings, {failed} failed"
+                + (failedLists > 0 ? $", {failedLists} list(s) could not be copied." : ".");
+            if (_statusIntent != MessageIntent.Error && Settings.ShowCompletionToasts)
+                Toasts.ShowSuccess(_batch ? "Batch migration finished." : "Migration finished.");
         }
         catch (Exception ex)
         {
@@ -163,8 +219,6 @@
             StateHasChanged();
         }
     }
-
-    private static bool _settingsToast(string status) => status is "Completed" or "CompletedWithIssues";
 
     private void OnRecord(ItemCopyRecord rec)
     {

@@ -26,8 +26,18 @@
         }
         else if (CurrentList is null && _lists.Count > 0)
         {
-            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()" GridTemplateColumns="2fr 1fr" ShowHover="true" Style="width:100%;"
+            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()"
+                            GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1fr" : "2fr 1fr")" ShowHover="true" Style="width:100%;"
                             OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is not null) await OpenList(r.Item); })">
+                @if (IsSource)
+                {
+                    <TemplateColumn Title="">
+                        <div @onclick:stopPropagation="true">
+                            <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="OnListTicked"
+                                            Title="Tick to copy this whole list/library" />
+                        </div>
+                    </TemplateColumn>
+                }
                 <TemplateColumn Title="Name">
                     <FluentIcon Value="@ListIcon(context)" Color="Color.Accent" />
                     <span style="margin-left:6px;">@context.Title</span>
@@ -73,8 +83,13 @@
 
     private AddConnectionDialog? _addDialog;
 
-    /// <summary>This pane has an open list (source) or an open connection (target).</summary>
-    public bool IsReady => IsSource ? CurrentList is not null : !string.IsNullOrWhiteSpace(_site) && Connection is not null;
+    /// <summary>
+    /// Source is ready when a list is open (to pick items) or one or more lists are
+    /// ticked (whole-list batch copy). Target is ready when a connection is open.
+    /// </summary>
+    public bool IsReady => IsSource
+        ? (CurrentList is not null || _lists.Any(l => l.Selected))
+        : !string.IsNullOrWhiteSpace(_site) && Connection is not null;
 
     private string? _site;
     private bool _loading;
@@ -87,6 +102,9 @@
     public string? SiteUrl => _site;
     public SavedConnection? Connection { get; private set; }
     public List<SpFolderEntry> SelectedEntries => _items.Where(i => i.Selected).ToList();
+
+    /// <summary>Lists/libraries ticked at the site level for a whole-list batch copy.</summary>
+    public List<SpListInfo> SelectedLists => _lists.Where(l => l.Selected).ToList();
 
     protected override void OnInitialized()
     {
@@ -123,10 +141,20 @@
         {
             var conn = UxConnectionResolver.Resolve(Connection, _site, SignIn);
             _lists = await Browser.GetListsAsync(conn);
-            _status = $"{_lists.Count} lists and libraries";
+            _status = $"{_lists.Count} lists and libraries"
+                + (IsSource ? "  ·  tick several to copy them all, or click one to pick items" : "");
         }
         catch (Exception ex) { _status = $"Could not open: {Short(ex.Message)}"; }
         finally { _loading = false; await OnChanged.InvokeAsync(); }
+    }
+
+    private async Task OnListTicked()
+    {
+        var n = _lists.Count(l => l.Selected);
+        _status = n > 0
+            ? $"{n} ticked to copy  ·  or click a list to pick individual items"
+            : $"{_lists.Count} lists and libraries";
+        await OnChanged.InvokeAsync();
     }
 
     private async Task AddConnection()
