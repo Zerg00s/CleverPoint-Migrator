@@ -184,9 +184,25 @@ screenshot-testable from the agent.
       mapping/date affordances), run buttons, toast + result bar
 - [x] WSL UI-testing harness (tools/ui-testing): launch on XWayland,
       screenshot, click. Every screen verified by screenshot.
-- [ ] Live engine execution from the Blazor wizard (task #47): cert auth
-      runs headless via Core; browser auth needs a Photino sign-in WebView.
-      Windows-verify only (no tenant session on WSL).
+- [x] Live engine execution from the Blazor wizard for APP+CERTIFICATE
+      connections: UxMigrationService runs the real CopyEngine, streams a live
+      virtualized log, records to HistoryStore. VERIFIED LIVE end-to-end via
+      WSL screenshots — cross-tenant copy gocleverpointcom -> cleverpointlab,
+      "Completed: 10 copied, 2 skipped, 2 warnings, 0 failed", run #1 in History.
+- [x] Live cert-auth explorer browsing of real tenants (lists + drill-in to
+      files/items in the virtualized grid; both tenants side by side).
+- [x] Virtualized grids handle 100K: /perf proves build 22 ms, filter 4 ms,
+      instant sort, one continuous scroll, selectable cell text.
+- [ ] BROWSER-AUTH execution (task #47): BLOCKED on a real constraint, not
+      time. The WinForms app captures FedAuth/rtFa via WebView2's native
+      CookieManager; Photino does NOT expose cookie access, and those cookies
+      are HttpOnly so JS document.cookie can't read them. So a no-Azure-app
+      browser sign-in can't be captured inside Photino the way WinForms does.
+      The UI degrades gracefully (explorer + wizard tell the user to use an
+      app+certificate connection for live runs). Options to revisit on Windows:
+      (a) host a WebView2 control directly for the sign-in capture, (b) device-
+      code / MSAL interactive (needs an Azure app), or (c) keep browser runs in
+      the WinForms app. Needs a Windows session to build+verify either way.
 
 Key WSL finding: WSLg here runs the Weston/Wayland compositor, so the GTK
 window must be forced onto XWayland (GDK_BACKEND=x11, unset WAYLAND_DISPLAY)
