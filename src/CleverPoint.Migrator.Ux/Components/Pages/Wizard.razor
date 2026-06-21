@@ -6,6 +6,7 @@
 @inject ActivityService Activity
 @inject UxSettings Settings
 @inject PendingMigration Pending
+@inject HistoryService History
 @implements IDisposable
 
 <div class="page-head">
@@ -71,7 +72,9 @@
                 </div>
                 <div class="field">
                     <span class="field-label">Target list URL (the part after the site)</span>
-                    <FluentTextField @bind-Value="_targetUrl" Style="width:100%;" Disabled="_running" Placeholder="e.g. Lists/MyList or MyLibrary" />
+                    <FluentTextField @bind-Value="_targetUrl" @bind-Value:after="StateHasChanged" Immediate="true"
+                                     Style="width:100%;" Disabled="_running" Placeholder="e.g. Lists/MyList or MyLibrary" />
+                    <span class="url-preview">@FullTargetUrl()</span>
                 </div>
             }
         </div>
@@ -95,8 +98,8 @@
         </div>
         <div class="field">
             <span class="field-label">File versions to copy</span>
-            <FluentNumberField @bind-Value="_maxVersions" Min="1" Max="50" Style="width:140px;" Disabled="_running" />
-            <span class="hint">1 = latest only. Up to 50.</span>
+            <FluentNumberField @bind-Value="_maxVersions" Min="1" Max="2000" Style="width:140px;" Disabled="_running" />
+            <span class="hint">1 = latest only. Up to 2000.</span>
         </div>
     </div>
 
@@ -191,13 +194,23 @@
         _sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
         _targetTitle = _sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
         _targetUrl = DefaultUrl(_targetTitle);
-        _taskName = _list.Length > 0 ? _list : "Copy task";
+        // Sensible, incremental default: aligns with the next run number and names what's copied.
+        var next = (History.GetRuns(1).FirstOrDefault()?.Id ?? 0) + 1;
+        var what = _batch ? $"{_jobs.Count} lists" : (_list.Length > 0 ? _list : "copy");
+        _taskName = $"Copy task {next}: {what}";
         Settings.EnsureLoaded();
         _engine = Settings.DefaultEngine == "MigrationApi" ? "MigrationApi" : "Classic";
-        _maxVersions = Math.Clamp(Settings.DefaultMaxVersions, 1, 50);
+        _maxVersions = Math.Clamp(Settings.DefaultMaxVersions, 1, 2000);
     }
 
     private static string DefaultUrl(string title) => string.Concat(title.Where(char.IsLetterOrDigit));
+
+    // Live preview of where the list will live on the target as the user types.
+    private string FullTargetUrl()
+    {
+        var path = (string.IsNullOrWhiteSpace(_targetUrl) ? DefaultUrl(_targetTitle) : _targetUrl).Trim().TrimStart('/');
+        return $"{_tgt.TrimEnd('/')}/{path}";
+    }
 
     private async Task Start()
     {

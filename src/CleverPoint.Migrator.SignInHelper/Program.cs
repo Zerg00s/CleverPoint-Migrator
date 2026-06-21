@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace CleverPoint.Migrator.SignInHelper;
@@ -55,7 +56,13 @@ internal sealed class SignInForm : Form
 
     private async Task StartAsync()
     {
-        await _web.EnsureCoreWebView2Async();
+        // Persistent profile so a previous sign-in is remembered: re-auth becomes
+        // one click (or silent) instead of a full username/password every time.
+        var udf = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CleverPoint Migrator", "WebView2");
+        Directory.CreateDirectory(udf);
+        var env = await CoreWebView2Environment.CreateAsync(null, udf);
+        await _web.EnsureCoreWebView2Async(env);
         if (_forceFresh)
             _web.CoreWebView2.CookieManager.DeleteAllCookies();
         _web.CoreWebView2.NavigationCompleted += async (_, _) => await ProbeAsync();
