@@ -200,6 +200,16 @@ html, body {
 .exp-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .exp-list { flex: 1 1 auto; overflow-y: auto; }
 .exp-status { padding: 8px 14px; font-size: 12px; opacity: .6; border-top: 1px solid var(--neutral-stroke-divider-rest, #eee); }
+/* Folder breadcrumb above the item grid. */
+.exp-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 8px 14px; font-size: 13px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #eee); }
+.exp-crumbs .crumb { color: var(--cp-accent-dark); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.exp-crumbs .crumb:hover { background: color-mix(in srgb, var(--cp-accent) 14%, transparent); }
+.exp-crumbs .crumb.current { color: inherit; font-weight: 600; cursor: default; }
+.exp-crumbs .crumb.current:hover { background: transparent; }
+.exp-crumbs .crumb-sep { opacity: .5; padding: 0 1px; }
+/* Folder name is the click target to drill in (clear, generous hit area). */
+.entry-folder { margin-left: 6px; color: var(--cp-accent-dark); cursor: pointer; font-weight: 500; padding: 2px 4px; border-radius: 4px; }
+.entry-folder:hover { background: color-mix(in srgb, var(--cp-accent) 14%, transparent); text-decoration: underline; }
 .copy-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 4px 0; }
 /* Prominent call-to-action button (Fluent buttons are control-height by default). */
 .cp-cta::part(control) { height: 46px; padding: 0 36px; font-size: 15px; font-weight: 600; }

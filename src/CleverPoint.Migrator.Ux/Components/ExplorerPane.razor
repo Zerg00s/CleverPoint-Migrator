@@ -47,16 +47,41 @@
         }
         else if (CurrentList is not null)
         {
+            <div class="exp-crumbs">
+                @for (var i = 0; i < _crumbs.Count; i++)
+                {
+                    var idx = i;
+                    <span class="crumb @(idx == _crumbs.Count - 1 ? "current" : "")"
+                          role="button" @onclick="@(() => NavigateToCrumb(idx))">@_crumbs[idx].Name</span>
+                    @if (idx < _crumbs.Count - 1)
+                    {
+                        <span class="crumb-sep">/</span>
+                    }
+                }
+            </div>
             <div class="cp-scroll" style="height:100%; border:none;">
                 <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
                                 GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1.2fr 1.2fr" : "2fr 1.2fr 1.2fr")" ShowHover="true" Style="width:100%;">
                     @if (IsSource)
                     {
-                        <TemplateColumn><FluentCheckbox @bind-Value="context.Selected" /></TemplateColumn>
+                        <TemplateColumn Title="">
+                            <div @onclick:stopPropagation="true">
+                                <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="@(() => OnEntryTicked(context))"
+                                                Title="Tick to copy this item" />
+                            </div>
+                        </TemplateColumn>
                     }
                     <TemplateColumn Title="Name">
                         <FluentIcon Value="@EntryIcon(context)" Color="Color.Accent" />
-                        <span style="margin-left:6px;">@context.Name</span>
+                        @if (context.IsFolder)
+                        {
+                            <span class="entry-folder" role="button" @onclick="@(() => OpenFolder(context))"
+                                  title="Open this folder">@context.Name</span>
+                        }
+                        else
+                        {
+                            <span style="margin-left:6px;">@context.Name</span>
+                        }
                     </TemplateColumn>
                     <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" />
                     <PropertyColumn Property="@(i => i.ModifiedBy)" Title="Modified by" Sortable="true" />
@@ -98,10 +123,29 @@
     private List<SpFolderEntry> _items = new();
     private List<string> _siteChoices = new();
 
+    // Folder navigation within an open library. Crumbs are (display name, folder
+    // server-relative URL); the last crumb is the folder currently shown.
+    private string _folderUrl = "";
+    private readonly List<(string Name, string Url)> _crumbs = new();
+
+    // Selection persists across folder navigation (it spans folders), so it lives
+    // in sets keyed by what the engine needs: paths for libraries, IDs for lists.
+    private readonly HashSet<string> _pickedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<int> _pickedIds = new();
+
     public SpListInfo? CurrentList { get; private set; }
     public string? SiteUrl => _site;
     public SavedConnection? Connection { get; private set; }
-    public List<SpFolderEntry> SelectedEntries => _items.Where(i => i.Selected).ToList();
+    public bool CurrentListIsLibrary => CurrentList?.IsLibrary ?? false;
+
+    /// <summary>Library file/folder paths ticked across all folders (empty = whole list).</summary>
+    public List<string> SelectedPaths => _pickedPaths.ToList();
+
+    /// <summary>Generic-list item IDs ticked (empty = whole list).</summary>
+    public List<int> SelectedItemIds => _pickedIds.ToList();
+
+    /// <summary>Anything ticked inside the open list/library.</summary>
+    public bool HasItemSelection => _pickedPaths.Count > 0 || _pickedIds.Count > 0;
 
     /// <summary>Lists/libraries ticked at the site level for a whole-list batch copy.</summary>
     public List<SpListInfo> SelectedLists => _lists.Where(l => l.Selected).ToList();
@@ -172,24 +216,94 @@
     private async Task OpenList(SpListInfo list)
     {
         if (Connection is null || _site is null) return;
-        _loading = true; _status = $"Loading {list.Title}…"; CurrentList = list; StateHasChanged();
+        CurrentList = list;
+        _pickedPaths.Clear(); _pickedIds.Clear();
+        _crumbs.Clear();
+        _crumbs.Add((list.Title, list.ServerRelativeUrl));
+        _folderUrl = list.ServerRelativeUrl;
+        await LoadCurrentAsync();
+    }
+
+    private async Task OpenFolder(SpFolderEntry entry)
+    {
+        if (!entry.IsFolder || CurrentList is null) return;
+        _crumbs.Add((entry.Name, entry.ServerRelativeUrl));
+        _folderUrl = entry.ServerRelativeUrl;
+        await LoadCurrentAsync();
+    }
+
+    private async Task NavigateToCrumb(int index)
+    {
+        if (index < 0 || index >= _crumbs.Count) return;
+        if (index < _crumbs.Count - 1) _crumbs.RemoveRange(index + 1, _crumbs.Count - index - 1);
+        _folderUrl = _crumbs[index].Url;
+        await LoadCurrentAsync();
+    }
+
+    /// <summary>Loads the current folder (library) or the item list (generic list).</summary>
+    private async Task LoadCurrentAsync()
+    {
+        if (CurrentList is null || Connection is null || _site is null) return;
+        var here = _crumbs.Count > 0 ? _crumbs[^1].Name : CurrentList.Title;
+        _loading = true; _status = $"Loading {here}…"; StateHasChanged();
         try
         {
             var conn = UxConnectionResolver.Resolve(Connection, _site, SignIn);
-            _items = list.IsLibrary
-                ? await Browser.GetFolderAsync(conn, list.ServerRelativeUrl, list.ServerRelativeUrl)
-                : await Browser.GetListItemsAsync(conn, list);
-            var shown = _items.Count >= Browser.MaxItemsLoaded ? $"first {Browser.MaxItemsLoaded:N0}" : $"{_items.Count:N0}";
-            _status = $"{list.Title}: {shown} items"
-                + (IsSource ? "  ·  tick rows to copy just those (none = whole list)" : "");
+            if (CurrentList.IsLibrary)
+            {
+                _items = await Browser.GetFolderAsync(conn, _folderUrl, CurrentList.ServerRelativeUrl);
+                foreach (var e in _items) e.Selected = _pickedPaths.Contains(e.ServerRelativeUrl);
+            }
+            else
+            {
+                _items = await Browser.GetListItemsAsync(conn, CurrentList);
+                foreach (var e in _items) e.Selected = _pickedIds.Contains(e.ItemId);
+            }
+            _status = BuildItemStatus();
         }
-        catch (Exception ex) { _status = $"Could not open {list.Title}: {Short(ex.Message)}"; CurrentList = null; }
+        catch (Exception ex) { _status = $"Could not open {here}: {Short(ex.Message)}"; }
         finally { _loading = false; await OnChanged.InvokeAsync(); }
+    }
+
+    private async Task OnEntryTicked(SpFolderEntry entry)
+    {
+        if (CurrentList?.IsLibrary == true)
+        {
+            if (entry.Selected) _pickedPaths.Add(entry.ServerRelativeUrl);
+            else _pickedPaths.Remove(entry.ServerRelativeUrl);
+        }
+        else
+        {
+            if (entry.Selected) _pickedIds.Add(entry.ItemId);
+            else _pickedIds.Remove(entry.ItemId);
+        }
+        _status = BuildItemStatus();
+        await OnChanged.InvokeAsync();
+    }
+
+    private string BuildItemStatus()
+    {
+        var here = _crumbs.Count > 1 ? _crumbs[^1].Name : (CurrentList?.Title ?? "");
+        var capped = _items.Count >= Browser.MaxItemsLoaded;
+        var count = capped ? $"first {Browser.MaxItemsLoaded:N0} shown" : $"{_items.Count:N0} items";
+        var picked = _pickedPaths.Count + _pickedIds.Count;
+        var s = $"{here}: {count}";
+        if (!IsSource) return s;
+        s += picked > 0
+            ? $"  ·  {picked} selected to copy"
+            : (CurrentList?.IsLibrary == true
+                ? "  ·  open folders to browse, tick items to copy (none = whole library)"
+                : "  ·  tick items to copy (none = whole list)");
+        if (capped) s += "  ·  open a folder to narrow down";
+        return s;
     }
 
     private async Task BackToLists()
     {
-        CurrentList = null; _items.Clear(); _status = $"{_lists.Count} lists and libraries";
+        CurrentList = null; _items.Clear(); _crumbs.Clear();
+        _pickedPaths.Clear(); _pickedIds.Clear();
+        _status = $"{_lists.Count} lists and libraries"
+            + (IsSource ? "  ·  tick several to copy them all, or click one to open it" : "");
         await OnChanged.InvokeAsync();
     }
 

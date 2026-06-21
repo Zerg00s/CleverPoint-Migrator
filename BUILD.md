@@ -85,3 +85,25 @@ dotnet build src\CleverPoint.Migrator.SignInHelper
 App + certificate connections need no helper (they authenticate silently). On
 Linux/WSL the helper can't run (WebView2 is Windows-only), so use app + certificate
 there.
+
+## Seeding mock run history (for UI testing)
+
+To exercise the Run History screen at scale, seed 1000 mock runs into the app's
+history database:
+
+```
+REM Windows (writes to %AppData%\CleverPoint Migrator\history.db automatically):
+cd CleverPoint-Migrator\tools\CleverPoint.Migrator.TestRunner
+dotnet run -- seed-history
+```
+
+From WSL, point it at the Windows database explicitly:
+
+```bash
+CP_HISTORY_DB="/mnt/c/Users/<you>/AppData/Roaming/CleverPoint Migrator/history.db" \
+  dotnet run --project tools/CleverPoint.Migrator.TestRunner -- seed-history
+```
+
+The mock runs vary in status, engine, sites, lists, dates and item counts, and
+each carries a few log rows so the run-detail view has content. They are added
+alongside any real runs; clear them later from the app or by deleting the DB.

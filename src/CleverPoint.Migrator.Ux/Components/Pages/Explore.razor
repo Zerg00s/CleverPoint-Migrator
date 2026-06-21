@@ -2,6 +2,7 @@
 @namespace CleverPoint.Migrator.Ux.Components.Pages
 @inject NavigationManager Nav
 @inject IToastService Toasts
+@inject PendingMigration Pending
 
 <div class="page-head">
     <h1>Copy</h1>
@@ -44,19 +45,23 @@
         }
 
         // Ticked lists take priority: copy each whole list/library in one batch.
-        // Otherwise fall back to the open list (with optional per-item selection).
+        // Otherwise use the open list, carrying any ticked files/folders/items.
+        Pending.Reset(_source.SiteUrl, _target.SiteUrl);
         var ticked = _source.SelectedLists;
-        string lists;
-        int? items = null;
         if (ticked.Count > 0)
         {
-            lists = string.Join("|", ticked.Select(l => l.Title));
+            foreach (var l in ticked)
+                Pending.Jobs.Add(new PendingJob { SourceListTitle = l.Title, IsLibrary = l.IsLibrary });
         }
         else if (_source.CurrentList is not null)
         {
-            lists = _source.CurrentList.Title;
-            var selected = _source.SelectedEntries;
-            if (selected.Count > 0) items = selected.Count;
+            Pending.Jobs.Add(new PendingJob
+            {
+                SourceListTitle = _source.CurrentList.Title,
+                IsLibrary = _source.CurrentListIsLibrary,
+                SelectedPaths = _source.SelectedPaths,
+                SelectedItemIds = _source.SelectedItemIds,
+            });
         }
         else
         {
@@ -64,9 +69,6 @@
             return;
         }
 
-        var q = $"?src={Uri.EscapeDataString(_source.SiteUrl)}&tgt={Uri.EscapeDataString(_target.SiteUrl)}"
-              + $"&lists={Uri.EscapeDataString(lists)}";
-        if (items is not null) q += $"&items={items}";
-        Nav.NavigateTo("/wizard" + q);
+        Nav.NavigateTo("/wizard");
     }
 }

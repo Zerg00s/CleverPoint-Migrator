@@ -77,8 +77,10 @@ public static class Program
             ["versions"] = Scenarios.VersionTests.RunAsync,
             ["bench"] = Scenarios.BenchmarkTests.RunAsync,
             ["browse-lmas"] = Scenarios.BatchAndBrowseTests.BrowseLargeLibFixAsync,
+            ["browse-nav"] = Scenarios.BatchAndBrowseTests.FolderNavAsync,
             ["batch"] = Scenarios.BatchAndBrowseTests.BatchSameTenantAsync,
             ["batch-cross"] = Scenarios.BatchAndBrowseTests.BatchCrossTenantAsync,
+            ["seed-history"] = Scenarios.SeedHistoryTests.RunAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();

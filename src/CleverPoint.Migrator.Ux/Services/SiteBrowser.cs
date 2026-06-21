@@ -66,7 +66,11 @@ public class SiteBrowser
         return webs;
     }
 
-    /// <summary>Folder/library contents. Pages via RenderListDataAsStream up to MaxItemsLoaded.</summary>
+    /// <summary>
+    /// Contents of a single folder (direct children only, so the explorer can
+    /// drill in one level at a time). Pages via RenderListDataAsStream up to
+    /// MaxItemsLoaded. Pass the list root to list the library's top level.
+    /// </summary>
     public async Task<List<SpFolderEntry>> GetFolderAsync(SpConnection conn, string folderServerRelativeUrl, string listServerRelativeUrl)
     {
         var entries = new List<SpFolderEntry>();
@@ -81,10 +85,12 @@ public class SiteBrowser
                     RenderOptions = 2,
                     FolderServerRelativeUrl = folderServerRelativeUrl,
                     Paging = paging,
-                    // No <OrderBy>: sorting on the non-indexed FileLeafRef across a library
-                    // past the 5000-row list-view threshold returns HTTP 500. Paging by the
-                    // default (indexed) order is threshold-safe; we sort client-side below.
-                    ViewXml = "<View Scope='RecursiveAll'><Query></Query>"
+                    // Default scope (NOT RecursiveAll) returns just this folder's direct
+                    // children — files and subfolders — which is what folder-by-folder
+                    // navigation needs. No <OrderBy>: sorting on the non-indexed
+                    // FileLeafRef past the 5000-row threshold returns HTTP 500; the
+                    // default (indexed) paging order is threshold-safe and we sort below.
+                    ViewXml = "<View><Query></Query>"
                         + "<ViewFields><FieldRef Name='FileLeafRef'/><FieldRef Name='FileRef'/><FieldRef Name='FSObjType'/><FieldRef Name='File_x0020_Size'/>"
                         + "<FieldRef Name='Created'/><FieldRef Name='Modified'/><FieldRef Name='Author'/><FieldRef Name='Editor'/></ViewFields>"
                         + "<RowLimit Paged='TRUE'>500</RowLimit></View>",
