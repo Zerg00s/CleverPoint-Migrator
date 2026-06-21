@@ -84,10 +84,18 @@
     <div class="grid cols-2" style="gap:14px 28px; margin-bottom:6px;">
         <div class="field">
             <span class="field-label">Copy mode</span>
-            <FluentSelect TOption="string" @bind-Value="_copyMode" Style="width:100%;" Disabled="_running">
-                <FluentOption Value="full">Structure + content (recreate the list, then copy items)</FluentOption>
-                <FluentOption Value="content">Content only (target list already exists)</FluentOption>
-            </FluentSelect>
+            @if (_lockContentOnly)
+            {
+                <div class="ro-value">Content only</div>
+                <span class="hint">You picked specific items, so they're added to the target list (no structure to recreate).</span>
+            }
+            else
+            {
+                <FluentSelect TOption="string" @bind-Value="_copyMode" Style="width:100%;" Disabled="_running">
+                    <FluentOption Value="full">Structure + content (recreate the list, then copy items)</FluentOption>
+                    <FluentOption Value="content">Content only (target list already exists)</FluentOption>
+                </FluentSelect>
+            }
         </div>
         <div class="field">
             <span class="field-label">Engine</span>
@@ -157,6 +165,7 @@
 
     private string _src = "", _tgt = "", _list = "", _taskName = "", _targetTitle = "", _targetUrl = "", _engine = "Classic";
     private string _copyMode = "full";
+    private bool _lockContentOnly;
     private int _maxVersions = 1;
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
@@ -190,6 +199,10 @@
                 .Select(t => new PendingJob { SourceListTitle = t }).ToList();
         }
         _batch = _jobs.Count > 1;
+        // Picking specific files/folders/items means there's no structure to recreate;
+        // lock to content-only so "Structure + content" isn't offered.
+        _lockContentOnly = _jobs.Any(j => !j.WholeList);
+        if (_lockContentOnly) _copyMode = "content";
         _list = _jobs.FirstOrDefault()?.SourceListTitle ?? "";
         _sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
         _targetTitle = _sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
