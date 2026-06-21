@@ -11,6 +11,14 @@
 </div>
 
 <div class="explorer">
+    @if (_showArrow)
+    {
+        <svg class="explorer-arrow" viewBox="0 0 240 60" fill="none" stroke="currentColor"
+             stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="30" x2="210" y2="30" />
+            <polyline points="182,8 216,30 182,52" />
+        </svg>
+    }
     <ExplorerPane @ref="_source" Role="Source" IsSource="true" OnChanged="OnPaneChanged" />
     <ExplorerPane @ref="_target" Role="Target" IsSource="false" OnChanged="OnPaneChanged" OnDropRequested="OnDropToTarget" />
 </div>
@@ -25,10 +33,13 @@
     private ExplorerPane? _source;
     private ExplorerPane? _target;
     private bool _canCopy;
+    private bool _showArrow = true;
 
     private void OnPaneChanged()
     {
         _canCopy = (_source?.IsReady ?? false) && (_target?.IsReady ?? false);
+        // Subtle direction hint, only while nothing is connected yet.
+        _showArrow = !(_source?.HasConnection ?? false) && !(_target?.HasConnection ?? false);
         StateHasChanged();
     }
 

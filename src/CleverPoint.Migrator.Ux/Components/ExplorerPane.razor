@@ -173,6 +173,7 @@
     public string? SiteUrl => _site;
     public SavedConnection? Connection { get; private set; }
     public bool CurrentListIsLibrary => CurrentList?.IsLibrary ?? false;
+    public bool HasConnection => Connection is not null;
 
     /// <summary>Library file/folder paths ticked across all folders (empty = whole list).</summary>
     public List<string> SelectedPaths => _pickedPaths.ToList();
