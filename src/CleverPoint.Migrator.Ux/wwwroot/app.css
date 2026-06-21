@@ -89,6 +89,8 @@ html, body {
     opacity: .45; padding: 14px 12px 6px 12px;
 }
 .nav-section:first-child { padding-top: 4px; }
+.nav-top-gap { height: 6px; }
+.nav-divider { height: 1px; background: var(--neutral-stroke-divider-rest, #e1e1e1); margin: 12px 8px; opacity: .7; }
 .nav-item {
     display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin: 2px 0;
     border-radius: 8px; color: var(--neutral-foreground-rest, #242424); text-decoration: none;

@@ -19,7 +19,7 @@
                 <span class="app-brand-mark">C</span>
                 <div class="app-brand-text">
                     <span class="app-brand-title">CleverPoint Migrator</span>
-                    <span class="app-brand-sub">SharePoint Online migration</span>
+                    <span class="app-brand-sub">Friendly SharePoint Online Migrator</span>
                 </div>
             </div>
         </div>
@@ -41,7 +41,7 @@
 
     <div class="app-main">
         <nav class="app-nav @(_navCollapsed ? "collapsed" : "")">
-            <div class="nav-section">Navigation</div>
+            <div class="nav-top-gap"></div>
             <NavLink class="nav-item" href="" Match="NavLinkMatch.All" ActiveClass="active">
                 <FluentIcon Value="@(new Icons.Regular.Size20.Home())" /> <span>Home</span>
             </NavLink>
@@ -55,9 +55,9 @@
                 <FluentIcon Value="@(new Icons.Regular.Size20.Settings())" /> <span>Settings</span>
             </NavLink>
 
-            <div class="nav-section">Help</div>
+            <div class="nav-divider"></div>
             <div class="nav-item" role="link" @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator"))">
-                <FluentIcon Value="@(new Icons.Regular.Size20.Link())" /> <span>GitHub project</span>
+                <FluentIcon Value="@(new Icons.Regular.Size20.Link())" /> <span>View on GitHub</span>
                 <FluentIcon Value="@(new Icons.Regular.Size16.Open())" Class="nav-ext" Title="Opens in your browser" />
             </div>
             <div class="nav-item" role="link" @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator/issues"))">

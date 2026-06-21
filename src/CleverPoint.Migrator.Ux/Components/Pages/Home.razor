@@ -11,10 +11,6 @@
             <FluentIcon Value="@(new Icons.Regular.Size48.PlugConnected())" Color="Color.Accent" />
         </div>
         <h1 style="margin:0;">Welcome to CleverPoint Migrator</h1>
-        <p class="hint" style="font-size:14px; max-width:520px;">
-            Connect a SharePoint tenant to start copying lists, libraries and files between sites and tenants
-            with full metadata fidelity.
-        </p>
         <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Add())"
                       @onclick="@(() => Nav.NavigateTo("/settings"))">Add your first connection</FluentButton>
     </div>
