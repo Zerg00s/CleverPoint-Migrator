@@ -18,6 +18,19 @@ public class HistoryService
         }
     }
 
+    public MigrationRun? GetRun(long runId)
+    {
+        try
+        {
+            using var store = new HistoryStore(UxSettings.HistoryDbPath);
+            return store.GetRun(runId);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public List<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> GetItems(long runId)
     {
         try

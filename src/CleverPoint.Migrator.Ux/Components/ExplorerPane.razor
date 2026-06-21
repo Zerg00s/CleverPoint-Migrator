@@ -8,14 +8,13 @@
     <div class="exp-pane-head">
         <span class="role">@Role</span>
         <div class="exp-row">
-            <FluentCombobox TOption="string" @bind-Value="_site" Style="flex:1 1 auto;" Autocomplete="ComboboxAutocomplete.Both"
-                            Items="@_siteChoices" OptionText="@(s => s)" OptionValue="@(s => s)" Placeholder="Search or pick a connection…" />
+            <FluentAutocomplete TOption="string" Style="flex:1 1 auto;" Width="100%"
+                                Placeholder="Search or pick a connection…"
+                                Items="@_siteChoices" OptionText="@(s => s)"
+                                OnOptionsSearch="OnSiteSearch" MaximumSelectedOptions="1"
+                                @bind-SelectedOptions="_selectedSites" @bind-SelectedOptions:after="OnSiteSelected" />
             <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Add())" Title="Add a connection" @onclick="AddConnection" />
-            <FluentButton Appearance="Appearance.Accent" Loading="_loading" @onclick="OpenAsync">Open</FluentButton>
-            @if (CurrentList is not null)
-            {
-                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowUp())" Title="Back to lists" @onclick="BackToLists" />
-            }
+            <FluentButton Appearance="Appearance.Accent" Loading="_loading" @onclick="OpenAsync" Title="Open the selected connection">Open</FluentButton>
         </div>
     </div>
 
@@ -28,6 +27,7 @@
         {
             <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()"
                             GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1fr" : "2fr 1fr")" ShowHover="true" Style="width:100%;"
+                            RowClass="@(_ => "click-row")"
                             OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is not null) await OpenList(r.Item); })">
                 @if (IsSource)
                 {
@@ -48,6 +48,11 @@
         else if (CurrentList is not null)
         {
             <div class="exp-crumbs">
+                <span class="crumb-up" role="button" @onclick="GoUp"
+                      title="@(_crumbs.Count > 1 ? "Up one folder" : "Back to all lists")">
+                    <FluentIcon Value="@(new Icons.Regular.Size16.ArrowUp())" /> Up
+                </span>
+                <span class="crumb-sep">|</span>
                 @for (var i = 0; i < _crumbs.Count; i++)
                 {
                     var idx = i;
@@ -61,7 +66,9 @@
             </div>
             <div class="cp-scroll" style="height:100%; border:none;">
                 <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
-                                GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1.2fr 1.2fr" : "2fr 1.2fr 1.2fr")" ShowHover="true" Style="width:100%;">
+                                GridTemplateColumns="@(IsSource ? "0.3fr 2fr 1.2fr 1.2fr" : "2fr 1.2fr 1.2fr")" ShowHover="true" Style="width:100%;"
+                                RowClass="@(e => e.IsFolder ? "folder-row" : "")"
+                                OnRowClick="@(async (FluentDataGridRow<SpFolderEntry> r) => { if (r.Item?.IsFolder == true) await OpenFolder(r.Item); })">
                     @if (IsSource)
                     {
                         <TemplateColumn Title="">
@@ -73,14 +80,10 @@
                     }
                     <TemplateColumn Title="Name">
                         <FluentIcon Value="@EntryIcon(context)" Color="Color.Accent" />
+                        <span class="@(context.IsFolder ? "entry-folder" : "")" style="margin-left:6px;">@context.Name</span>
                         @if (context.IsFolder)
                         {
-                            <span class="entry-folder" role="button" @onclick="@(() => OpenFolder(context))"
-                                  title="Open this folder">@context.Name</span>
-                        }
-                        else
-                        {
-                            <span style="margin-left:6px;">@context.Name</span>
+                            <FluentIcon Value="@(new Icons.Regular.Size16.ChevronRight())" Class="entry-go" Title="Open" />
                         }
                     </TemplateColumn>
                     <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" />
@@ -122,6 +125,7 @@
     private List<SpListInfo> _lists = new();
     private List<SpFolderEntry> _items = new();
     private List<string> _siteChoices = new();
+    private IEnumerable<string> _selectedSites = new List<string>();
 
     // Folder navigation within an open library. Crumbs are (display name, folder
     // server-relative URL); the last crumb is the folder currently shown.
@@ -201,6 +205,30 @@
         await OnChanged.InvokeAsync();
     }
 
+    // Contains-search (not just prefix): match anywhere in the connection URL.
+    private void OnSiteSearch(OptionsSearchEventArgs<string> e)
+    {
+        var t = e.Text?.Trim() ?? "";
+        e.Items = string.IsNullOrEmpty(t)
+            ? _siteChoices
+            : _siteChoices.Where(s => s.Contains(t, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Picking a connection from the list opens it straight away (no Open click needed).
+    private async Task OnSiteSelected()
+    {
+        var pick = _selectedSites?.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(pick) || pick == _site) return;
+        _site = pick;
+        await OpenAsync();
+    }
+
+    private async Task GoUp()
+    {
+        if (_crumbs.Count > 1) await NavigateToCrumb(_crumbs.Count - 2);
+        else await BackToLists();
+    }
+
     private async Task AddConnection()
     {
         if (_addDialog is not null) await _addDialog.OpenAsync();
@@ -210,7 +238,8 @@
     {
         _siteChoices = Settings.Connections.Select(x => x.SiteUrl).ToList();
         _site = c.SiteUrl;
-        await OnChanged.InvokeAsync();
+        _selectedSites = new List<string> { c.SiteUrl };
+        await OpenAsync();
     }
 
     private async Task OpenList(SpListInfo list)

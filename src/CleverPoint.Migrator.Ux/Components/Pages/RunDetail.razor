@@ -1,0 +1,148 @@
+@page "/run/{Id:long}"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@inject HistoryService History
+@inject NavigationManager Nav
+
+<div class="page-head">
+    <h1>Run #@Id</h1>
+</div>
+
+@if (_run is null)
+{
+    <FluentCard>
+        <span class="hint">That run could not be found. It may have been deleted.</span>
+        <div style="margin-top:14px;">
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
+                          @onclick="@(() => Nav.NavigateTo("/history"))">Back to Run History</FluentButton>
+        </div>
+    </FluentCard>
+}
+else
+{
+    <FluentCard>
+        <div class="run-head">
+            <div class="run-title">
+                <span class="status-pill @StatusClass(_run)">@Pretty(_run.Status)</span>
+                <span class="run-name">@_run.Name</span>
+            </div>
+            <div class="btn-row">
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowSwap())" @onclick="RunAgain">Run again</FluentButton>
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
+                              @onclick="@(() => Nav.NavigateTo("/history"))">Back</FluentButton>
+            </div>
+        </div>
+
+        <div class="run-meta">
+            <div><span class="field-label">Source</span><span>@_run.SourceUrl</span><span class="hint">@_run.SourceList</span></div>
+            <div><span class="field-label">Target</span><span>@_run.TargetUrl</span><span class="hint">@_run.TargetList</span></div>
+            <div><span class="field-label">Engine</span><span>@(_run.Engine == "MigrationApi" ? "Migration API" : "Classic copy")</span></div>
+            <div><span class="field-label">Started</span><span>@_run.StartedUtc.ToLocalTime().ToString("g")</span></div>
+            <div><span class="field-label">Finished</span><span>@(_run.FinishedUtc?.ToLocalTime().ToString("g") ?? "—")</span></div>
+            <div><span class="field-label">Duration</span><span>@Duration(_run)</span></div>
+        </div>
+
+        <div class="run-counts">
+            <span class="count ok">@_run.Copied copied</span>
+            <span class="count">@_run.Skipped skipped</span>
+            <span class="count warn">@_run.Warnings warnings</span>
+            <span class="count fail">@_run.Failed failed</span>
+        </div>
+    </FluentCard>
+
+    <FluentCard style="margin-top:16px;">
+        <FluentToolbar Style="width:100%;">
+            <span class="section-title" style="margin:0;">Log · @_filteredItems.Count of @_items.Count items</span>
+            <FluentSpacer />
+            <FluentSearch @bind-Value="_logFilter" @bind-Value:after="ApplyLog" Immediate="true" ImmediateDelay="200" Placeholder="Filter the log…" />
+            <FluentSelect TOption="string" @bind-Value="_logStatus" @bind-Value:after="ApplyLog"
+                          Items="@_logStatuses" OptionText="@(s => s)" OptionValue="@(s => s)" Style="min-width:160px;" />
+        </FluentToolbar>
+
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:220px; margin-top:12px;">
+            @if (_filteredItems.Count == 0)
+            {
+                <div style="padding:40px 16px;"><span class="hint">No log rows match.</span></div>
+            }
+            else
+            {
+                <FluentDataGrid Items="@_filteredItems.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
+                                GridTemplateColumns="0.7fr 2.6fr 0.9fr 2.2fr 1.1fr" ShowHover="true" Style="width:100%;">
+                    <PropertyColumn Property="@(i => i.ItemType)" Title="Type" />
+                    <PropertyColumn Property="@(i => i.SourcePath)" Title="Item" />
+                    <TemplateColumn Title="Status">
+                        <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
+                    </TemplateColumn>
+                    <PropertyColumn Property="@(i => i.Message)" Title="Detail" />
+                    <PropertyColumn Property="@(i => i.WhenUtc.HasValue ? i.WhenUtc.Value.ToLocalTime().ToString("g") : "")" Title="When" />
+                </FluentDataGrid>
+            }
+        </div>
+    </FluentCard>
+}
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private Core.History.MigrationRun? _run;
+    private List<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> _items = new();
+    private List<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> _filteredItems = new();
+    private string _logFilter = "";
+    private string _logStatus = "All";
+    private readonly string[] _logStatuses = { "All", "Copied", "Skipped", "Warning", "Failed" };
+
+    protected override void OnParametersSet()
+    {
+        _run = History.GetRun(Id);
+        _items = _run is null ? new() : History.GetItems(Id);
+        ApplyLog();
+    }
+
+    private void ApplyLog()
+    {
+        IEnumerable<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> q = _items;
+        if (!string.IsNullOrWhiteSpace(_logFilter))
+        {
+            var f = _logFilter.Trim();
+            q = q.Where(i => i.SourcePath.Contains(f, StringComparison.OrdinalIgnoreCase)
+                          || (i.Message?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
+                          || i.ItemType.Contains(f, StringComparison.OrdinalIgnoreCase));
+        }
+        if (_logStatus != "All")
+            q = q.Where(i => i.Status == _logStatus);
+        _filteredItems = q.ToList();
+    }
+
+    private void RunAgain()
+    {
+        if (_run is null) return;
+        var q = $"?src={Uri.EscapeDataString(_run.SourceUrl)}&tgt={Uri.EscapeDataString(_run.TargetUrl)}"
+              + $"&lists={Uri.EscapeDataString(_run.SourceList)}";
+        Nav.NavigateTo("/wizard" + q);
+    }
+
+    private static string Duration(Core.History.MigrationRun r)
+    {
+        if (r.FinishedUtc is not { } f) return "running…";
+        var d = f - r.StartedUtc;
+        return d.TotalHours >= 1 ? $"{(int)d.TotalHours}:{d.Minutes:00}:{d.Seconds:00}" : $"{d.Minutes}:{d.Seconds:00}";
+    }
+
+    private static string Pretty(string status) => status == "CompletedWithIssues" ? "Completed with issues" : status;
+
+    private static string StatusClass(Core.History.MigrationRun r) => r.Status switch
+    {
+        "Failed" => "st-failed",
+        "CompletedWithIssues" => "st-issues",
+        "Interrupted" => "st-interrupted",
+        "Running" => "st-running",
+        _ => "st-ok",
+    };
+
+    private static string ItemStatusClass(string status) => status switch
+    {
+        "Failed" => "st-failed",
+        "Warning" => "st-issues",
+        "Skipped" => "st-interrupted",
+        _ => "st-ok",
+    };
+}

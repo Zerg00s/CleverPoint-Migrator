@@ -1,5 +1,6 @@
 @namespace CleverPoint.Migrator.Ux.Components
 @inject HistoryService History
+@inject NavigationManager Nav
 
 <FluentCard>
     <FluentToolbar Style="width:100%;">
@@ -11,48 +12,68 @@
         <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" OnClick="Reload">Refresh</FluentButton>
     </FluentToolbar>
 
-    <div class="cp-grid" style="margin-top:12px;">
-        @if (_view.Count == 0)
-        {
-            <div style="min-height:240px; display:flex; align-items:flex-start; justify-content:center; padding-top:56px;">
-                <span class="hint">No migrations match. Runs you start will appear here.</span>
+    @if (_view.Count == 0)
+    {
+        <div class="cp-grid" style="min-height:200px; display:flex; align-items:flex-start; justify-content:center; padding-top:56px;">
+            <span class="hint">No migrations match. Runs you start will appear here.</span>
+        </div>
+    }
+    else
+    {
+        <div class="runs-foot">
+            <span class="hint">@_view.Count of @_all.Count runs</span>
+            <div class="runs-foot-right">
+                @if (ShowPageSize)
+                {
+                    <span class="hint">Per page</span>
+                    <FluentSelect TOption="string" @bind-Value="_perPage" @bind-Value:after="OnPerPageChanged" Style="width:96px;">
+                        @foreach (var n in _pageSizes)
+                        {
+                            <FluentOption Value="@n.ToString()">@n</FluentOption>
+                        }
+                    </FluentSelect>
+                }
+                <FluentPaginator State="@_pagination">
+                    <SummaryTemplate></SummaryTemplate>
+                </FluentPaginator>
             </div>
-        }
-        else
-        {
+        </div>
+
+        <div class="cp-grid cp-scroll runs-grid" style="@($"max-height: calc(100vh - {(ShowPageSize ? 320 : 360)}px); min-height:200px;")">
             <FluentDataGrid Items="@_view.AsQueryable()" Pagination="@_pagination" ResizableColumns="true"
-                            GridTemplateColumns="0.4fr 1.6fr 1.2fr 1.2fr 0.7fr 1.2fr 1.8fr" ShowHover="true" Style="width:100%;">
+                            GenerateHeader="GenerateHeaderOption.Sticky"
+                            GridTemplateColumns="0.4fr 1.6fr 1.2fr 1.2fr 0.7fr 1.2fr 1.8fr" ShowHover="true" Style="width:100%;"
+                            OnRowClick="@(async (FluentDataGridRow<Core.History.MigrationRun> r) => { await Task.CompletedTask; if (r.Item is not null) Nav.NavigateTo($"/run/{r.Item.Id}"); })">
                 <PropertyColumn Property="@(r => r.Id)" Title="#" Sortable="true" />
                 <PropertyColumn Property="@(r => r.Name)" Title="Name" Sortable="true" />
                 <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" Sortable="true" />
                 <PropertyColumn Property="@(r => r.FinishedUtc.HasValue ? r.FinishedUtc.Value.ToLocalTime().ToString("g") : "")" Title="Finished" />
                 <PropertyColumn Property="@(r => Duration(r))" Title="Duration" />
                 <TemplateColumn Title="Status" Sortable="false">
-                    <FluentBadge BackgroundColor="@StatusColor(context)" Color="white">@Pretty(context.Status)</FluentBadge>
+                    <span class="status-pill @StatusClass(context)">@Pretty(context.Status)</span>
                 </TemplateColumn>
                 <PropertyColumn Property="@(r => $"{r.Copied} copied · {r.Skipped} skipped · {r.Warnings} warn · {r.Failed} failed")" Title="Result" />
             </FluentDataGrid>
-
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
-                <span class="hint">@_view.Count of @_all.Count runs</span>
-                <FluentPaginator State="@_pagination" />
-            </div>
-        }
-    </div>
+        </div>
+    }
 </FluentCard>
 
 @code {
-    [Parameter] public int PageSize { get; set; } = 14;
+    [Parameter] public int PageSize { get; set; } = 50;
+    [Parameter] public bool ShowPageSize { get; set; } = true;
 
     private List<Core.History.MigrationRun> _all = new();
     private List<Core.History.MigrationRun> _view = new();
     private string _filter = "";
     private string _statusFilter = "All statuses";
     private readonly string[] _statuses = { "All statuses", "Completed", "Completed with issues", "Interrupted", "Failed", "Running" };
-    private PaginationState _pagination = new() { ItemsPerPage = 14 };
+    private readonly int[] _pageSizes = { 25, 50, 100, 250, 500, 1000 };
+    private string _perPage = "50";
+    private PaginationState _pagination = new() { ItemsPerPage = 50 };
 
     protected override void OnInitialized()
     {
+        _perPage = PageSize.ToString();
         _pagination = new PaginationState { ItemsPerPage = PageSize };
         Reload();
     }
@@ -61,6 +82,12 @@
     {
         _all = History.GetRuns();
         Apply();
+    }
+
+    private void OnPerPageChanged()
+    {
+        if (int.TryParse(_perPage, out var n) && n > 0)
+            _pagination = new PaginationState { ItemsPerPage = n };
     }
 
     private void Apply()
@@ -88,7 +115,13 @@
 
     private static string Pretty(string status) => status == "CompletedWithIssues" ? "Completed with issues" : status;
 
-    private static string StatusColor(Core.History.MigrationRun r) =>
-        r.Failed > 0 || r.Status == "Failed" ? "#b02a37"
-        : r.Warnings > 0 || r.Status is "CompletedWithIssues" or "Interrupted" ? "#b8860b" : "#1e7e34";
+    // Pill color follows the status label so the two never disagree.
+    private static string StatusClass(Core.History.MigrationRun r) => r.Status switch
+    {
+        "Failed" => "st-failed",
+        "CompletedWithIssues" => "st-issues",
+        "Interrupted" => "st-interrupted",
+        "Running" => "st-running",
+        _ => "st-ok",
+    };
 }

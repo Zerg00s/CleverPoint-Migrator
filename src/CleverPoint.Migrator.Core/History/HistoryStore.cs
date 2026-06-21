@@ -128,29 +128,40 @@ public class HistoryStore : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    private const string RunColumns = "id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc,scope_json";
+
     public List<MigrationRun> GetRuns(int limit = 200)
     {
         var runs = new List<MigrationRun>();
         using var cmd = _db.CreateCommand();
-        cmd.CommandText = "SELECT id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc,scope_json FROM runs ORDER BY id DESC LIMIT $l";
+        cmd.CommandText = $"SELECT {RunColumns} FROM runs ORDER BY id DESC LIMIT $l";
         cmd.Parameters.AddWithValue("$l", limit);
         using var r = cmd.ExecuteReader();
-        while (r.Read())
-        {
-            runs.Add(new MigrationRun
-            {
-                Id = r.GetInt64(0), Name = r.GetString(1), SourceUrl = r.GetString(2), SourceList = r.GetString(3),
-                TargetUrl = r.GetString(4), TargetList = r.GetString(5), Engine = r.GetString(6),
-                StartedUtc = DateTime.Parse(r.GetString(7)).ToUniversalTime(),
-                FinishedUtc = r.IsDBNull(8) ? null : DateTime.Parse(r.GetString(8)).ToUniversalTime(),
-                Status = r.GetString(9), Copied = r.GetInt32(10), Skipped = r.GetInt32(11),
-                Warnings = r.GetInt32(12), Failed = r.GetInt32(13),
-                MaxSourceModifiedUtc = r.IsDBNull(14) ? null : DateTime.Parse(r.GetString(14)).ToUniversalTime(),
-                ScopeJson = r.IsDBNull(15) ? null : r.GetString(15),
-            });
-        }
+        while (r.Read()) runs.Add(MapRun(r));
         return runs;
     }
+
+    /// <summary>A single run by id (history detail view), or null if not found.</summary>
+    public MigrationRun? GetRun(long id)
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = $"SELECT {RunColumns} FROM runs WHERE id=$id";
+        cmd.Parameters.AddWithValue("$id", id);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? MapRun(r) : null;
+    }
+
+    private static MigrationRun MapRun(SqliteDataReader r) => new()
+    {
+        Id = r.GetInt64(0), Name = r.GetString(1), SourceUrl = r.GetString(2), SourceList = r.GetString(3),
+        TargetUrl = r.GetString(4), TargetList = r.GetString(5), Engine = r.GetString(6),
+        StartedUtc = DateTime.Parse(r.GetString(7)).ToUniversalTime(),
+        FinishedUtc = r.IsDBNull(8) ? null : DateTime.Parse(r.GetString(8)).ToUniversalTime(),
+        Status = r.GetString(9), Copied = r.GetInt32(10), Skipped = r.GetInt32(11),
+        Warnings = r.GetInt32(12), Failed = r.GetInt32(13),
+        MaxSourceModifiedUtc = r.IsDBNull(14) ? null : DateTime.Parse(r.GetString(14)).ToUniversalTime(),
+        ScopeJson = r.IsDBNull(15) ? null : r.GetString(15),
+    };
 
     /// <summary>The most recent run for a source/target pair (delta baseline + resume detection).</summary>
     public MigrationRun? GetLastRun(string sourceUrl, string sourceList, string targetUrl, string targetList) =>
