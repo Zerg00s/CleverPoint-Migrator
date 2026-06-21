@@ -32,7 +32,7 @@ public class UxMigrationService
     /// <summary>Runs one list/library copy. Returns the final result and status.</summary>
     public async Task<(CopyResult Result, string Status)> RunAsync(
         string sourceSite, string targetSite, string sourceListTitle, CopyOptions options,
-        Action<ItemCopyRecord> onRecord, CancellationToken ct)
+        Action<ItemCopyRecord> onRecord, CancellationToken ct, string engine = "Classic")
     {
         var sConn = UxConnectionResolver.Find(_settings, sourceSite)!;
         var tConn = UxConnectionResolver.Find(_settings, targetSite)!;
@@ -45,7 +45,7 @@ public class UxMigrationService
             Name = $"{sourceListTitle} -> {options.TargetListTitle}",
             SourceUrl = sourceSite, SourceList = sourceListTitle,
             TargetUrl = targetSite, TargetList = options.TargetListTitle,
-            Engine = "Classic",
+            Engine = engine == "MigrationApi" ? "MigrationApi" : "Classic",
         });
 
         var result = new CopyResult();
@@ -59,8 +59,21 @@ public class UxMigrationService
         var status = "Completed";
         try
         {
-            await Task.Run(() => CopyEngine.CopyListAsync(source, target, sourceListTitle, options, null, ct, result), ct);
-            if (result.Failed > 0) status = "CompletedWithIssues";
+            if (engine == "MigrationApi")
+            {
+                // The Migration API engine returns its records at the end; replay
+                // them into the live log + history (it doesn't stream like Classic).
+                var apiResult = await Task.Run(() =>
+                    new Core.MigrationApi.MigrationApiEngine(source, target).CopyLibraryAsync(sourceListTitle, options), ct);
+                foreach (var rec in apiResult.Records)
+                    result.Add(rec.ItemType, rec.SourcePath, rec.TargetPath, rec.Status, rec.Message);
+                if (result.Failed > 0) status = "CompletedWithIssues";
+            }
+            else
+            {
+                await Task.Run(() => CopyEngine.CopyListAsync(source, target, sourceListTitle, options, null, ct, result), ct);
+                if (result.Failed > 0) status = "CompletedWithIssues";
+            }
         }
         catch (OperationCanceledException)
         {

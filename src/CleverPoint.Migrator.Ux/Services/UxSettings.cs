@@ -31,6 +31,14 @@ public class UxSettings
     public int CacheMinutes { get; set; } = 15;
     public bool SelfHealAutoRetry { get; set; }
     public bool SelfHealRepairCorrupt { get; set; }
+    /// <summary>How many automatic incremental retry passes after a run with failures (1-5).</summary>
+    public int SelfHealMaxAttempts { get; set; } = 5;
+    /// <summary>Default engine for new migrations: "Classic" or "MigrationApi".</summary>
+    public string DefaultEngine { get; set; } = "Classic";
+    /// <summary>Default file-version depth for new migrations (1, 5, 10, 50).</summary>
+    public int DefaultMaxVersions { get; set; } = 1;
+    /// <summary>"Light" or "Dark"; persisted so the theme survives restarts even if WebView localStorage is wiped.</summary>
+    public string Theme { get; set; } = "Light";
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
@@ -76,6 +84,10 @@ public class UxSettings
                     CacheMinutes = loaded.CacheMinutes;
                     SelfHealAutoRetry = loaded.SelfHealAutoRetry;
                     SelfHealRepairCorrupt = loaded.SelfHealRepairCorrupt;
+                    SelfHealMaxAttempts = loaded.SelfHealMaxAttempts is >= 1 and <= 5 ? loaded.SelfHealMaxAttempts : 5;
+                    DefaultEngine = string.IsNullOrWhiteSpace(loaded.DefaultEngine) ? "Classic" : loaded.DefaultEngine;
+                    DefaultMaxVersions = loaded.DefaultMaxVersions <= 0 ? 1 : loaded.DefaultMaxVersions;
+                    Theme = string.IsNullOrWhiteSpace(loaded.Theme) ? "Light" : loaded.Theme;
                 }
             }
         }

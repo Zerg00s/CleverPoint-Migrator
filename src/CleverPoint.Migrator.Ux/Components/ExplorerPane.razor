@@ -7,8 +7,9 @@
     <div class="exp-pane-head">
         <span class="role">@Role</span>
         <div class="exp-row">
-            <FluentSelect TOption="string" @bind-Value="_site" Style="flex:1 1 auto;"
-                          Items="@_siteChoices" OptionText="@(s => s)" OptionValue="@(s => s)" Placeholder="Choose a connection…" />
+            <FluentCombobox TOption="string" @bind-Value="_site" Style="flex:1 1 auto;" Autocomplete="ComboboxAutocomplete.Both"
+                            Items="@_siteChoices" OptionText="@(s => s)" OptionValue="@(s => s)" Placeholder="Search or pick a connection…" />
+            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Add())" Title="Add a connection" @onclick="AddConnection" />
             <FluentButton Appearance="Appearance.Accent" Loading="_loading" @onclick="OpenAsync">Open</FluentButton>
             @if (CurrentList is not null)
             {
@@ -62,9 +63,17 @@
     <div class="exp-status">@_status</div>
 </div>
 
+<AddConnectionDialog @ref="_addDialog" OnAdded="OnConnectionAdded" />
+
 @code {
     [Parameter] public string Role { get; set; } = "Source";
     [Parameter] public bool IsSource { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private AddConnectionDialog? _addDialog;
+
+    /// <summary>This pane has an open list (source) or an open connection (target).</summary>
+    public bool IsReady => IsSource ? CurrentList is not null : !string.IsNullOrWhiteSpace(_site) && Connection is not null;
 
     private string? _site;
     private bool _loading;
@@ -86,7 +95,13 @@
 
     private async Task OpenAsync()
     {
-        if (string.IsNullOrWhiteSpace(_site)) { Toasts.ShowWarning("Choose a connection first."); return; }
+        // With nothing chosen (e.g. no saved connections), Open behaves like the
+        // "+" button so the user can add one on the spot.
+        if (string.IsNullOrWhiteSpace(_site))
+        {
+            await AddConnection();
+            return;
+        }
         Connection = UxConnectionResolver.Find(Settings, _site);
         CurrentList = null;
         _items.Clear();
@@ -94,7 +109,7 @@
         if (!UxConnectionResolver.IsCert(Connection))
         {
             _lists.Clear();
-            _status = "Browser sign-in isn't wired in this build yet — use an app + certificate connection to browse live.";
+            _status = "Browser sign-in isn't wired in this build yet. Use an app + certificate connection to browse live.";
             return;
         }
         _loading = true; _status = "Loading lists…"; StateHasChanged();
@@ -105,7 +120,19 @@
             _status = $"{_lists.Count} lists and libraries";
         }
         catch (Exception ex) { _status = $"Could not open: {Short(ex.Message)}"; }
-        finally { _loading = false; }
+        finally { _loading = false; await OnChanged.InvokeAsync(); }
+    }
+
+    private async Task AddConnection()
+    {
+        if (_addDialog is not null) await _addDialog.OpenAsync();
+    }
+
+    private async Task OnConnectionAdded(SavedConnection c)
+    {
+        _siteChoices = Settings.Connections.Select(x => x.SiteUrl).ToList();
+        _site = c.SiteUrl;
+        await OnChanged.InvokeAsync();
     }
 
     private async Task OpenList(SpListInfo list)
@@ -123,10 +150,14 @@
                 + (IsSource ? "  ·  tick rows to copy just those (none = whole list)" : "");
         }
         catch (Exception ex) { _status = $"Could not open {list.Title}: {Short(ex.Message)}"; CurrentList = null; }
-        finally { _loading = false; }
+        finally { _loading = false; await OnChanged.InvokeAsync(); }
     }
 
-    private void BackToLists() { CurrentList = null; _items.Clear(); _status = $"{_lists.Count} lists and libraries"; }
+    private async Task BackToLists()
+    {
+        CurrentList = null; _items.Clear(); _status = $"{_lists.Count} lists and libraries";
+        await OnChanged.InvokeAsync();
+    }
 
     private static Icon ListIcon(SpListInfo l) => l.IsLibrary
         ? new Icons.Regular.Size20.DocumentMultiple() : new Icons.Regular.Size20.AppsListDetail();

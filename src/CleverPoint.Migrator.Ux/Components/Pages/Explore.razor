@@ -4,23 +4,31 @@
 @inject IToastService Toasts
 
 <div class="page-head">
-    <h1>Explore &amp; copy</h1>
+    <h1>Copy</h1>
     <p>Open a source on the left and a target on the right, tick what to copy, then start the migration.</p>
 </div>
 
 <div class="explorer">
-    <ExplorerPane @ref="_source" Role="Source" IsSource="true" />
-    <ExplorerPane @ref="_target" Role="Target" IsSource="false" />
+    <ExplorerPane @ref="_source" Role="Source" IsSource="true" OnChanged="OnPaneChanged" />
+    <ExplorerPane @ref="_target" Role="Target" IsSource="false" OnChanged="OnPaneChanged" />
 </div>
 
 <div class="copy-bar">
-    <FluentButton Appearance="Appearance.Accent" Style="padding:6px 32px;" IconStart="@(new Icons.Regular.Size20.ArrowSwap())"
-                  @onclick="StartCopy">Copy to target&nbsp;&nbsp;&gt;</FluentButton>
+    <FluentButton Appearance="Appearance.Accent" Class="cp-cta" Disabled="@(!_canCopy)"
+                  IconStart="@(new Icons.Regular.Size24.ArrowSwap())" @onclick="StartCopy"
+                  Title="@(_canCopy ? "Start the migration" : "Open a source list and a target connection first")">Copy to target&nbsp;&nbsp;&gt;</FluentButton>
 </div>
 
 @code {
     private ExplorerPane? _source;
     private ExplorerPane? _target;
+    private bool _canCopy;
+
+    private void OnPaneChanged()
+    {
+        _canCopy = (_source?.IsReady ?? false) && (_target?.IsReady ?? false);
+        StateHasChanged();
+    }
 
     private void StartCopy()
     {

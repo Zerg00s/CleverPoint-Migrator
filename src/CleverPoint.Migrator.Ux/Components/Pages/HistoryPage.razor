@@ -4,8 +4,7 @@
 @inject IToastService Toasts
 
 <div class="page-head">
-    <h1>History</h1>
-    <p>Every migration run, with timing and outcome. Re-run incrementally or inspect the per-item log.</p>
+    <h1>Run History</h1>
 </div>
 
 <FluentCard>
@@ -20,7 +19,10 @@
     <div style="margin-top:12px;">
         @if (_view.Count == 0)
         {
-            <p class="hint" style="padding:30px; text-align:center;">No migrations match. Runs you start will appear here.</p>
+            @* Min-height keeps the status dropdown from being clipped when the list is empty. *@
+            <div style="min-height:260px; display:flex; align-items:flex-start; justify-content:center; padding-top:60px;">
+                <span class="hint">No migrations match. Runs you start will appear here.</span>
+            </div>
         }
         else
         {

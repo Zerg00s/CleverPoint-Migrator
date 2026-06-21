@@ -1,0 +1,80 @@
+@namespace CleverPoint.Migrator.Ux.Components
+@inject UxSettings Settings
+@inject IToastService Toasts
+
+<FluentDialog Hidden="@Hidden" Modal="true" TrapFocus="true" @ondialogdismiss="Close">
+    <FluentDialogHeader>
+        <FluentLabel Typo="Typography.PaneHeader">Add a connection</FluentLabel>
+    </FluentDialogHeader>
+    <FluentDialogBody>
+        <div class="field" style="margin-bottom:14px;">
+            <span class="field-label">Site URL</span>
+            <FluentTextField @bind-Value="_new.SiteUrl" Placeholder="https://contoso.sharepoint.com/sites/Team" Style="width:100%;" />
+        </div>
+        <div class="field" style="margin-bottom:14px;">
+            <span class="field-label">Sign-in</span>
+            <FluentSelect TOption="string" @bind-Value="_authMode" Style="width:100%;">
+                <FluentOption Value="Browser">Browser sign-in (no Azure app needed)</FluentOption>
+                <FluentOption Value="AppCertificate">App registration + certificate</FluentOption>
+            </FluentSelect>
+        </div>
+        @if (_authMode == "AppCertificate")
+        {
+            <div class="grid cols-2">
+                <div class="field"><span class="field-label">Tenant ID</span><FluentTextField @bind-Value="_new.TenantId" Style="width:100%;" /></div>
+                <div class="field"><span class="field-label">App (client) ID</span><FluentTextField @bind-Value="_new.AppId" Style="width:100%;" /></div>
+                <div class="field"><span class="field-label">Certificate .pfx path</span><FluentTextField @bind-Value="_new.CertPfxPath" Style="width:100%;" /></div>
+                <div class="field"><span class="field-label">Certificate password</span><FluentTextField TextFieldType="TextFieldType.Password" @bind-Value="_certPwd" Style="width:100%;" /></div>
+            </div>
+        }
+    </FluentDialogBody>
+    <FluentDialogFooter>
+        <FluentButton Appearance="Appearance.Neutral" @onclick="Close">Cancel</FluentButton>
+        <FluentButton Appearance="Appearance.Accent" @onclick="Save">Add connection</FluentButton>
+    </FluentDialogFooter>
+</FluentDialog>
+
+@code {
+    [Parameter] public bool Hidden { get; set; } = true;
+    [Parameter] public EventCallback<bool> HiddenChanged { get; set; }
+    [Parameter] public EventCallback<SavedConnection> OnAdded { get; set; }
+
+    private SavedConnection _new = new();
+    private string _authMode = "Browser";
+    private string _certPwd = "";
+
+    /// <summary>Opens the dialog with cleared fields.</summary>
+    public async Task OpenAsync()
+    {
+        _new = new SavedConnection();
+        _authMode = "Browser";
+        _certPwd = "";
+        Hidden = false;
+        await HiddenChanged.InvokeAsync(false);
+    }
+
+    private async Task Close()
+    {
+        Hidden = true;
+        await HiddenChanged.InvokeAsync(true);
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(_new.SiteUrl))
+        {
+            Toasts.ShowWarning("Enter a site URL first.");
+            return;
+        }
+        _new.AuthMode = _authMode;
+        // Name is derived from the host — no separate field needed.
+        _new.Name = new Uri(_new.SiteUrl.TrimEnd('/')).Host.Split('.')[0];
+        _new.CertPasswordProtected = OperatingSystem.IsWindows() ? _certPwd : _certPwd; // plain off-Windows; Windows WinForms uses DPAPI
+        Settings.EnsureLoaded();
+        Settings.Connections.Add(_new);
+        Settings.Save();
+        Toasts.ShowSuccess($"Added connection '{_new.Name}'.");
+        await OnAdded.InvokeAsync(_new);
+        await Close();
+    }
+}

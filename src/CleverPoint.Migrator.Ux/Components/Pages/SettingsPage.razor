@@ -5,7 +5,6 @@
 
 <div class="page-head">
     <h1>Settings</h1>
-    <p>Connections and migration preferences. Connections are shared with the desktop app.</p>
 </div>
 
 <FluentTabs @bind-ActiveTabId="_tab">
@@ -53,6 +52,23 @@
                 <FluentNumberField @bind-Value="Settings.CacheMinutes" Min="1" Max="120" Style="width:120px;" />
                 <span class="hint">How long the explorer remembers a site's lists before re-reading.</span>
             </div>
+            <div class="field" style="margin-bottom:18px;">
+                <span class="field-label">Default migration engine</span>
+                <FluentSelect TOption="string" @bind-Value="Settings.DefaultEngine" Style="min-width:340px;">
+                    <FluentOption Value="Classic">Classic copy (recommended for most migrations)</FluentOption>
+                    <FluentOption Value="MigrationApi">Migration API (best for very large libraries)</FluentOption>
+                </FluentSelect>
+                <span class="hint">New migrations start with this engine; you can still change it per task.</span>
+            </div>
+            <div class="field" style="margin-bottom:18px;">
+                <span class="field-label">Default file versions to copy</span>
+                <FluentSelect TOption="string" @bind-Value="_defaultVersions" Style="min-width:240px;">
+                    <FluentOption Value="1">Latest version only</FluentOption>
+                    <FluentOption Value="5">Last 5 versions</FluentOption>
+                    <FluentOption Value="10">Last 10 versions</FluentOption>
+                    <FluentOption Value="50">All versions (up to 50)</FluentOption>
+                </FluentSelect>
+            </div>
             <FluentButton Appearance="Appearance.Accent" @onclick="SavePrefs">Save preferences</FluentButton>
         </div>
     </FluentTab>
@@ -60,8 +76,15 @@
     <FluentTab Id="adv" Label="Advanced">
         <div style="padding-top:16px; max-width:680px;">
             <div class="section-title">Self-healing (applies after each migration run)</div>
-            <FluentCheckbox @bind-Value="Settings.SelfHealAutoRetry" Label="Auto re-run incrementals after a run with failures (up to 5 attempts)" />
-            <p class="hint" style="margin:4px 0 16px 24px;">Each pass re-copies only what failed or changed; it stops as soon as a pass is clean.</p>
+            <FluentCheckbox @bind-Value="Settings.SelfHealAutoRetry" Label="Auto re-run incrementals after a run with failures" />
+            <p class="hint" style="margin:4px 0 8px 24px;">Each pass re-copies only what failed or changed; it stops as soon as a pass is clean.</p>
+            @if (Settings.SelfHealAutoRetry)
+            {
+                <div class="field" style="margin:0 0 16px 24px;">
+                    <span class="field-label">Maximum retry attempts</span>
+                    <FluentNumberField @bind-Value="Settings.SelfHealMaxAttempts" Min="1" Max="5" Style="width:120px;" />
+                </div>
+            }
             <FluentCheckbox @bind-Value="Settings.SelfHealRepairCorrupt" Label="Detect and re-copy corrupt files (0-byte or truncated on the target)" />
             <p class="hint" style="margin:4px 0 16px 24px;">Only files this tool migrated are ever deleted and replaced.</p>
             <FluentCheckbox @bind-Value="Settings.ShowCompletionToasts" Label="Show a notification when a migration finishes" />
@@ -74,90 +97,52 @@
     <FluentTab Id="about" Label="About">
         <div style="padding-top:16px; max-width:640px;">
             <h3 style="margin:0 0 6px 0;">CleverPoint Migrator</h3>
-            <p class="hint">A ShareGate-style SharePoint Online migration tool. REST + CSOM + the SPO Migration API —
-                no Graph API for SharePoint data. Created by Denis Molodtsov.</p>
+            <p class="hint">
+                A SharePoint Online migration tool. It copies lists, libraries, files, folders and pages
+                using REST, CSOM and the SPO Migration API. It does not use the Graph API for SharePoint data.
+                Created by <a href="#" @onclick:preventDefault @onclick="@(() => Browser.Open("https://github.com/zerg00s"))"
+                              style="color:var(--cp-accent-dark); cursor:pointer;">Denis Molodtsov</a>.
+            </p>
             <div class="btn-row" style="margin-top:14px;">
                 <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Link())"
                               @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator"))">GitHub project</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Bug())"
                               @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator/issues"))">Report an issue</FluentButton>
             </div>
-            <p class="hint" style="margin-top:16px;">Version 1.0 · settings stored at <code>@UxSettings.SettingsPath</code></p>
+            <p class="hint" style="margin-top:16px;">
+                Version 1.0 · settings stored at
+                <a href="#" @onclick:preventDefault @onclick="OpenSettingsFile" style="color:var(--cp-accent-dark); cursor:pointer;"><code>@UxSettings.SettingsPath</code></a>
+            </p>
         </div>
     </FluentTab>
 </FluentTabs>
 
-@* ---- Add connection dialog ---- *@
-<FluentDialog Hidden="@_addHidden" Modal="true" TrapFocus="true" @ondialogdismiss="CloseAdd">
-    <FluentDialogHeader>
-        <FluentLabel Typo="Typography.PaneHeader">Add a connection</FluentLabel>
-    </FluentDialogHeader>
-    <FluentDialogBody>
-        <div class="field" style="margin-bottom:14px;">
-            <span class="field-label">Display name</span>
-            <FluentTextField @bind-Value="_new.Name" Placeholder="e.g. Source tenant" Style="width:100%;" />
-        </div>
-        <div class="field" style="margin-bottom:14px;">
-            <span class="field-label">Site URL</span>
-            <FluentTextField @bind-Value="_new.SiteUrl" Placeholder="https://contoso.sharepoint.com/sites/Team" Style="width:100%;" />
-        </div>
-        <div class="field" style="margin-bottom:14px;">
-            <span class="field-label">Sign-in</span>
-            <FluentSelect TOption="string" @bind-Value="_authMode" Style="width:100%;">
-                <FluentOption Value="Browser">Browser sign-in (no Azure app needed)</FluentOption>
-                <FluentOption Value="AppCertificate">App registration + certificate</FluentOption>
-            </FluentSelect>
-        </div>
-        @if (_authMode == "AppCertificate")
-        {
-            <div class="grid cols-2">
-                <div class="field"><span class="field-label">Tenant ID</span><FluentTextField @bind-Value="_new.TenantId" Style="width:100%;" /></div>
-                <div class="field"><span class="field-label">App (client) ID</span><FluentTextField @bind-Value="_new.AppId" Style="width:100%;" /></div>
-                <div class="field"><span class="field-label">Certificate .pfx path</span><FluentTextField @bind-Value="_new.CertPfxPath" Style="width:100%;" /></div>
-                <div class="field"><span class="field-label">Certificate password</span><FluentTextField TextFieldType="TextFieldType.Password" @bind-Value="_certPwd" Style="width:100%;" /></div>
-            </div>
-        }
-    </FluentDialogBody>
-    <FluentDialogFooter>
-        <FluentButton Appearance="Appearance.Neutral" @onclick="CloseAdd">Cancel</FluentButton>
-        <FluentButton Appearance="Appearance.Accent" @onclick="SaveNew">Add connection</FluentButton>
-    </FluentDialogFooter>
-</FluentDialog>
+@* ---- Add connection dialog (shared component, no Display name field) ---- *@
+<AddConnectionDialog @ref="_addDialog" OnAdded="OnConnectionAdded" />
 
 @code {
     private string _tab = "conn";
-    private bool _addHidden = true;
-    private SavedConnection _new = new();
-    private string _authMode = "Browser";
-    private string _certPwd = "";
+    private AddConnectionDialog? _addDialog;
+    private string _defaultVersions = "1";
 
-    protected override void OnInitialized() => Settings.EnsureLoaded();
-
-    private void OpenAdd()
+    protected override void OnInitialized()
     {
-        _new = new SavedConnection();
-        _authMode = "Browser";
-        _certPwd = "";
-        _addHidden = false;
+        Settings.EnsureLoaded();
+        _defaultVersions = Settings.DefaultMaxVersions.ToString();
     }
 
-    private void CloseAdd() => _addHidden = true;
-
-    private void SaveNew()
+    private async Task OpenAdd()
     {
-        if (string.IsNullOrWhiteSpace(_new.SiteUrl))
-        {
-            Toasts.ShowWarning("Enter a site URL first.");
-            return;
-        }
-        _new.AuthMode = _authMode;
-        if (string.IsNullOrWhiteSpace(_new.Name))
-            _new.Name = new Uri(_new.SiteUrl.TrimEnd('/')).Host.Split('.')[0];
-        _new.CertPasswordProtected = OperatingSystem.IsWindows() ? "" : _certPwd;
-        Settings.Connections.Add(_new);
-        Settings.Save();
-        _addHidden = true;
-        Toasts.ShowSuccess($"Added connection '{_new.Name}'.");
+        if (_addDialog is not null) await _addDialog.OpenAsync();
+    }
+
+    private void OnConnectionAdded(SavedConnection _) => StateHasChanged();
+
+    private void OpenSettingsFile()
+    {
+        // Ensure the file exists, then open it with the OS default editor.
+        if (!File.Exists(UxSettings.SettingsPath)) Settings.Save();
+        Browser.Open(UxSettings.SettingsPath);
     }
 
     private void Remove(SavedConnection c)
@@ -169,6 +154,7 @@
 
     private void SavePrefs()
     {
+        Settings.DefaultMaxVersions = int.TryParse(_defaultVersions, out var v) ? v : 1;
         Settings.Save();
         Toasts.ShowSuccess("Preferences saved.");
     }

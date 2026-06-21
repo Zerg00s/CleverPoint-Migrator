@@ -103,6 +103,9 @@ html, body {
 }
 .nav-item.active svg { opacity: 1; color: var(--cp-accent-dark); }
 .app-nav.collapsed { width: 0; transform: translateX(-12px); opacity: 0; border-right: none; pointer-events: none; }
+/* The toggle icon eases as it swaps between collapse/expand. */
+.nav-toggle svg { transition: transform .2s ease; }
+.nav-toggle:hover svg { transform: scale(1.1); }
 
 .app-content {
     min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 22px 26px 28px 26px;
@@ -123,6 +126,11 @@ html, body {
 .footer-sep { opacity: .4; }
 .footer-dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa; display: inline-block; }
 .footer-dot.online { background: var(--cp-ok); box-shadow: 0 0 0 3px rgba(30,126,52,.15); }
+.footer-dot.busy { background: var(--cp-warn); box-shadow: 0 0 0 3px rgba(184,134,11,.18); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* External-link indicator on nav items that open the OS browser. */
+.nav-item svg.nav-ext { margin-left: auto; width: 14px; height: 14px; flex: 0 0 14px; opacity: .5; }
 
 /* ---- Page transition ------------------------------------------------------ */
 .page-transition { animation: page-in .28s cubic-bezier(.2,.7,.3,1); }
@@ -184,7 +192,10 @@ html, body {
 .exp-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .exp-list { flex: 1 1 auto; overflow-y: auto; }
 .exp-status { padding: 8px 14px; font-size: 12px; opacity: .6; border-top: 1px solid var(--neutral-stroke-divider-rest, #eee); }
-.copy-bar { display: flex; justify-content: center; padding: 18px 0 4px 0; }
+.copy-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 4px 0; }
+/* Prominent call-to-action button (Fluent buttons are control-height by default). */
+.cp-cta::part(control) { height: 46px; padding: 0 36px; font-size: 15px; font-weight: 600; }
+.cp-cta { min-width: 240px; }
 
 /* ---- Misc ----------------------------------------------------------------- */
 /* Make grid text selectable + copyable (Fluent sets user-select:none by default). */
