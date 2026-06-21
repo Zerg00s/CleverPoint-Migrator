@@ -1,0 +1,81 @@
+using CleverPoint.Migrator.Core.History;
+using CleverPoint.Migrator.Core.Model;
+using CleverPoint.Migrator.Core.Operations;
+
+namespace CleverPoint.Migrator.Ux.Services;
+
+/// <summary>
+/// Runs a real migration through the Core engine and records it to the SQLite
+/// history store, streaming each item record to the caller for a live log.
+/// App + certificate connections run fully headless here.
+/// </summary>
+public class UxMigrationService
+{
+    private readonly UxSettings _settings;
+    public UxMigrationService(UxSettings settings) => _settings = settings;
+
+    public bool CanRun(string sourceSite, string targetSite, out string? why)
+    {
+        why = null;
+        var s = UxConnectionResolver.Find(_settings, sourceSite);
+        var t = UxConnectionResolver.Find(_settings, targetSite);
+        if (s is null || t is null) { why = "Both the source and target need a saved connection."; return false; }
+        if (!UxConnectionResolver.CanRunHeadless(s, t))
+        {
+            why = "Live runs currently require app + certificate connections on both sides. "
+                + "Browser sign-in execution is coming next.";
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>Runs one list/library copy. Returns the final result and status.</summary>
+    public async Task<(CopyResult Result, string Status)> RunAsync(
+        string sourceSite, string targetSite, string sourceListTitle, CopyOptions options,
+        Action<ItemCopyRecord> onRecord, CancellationToken ct)
+    {
+        var sConn = UxConnectionResolver.Find(_settings, sourceSite)!;
+        var tConn = UxConnectionResolver.Find(_settings, targetSite)!;
+        var source = UxConnectionResolver.ResolveCert(sConn, sourceSite);
+        var target = UxConnectionResolver.ResolveCert(tConn, targetSite);
+
+        using var store = new HistoryStore(UxSettings.HistoryDbPath);
+        var runId = store.StartRun(new MigrationRun
+        {
+            Name = $"{sourceListTitle} -> {options.TargetListTitle}",
+            SourceUrl = sourceSite, SourceList = sourceListTitle,
+            TargetUrl = targetSite, TargetList = options.TargetListTitle,
+            Engine = "Classic",
+        });
+
+        var result = new CopyResult();
+        var gate = new object();
+        result.RecordAdded += rec =>
+        {
+            lock (gate) store.RecordItem(runId, rec);
+            onRecord(rec);
+        };
+
+        var status = "Completed";
+        try
+        {
+            await Task.Run(() => CopyEngine.CopyListAsync(source, target, sourceListTitle, options, null, ct, result), ct);
+            if (result.Failed > 0) status = "CompletedWithIssues";
+        }
+        catch (OperationCanceledException)
+        {
+            status = "Interrupted";
+            result.Add("Run", sourceListTitle, "", ItemCopyStatus.Skipped, "cancelled by the user");
+        }
+        catch (Exception ex)
+        {
+            status = "Failed";
+            result.Add("Run", sourceListTitle, "", ItemCopyStatus.Failed, $"run stopped: {ex.Message}");
+        }
+        finally
+        {
+            store.FinishRun(runId, result, status);
+        }
+        return (result, status);
+    }
+}

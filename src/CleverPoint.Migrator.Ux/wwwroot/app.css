@@ -176,7 +176,9 @@ html, body {
 
 /* ---- Explorer two-pane ---------------------------------------------------- */
 .explorer { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.exp-pane { display: flex; flex-direction: column; min-height: 420px; border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; background: var(--neutral-layer-1); overflow: hidden; }
+/* Bound the panes to the viewport so each list scrolls INTERNALLY and the
+   "Copy to target" bar below stays visible without scrolling the page. */
+.exp-pane { display: flex; flex-direction: column; height: calc(100vh - 320px); min-height: 280px; border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; background: var(--neutral-layer-1); overflow: hidden; }
 .exp-pane-head { padding: 12px 14px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #eee); }
 .exp-pane-head .role { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--cp-primary); }
 .exp-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }

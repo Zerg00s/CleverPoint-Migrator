@@ -21,6 +21,7 @@ internal class Program
         builder.Services.AddSingleton<HistoryService>();
         builder.Services.AddSingleton<AppStatusService>();
         builder.Services.AddSingleton<SiteBrowser>();
+        builder.Services.AddSingleton<UxMigrationService>();
 
         builder.RootComponents.Add<App>("#app");
 

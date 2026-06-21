@@ -2,6 +2,8 @@
 @namespace CleverPoint.Migrator.Ux.Components.Pages
 @inject NavigationManager Nav
 @inject IToastService Toasts
+@inject UxMigrationService Migrations
+@implements IDisposable
 
 <div class="page-head">
     <h1>New migration</h1>
@@ -10,25 +12,10 @@
 
 <FluentCard>
     <div class="grid cols-2" style="margin-bottom:18px;">
-        <div class="field">
-            <span class="field-label">Source site</span>
-            <FluentTextField @bind-Value="_src" Style="width:100%;" />
-        </div>
-        <div class="field">
-            <span class="field-label">Target site</span>
-            <FluentTextField @bind-Value="_tgt" Style="width:100%;" />
-        </div>
-        <div class="field">
-            <span class="field-label">Lists / libraries</span>
-            <FluentTextField @bind-Value="_lists" Style="width:100%;" />
-        </div>
-        <div class="field">
-            <span class="field-label">Engine</span>
-            <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;">
-                <FluentOption Value="Classic">Classic copy — recommended for most migrations</FluentOption>
-                <FluentOption Value="MigrationApi">Migration API — best for very large libraries (1,000+ files)</FluentOption>
-            </FluentSelect>
-        </div>
+        <div class="field"><span class="field-label">Source site</span><FluentTextField @bind-Value="_src" Style="width:100%;" /></div>
+        <div class="field"><span class="field-label">Target site</span><FluentTextField @bind-Value="_tgt" Style="width:100%;" /></div>
+        <div class="field"><span class="field-label">Source list / library</span><FluentTextField @bind-Value="_list" Style="width:100%;" /></div>
+        <div class="field"><span class="field-label">Target list title</span><FluentTextField @bind-Value="_targetTitle" Style="width:100%;" /></div>
     </div>
 
     <div class="section-title">What to copy</div>
@@ -49,55 +36,143 @@
                 <FluentOption Value="50">All versions (up to 50)</FluentOption>
             </FluentSelect>
         </div>
-        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.PeopleTeam())">User mapping: none</FluentButton>
-        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.CalendarLtr())">Date filter: none</FluentButton>
     </div>
 
     <div class="btn-row" style="margin-top:18px;">
         <FluentButton Appearance="Appearance.Accent" Loading="_running" IconStart="@(new Icons.Regular.Size20.ArrowSwap())"
                       @onclick="@(() => Start(false))">Copy structure + content</FluentButton>
         <FluentButton Appearance="Appearance.Neutral" Disabled="_running" @onclick="@(() => Start(true))">Copy content only</FluentButton>
+        <FluentButton Appearance="Appearance.Stealth" Disabled="_running" @onclick="Cancel" Visible="_running">Cancel run</FluentButton>
         <FluentButton Appearance="Appearance.Stealth" Disabled="_running" @onclick="@(() => Nav.NavigateTo("/explore"))">Back to explorer</FluentButton>
     </div>
 
     @if (_status is not null)
     {
         <div style="margin-top:14px;">
-            <FluentMessageBar Intent="MessageIntent.Info">@_status</FluentMessageBar>
+            <FluentMessageBar Intent="@_statusIntent">@_status</FluentMessageBar>
         </div>
     }
 </FluentCard>
+
+@if (_log.Count > 0)
+{
+    <FluentCard style="margin-top:16px;">
+        <div class="section-title">Live log — @_log.Count items @(_running ? "(running…)" : "")</div>
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px;">
+            <FluentDataGrid Items="@_log.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
+                            GridTemplateColumns="0.7fr 2.4fr 0.9fr 2fr" ShowHover="true" Style="width:100%;">
+                <PropertyColumn Property="@(r => r.ItemType)" Title="Type" />
+                <PropertyColumn Property="@(r => r.SourcePath)" Title="Item" />
+                <TemplateColumn Title="Status">
+                    <FluentBadge BackgroundColor="@StatusColor(context.Status)" Color="white">@context.Status</FluentBadge>
+                </TemplateColumn>
+                <PropertyColumn Property="@(r => r.Message)" Title="Detail" />
+            </FluentDataGrid>
+        </div>
+    </FluentCard>
+}
 
 @code {
     [SupplyParameterFromQuery(Name = "src")] public string? Src { get; set; }
     [SupplyParameterFromQuery(Name = "tgt")] public string? Tgt { get; set; }
     [SupplyParameterFromQuery(Name = "lists")] public string? Lists { get; set; }
 
-    private string _src = "", _tgt = "", _lists = "", _engine = "Classic", _versions = "1";
+    private string _src = "", _tgt = "", _list = "", _targetTitle = "", _versions = "1";
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
     private bool _running;
     private string? _status;
+    private MessageIntent _statusIntent = MessageIntent.Info;
+    private readonly List<ItemCopyRecord> _log = new();
+    private CancellationTokenSource? _cts;
+    private DateTime _lastRender = DateTime.MinValue;
 
     protected override void OnInitialized()
     {
         _src = Src ?? "";
         _tgt = Tgt ?? "";
-        _lists = (Lists ?? "").Replace("|", ", ");
+        _list = (Lists ?? "").Split('|')[0];
+        var sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+        _targetTitle = sameSite && _list.Length > 0 ? $"{_list} - Copy" : _list;
     }
 
     private async Task Start(bool contentOnly)
     {
-        if (string.IsNullOrWhiteSpace(_src) || string.IsNullOrWhiteSpace(_tgt))
+        if (string.IsNullOrWhiteSpace(_src) || string.IsNullOrWhiteSpace(_tgt) || string.IsNullOrWhiteSpace(_list))
         {
-            Toasts.ShowWarning("Fill in the source and target sites first.");
+            Toasts.ShowWarning("Fill in the source, target and source list first.");
             return;
         }
+        if (!Migrations.CanRun(_src, _tgt, out var why))
+        {
+            _statusIntent = MessageIntent.Warning;
+            _status = why;
+            return;
+        }
+
         _running = true;
-        _status = $"Preparing {(contentOnly ? "content-only" : "structure + content")} copy of '{_lists}' ({_engine} engine)…";
+        _log.Clear();
+        _status = $"Running {(contentOnly ? "content-only" : "structure + content")} copy…";
+        _statusIntent = MessageIntent.Info;
+        _cts = new CancellationTokenSource();
         StateHasChanged();
-        await Task.Delay(1200);   // the engine call is wired through Core on the desktop target
-        _running = false;
-        _status = "Connect with a signed-in session on the desktop build to execute this run. The plan above is ready.";
-        Toasts.ShowInfo("Migration plan prepared.");
+
+        var options = new CopyOptions
+        {
+            TargetListTitle = string.IsNullOrWhiteSpace(_targetTitle) ? _list : _targetTitle,
+            TargetListUrl = string.Concat((string.IsNullOrWhiteSpace(_targetTitle) ? _list : _targetTitle).Where(char.IsLetterOrDigit)),
+            PreserveAuthorsAndDates = _preserve,
+            CopyAttachments = _attachments,
+            CopyPermissions = _permissions,
+            CopyContent = true,
+            MergeSchema = !contentOnly,
+            CopyViews = !contentOnly,
+            CopyListSettings = !contentOnly,
+            MaxVersions = int.TryParse(_versions, out var v) ? v : 1,
+        };
+
+        try
+        {
+            var (result, status) = await Migrations.RunAsync(_src, _tgt, _list, options, OnRecord, _cts.Token);
+            _statusIntent = status == "Completed" ? MessageIntent.Success
+                : status == "Failed" ? MessageIntent.Error : MessageIntent.Warning;
+            _status = $"{status}: {result.Copied} copied, {result.Skipped} skipped, {result.Warnings} warnings, {result.Failed} failed.";
+            if (_settingsToast(status)) Toasts.ShowSuccess("Migration finished.");
+        }
+        catch (Exception ex)
+        {
+            _statusIntent = MessageIntent.Error;
+            _status = $"The run hit a problem: {ex.Message}";
+        }
+        finally
+        {
+            _running = false;
+            StateHasChanged();
+        }
     }
+
+    private static bool _settingsToast(string status) => status is "Completed" or "CompletedWithIssues";
+
+    private void OnRecord(ItemCopyRecord rec)
+    {
+        _log.Add(rec);
+        // Throttle re-renders so a fast run doesn't flood the UI thread.
+        var now = DateTime.UtcNow;
+        if ((now - _lastRender).TotalMilliseconds > 200)
+        {
+            _lastRender = now;
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void Cancel() => _cts?.Cancel();
+
+    private static string StatusColor(ItemCopyStatus s) => s switch
+    {
+        ItemCopyStatus.Copied => "#1e7e34",
+        ItemCopyStatus.Warning => "#b8860b",
+        ItemCopyStatus.Failed => "#b02a37",
+        _ => "#8a8886",
+    };
+
+    public void Dispose() => _cts?.Cancel();
 }
