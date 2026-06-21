@@ -9,7 +9,9 @@
 @inject HistoryService History
 @implements IDisposable
 
-<div class="page-head">
+<div class="page-head wizard-head">
+    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
+                  Disabled="_running" @onclick="@(() => Nav.NavigateTo("/explore"))">Back to explorer</FluentButton>
     <h1>New Copy Task</h1>
 </div>
 
@@ -63,6 +65,14 @@
             @if (_batch)
             {
                 <span class="hint">Each list is created on the target under its own name@(_sameSite ? " with “ - Copy” appended" : "").</span>
+            }
+            else if (_targetLocked)
+            {
+                <div class="ro-field">
+                    <span class="field-label">Target list</span>
+                    <div class="ro-value">@_targetTitle</div>
+                </div>
+                <span class="hint">Items are added to this existing list, so the name and URL are fixed.</span>
             }
             else
             {
@@ -125,11 +135,6 @@
         {
             <FluentButton Appearance="Appearance.Neutral" @onclick="Cancel">Cancel</FluentButton>
         }
-        else
-        {
-            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
-                          @onclick="@(() => Nav.NavigateTo("/explore"))">Back to explorer</FluentButton>
-        }
     </div>
 
     @if (_status is not null)
@@ -166,6 +171,7 @@
     private string _src = "", _tgt = "", _list = "", _taskName = "", _targetTitle = "", _targetUrl = "", _engine = "Classic";
     private string _copyMode = "full";
     private bool _lockContentOnly;
+    private bool _targetLocked;
     private int _maxVersions = 1;
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
@@ -211,6 +217,7 @@
         {
             _targetTitle = Pending.TargetListTitle!;
             _targetUrl = string.IsNullOrWhiteSpace(Pending.TargetListUrl) ? DefaultUrl(_targetTitle) : Pending.TargetListUrl!;
+            _targetLocked = true;
         }
         else
         {

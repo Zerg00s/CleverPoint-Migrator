@@ -30,7 +30,10 @@
     --cp-fail-text: #f08a93;
 }
 
-/* ---- New Copy Task (wizard) source -> target layout ----------------------- */
+/* ---- New Copy Task (wizard) ----------------------------------------------- */
+.wizard-head { display: flex; align-items: center; gap: 14px; }
+.wizard-head h1 { margin: 0; }
+
 .copy-setup { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: start; }
 .cs-side { border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; padding: 16px; background: var(--neutral-layer-1); }
 .cs-source { border-top: 3px solid var(--cp-source); }
