@@ -8,6 +8,7 @@
 @inject PendingMigration Pending
 @inject HistoryService History
 @inject MigrationRunner Runner
+@inject BrowserSignIn SignIn
 
 <div class="page-head wizard-head">
     <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
@@ -78,7 +79,8 @@
             {
                 <div class="field" style="margin-bottom:10px;">
                     <span class="field-label">Target list title</span>
-                    <FluentTextField @bind-Value="_targetTitle" Style="width:100%;" Disabled="_running" />
+                    <FluentTextField @bind-Value="_targetTitle" @bind-Value:after="CheckTargetAsync" Immediate="true" ImmediateDelay="400"
+                                     Style="width:100%;" Disabled="_running" />
                 </div>
                 <div class="field">
                     <span class="field-label">Target list URL (the part after the site)</span>
@@ -86,6 +88,10 @@
                                      Style="width:100%;" Disabled="_running" Placeholder="e.g. Lists/MyList or MyLibrary" />
                     <span class="url-preview">@FullTargetUrl()</span>
                 </div>
+            }
+            @if (!_batch && _targetState != TargetState.Unknown)
+            {
+                <span class="target-chip @TargetChipClass">@_targetStateMsg</span>
             }
         </div>
     </div>
@@ -163,14 +169,23 @@
 
     <div class="grid cols-2" style="gap:8px 28px; margin:10px 0 4px;">
         <FluentCheckbox @bind-Value="_preserve" Label="Preserve authors and dates" Disabled="_running" />
-        <FluentCheckbox @bind-Value="_attachments" Label="Copy attachments" Disabled="_running" />
+        @if (_showAttachments)
+        {
+            <FluentCheckbox @bind-Value="_attachments" Label="Copy attachments" Disabled="_running" />
+        }
         <FluentCheckbox @bind-Value="_permissions" Label="Copy unique permissions" Disabled="_running" />
         <FluentCheckbox @bind-Value="_contentTypes" Label="Copy content types &amp; site columns" Disabled="_running" />
     </div>
 
+    @if (BeginBlockedReason is { } reason)
+    {
+        <div style="margin-top:16px;">
+            <FluentMessageBar Intent="MessageIntent.Warning">@reason</FluentMessageBar>
+        </div>
+    }
     <div class="begin-bar">
         <FluentButton Appearance="Appearance.Accent" Class="cp-cta" IconStart="@(new Icons.Regular.Size24.Play())"
-                      @onclick="Start">Begin copy</FluentButton>
+                      Disabled="@(BeginBlockedReason is not null)" @onclick="Start">Begin copy</FluentButton>
     </div>
 
     @if (_status is not null)
@@ -201,6 +216,27 @@
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
+
+    // Attachments only apply to list items; libraries don't have them.
+    private bool _showAttachments => !(_jobs.Count == 1 && _jobs[0].IsLibrary);
+
+    private enum TargetState { Unknown, New, Exists, Mismatch }
+    private TargetState _targetState = TargetState.Unknown;
+    private string _targetStateMsg = "";
+    private string TargetChipClass => _targetState switch
+    {
+        TargetState.New => "st-ok",
+        TargetState.Exists => "st-running",
+        TargetState.Mismatch => "st-issues",
+        _ => "",
+    };
+
+    // Block Begin only for genuinely-broken combos; everything else is allowed.
+    private string? BeginBlockedReason =>
+        _targetState == TargetState.Mismatch ? _targetStateMsg
+        : (_copyMode == "content" && _targetState == TargetState.New)
+            ? "Content-only needs an existing target list, but this one doesn't exist yet. Switch to Structure + content, or point at an existing list."
+        : null;
     private const bool _running = false;   // execution moved to the background runner
     private string? _status;
     private MessageIntent _statusIntent = MessageIntent.Info;
@@ -274,6 +310,53 @@
     // Combine a picked date + optional time as local, return UTC.
     private static DateTime LocalToUtc(DateTime date, DateTime? time)
         => DateTime.SpecifyKind(date.Date.Add(time?.TimeOfDay ?? TimeSpan.Zero), DateTimeKind.Local).ToUniversalTime();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await CheckTargetAsync();
+    }
+
+    // Live check of the target list: new / exists / type-mismatch. Non-blocking.
+    private async Task CheckTargetAsync()
+    {
+        if (_batch || string.IsNullOrWhiteSpace(_targetTitle) || string.IsNullOrWhiteSpace(_tgt))
+        {
+            _targetState = TargetState.Unknown; _targetStateMsg = ""; StateHasChanged(); return;
+        }
+        var conn = UxConnectionResolver.Find(Settings, _tgt);
+        if (conn is null || !UxConnectionResolver.CanResolve(conn, SignIn)) { _targetState = TargetState.Unknown; StateHasChanged(); return; }
+        try
+        {
+            var resolved = UxConnectionResolver.Resolve(conn, _tgt, SignIn);
+            var titleEnc = Uri.EscapeDataString(_targetTitle.Trim().Replace("'", "''"));
+            using var doc = await resolved.Rest.GetJsonAsync(
+                $"{resolved.SiteUrl}/_api/web/lists?$select=Title,BaseType,ItemCount&$filter=Title eq '{titleEnc}'&$top=1");
+            var arr = doc.RootElement.GetProperty("value");
+            if (arr.GetArrayLength() == 0)
+            {
+                _targetState = TargetState.New;
+                _targetStateMsg = "New — will be created.";
+            }
+            else
+            {
+                var tgtIsLibrary = arr[0].GetProperty("BaseType").GetInt32() == 1;
+                var count = arr[0].GetProperty("ItemCount").GetInt32();
+                var srcIsLibrary = _jobs.Count > 0 && _jobs[0].IsLibrary;
+                if (srcIsLibrary != tgtIsLibrary)
+                {
+                    _targetState = TargetState.Mismatch;
+                    _targetStateMsg = $"Exists, but it's a {(tgtIsLibrary ? "library" : "list")} and your source is a {(srcIsLibrary ? "library" : "list")}.";
+                }
+                else
+                {
+                    _targetState = TargetState.Exists;
+                    _targetStateMsg = $"Exists · {(tgtIsLibrary ? "Library" : "List")} · {count:N0} items — items are added/updated per the mode below.";
+                }
+            }
+        }
+        catch { _targetState = TargetState.Unknown; _targetStateMsg = ""; }
+        StateHasChanged();
+    }
 
     // Friendly site name for the task title: the /sites/<name> segment, else the host label.
     private static string SiteName(string url)
