@@ -89,13 +89,13 @@ public class PageCopier
                 using var sourcePage = await GetPageWithRetryAsync(_source, sourceCtx.Web.Url.TrimEnd('/'), page.Id);
                 string? Get(string prop) => sourcePage.RootElement.TryGetProperty(prop, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
 
-                // An orphaned CHECKED-OUT page (no checked-in version) is
-                // invisible to item queries but still occupies the name and
-                // makes AddTemplateFile rename silently. With overwrite on we
-                // clear the name first; otherwise we detect the rename and
-                // report instead of corrupting a stranger's draft.
-                if (_overwrite)
-                    await TryDeleteFileAsync(targetCtx, targetUrl);
+                // We only reach here when the page is NOT a known target item, so
+                // any file already at this URL is an orphan: either a checked-out
+                // draft or (the common case) a non-site-page .aspx left by an earlier
+                // generic-file-copy attempt, which makes the SitePages API reject it
+                // ("does not have the site page content type"). Clear it first so
+                // AddTemplateFile creates a real client-side page.
+                await TryDeleteFileAsync(targetCtx, targetUrl);
 
                 var stub = targetCtx.Web.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(targetList.RootFolder.ServerRelativeUrl))
                     .Files.AddTemplateFile(targetUrl, TemplateFileType.ClientSidePage);

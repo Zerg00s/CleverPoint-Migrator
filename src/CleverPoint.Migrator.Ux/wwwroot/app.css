@@ -249,10 +249,16 @@ html, body {
 
 /* ---- Explorer two-pane ---------------------------------------------------- */
 .explorer { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; position: relative; }
-/* Subtle, large left-to-right direction hint shown until something connects. */
-.explorer-arrow { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: 42%; height: auto; color: var(--neutral-foreground-rest); opacity: .06;
-    pointer-events: none; z-index: 2; }
+/* Subtle drag -> drop hint (arch arrow flanked by glyphs) until something connects. */
+.explorer-hints { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: space-evenly; gap: 12px; pointer-events: none; color: var(--neutral-foreground-rest); }
+.explorer-arrow { width: 28%; height: auto; opacity: .07; flex: 0 0 auto; }
+.explorer-hints .eh { display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: .16; text-align: center; flex: 0 0 auto; }
+.explorer-hints .eh svg { width: 54px; height: 54px; }
+.explorer-hints .eh span { font-size: 13px; font-weight: 600; }
+
+/* Connections grid: give rows enough height so buttons aren't clipped. */
+.conn-table .fluent-data-grid.grid { grid-auto-rows: minmax(50px, auto); }
+.conn-table .fluent-data-grid td { display: flex; align-items: center; overflow: visible; }
 /* Bound the panes to the viewport so each list scrolls INTERNALLY and the
    "Copy to target" bar below stays visible without scrolling the page. */
 .exp-pane { position: relative; display: flex; flex-direction: column; height: calc(100vh - 320px); min-height: 280px; border: 1px solid var(--neutral-stroke-divider-rest, #e3e3e3); border-radius: 12px; background: var(--neutral-layer-1); overflow: hidden; }
@@ -288,8 +294,11 @@ html, body {
 .entry-go { margin-left: auto; flex: 0 0 auto; opacity: .5; }
 .copy-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 4px 0; }
 /* Prominent call-to-action button (Fluent buttons are control-height by default). */
-.cp-cta::part(control) { height: 58px; padding: 0 54px; font-size: 18px; font-weight: 600; }
-.cp-cta { min-width: 320px; }
+.cp-cta::part(control) { height: 64px !important; min-height: 64px !important; padding: 0 64px !important; font-size: 20px !important; font-weight: 600 !important; border-radius: 10px !important; }
+.cp-cta { min-width: 360px; }
+.cp-cta::part(content) { font-size: 20px; }
+/* Enlarge the trailing arrow icon inside the CTA too. */
+.cp-cta svg { width: 26px !important; height: 26px !important; }
 
 /* ---- Misc ----------------------------------------------------------------- */
 /* Make grid text selectable + copyable (Fluent sets user-select:none by default).

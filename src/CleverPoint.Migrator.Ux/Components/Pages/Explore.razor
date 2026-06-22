@@ -13,11 +13,21 @@
 <div class="explorer">
     @if (_showArrow)
     {
-        <svg class="explorer-arrow" viewBox="0 0 260 110" fill="none" stroke="currentColor"
-             stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M 18 82 Q 132 6 228 56" />
-            <path d="M 200 38 L 234 58 L 198 74" />
-        </svg>
+        <div class="explorer-hints" aria-hidden="true">
+            <div class="eh eh-left">
+                <FluentIcon Value="@(new Icons.Regular.Size32.Folder())" />
+                <span>Drag a file or folder</span>
+            </div>
+            <svg class="explorer-arrow" viewBox="0 0 260 100" fill="none" stroke="currentColor"
+                 stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M 16 76 Q 128 12 224 50" />
+                <path d="M 203 26 L 227 51 L 191 55" />
+            </svg>
+            <div class="eh eh-right">
+                <FluentIcon Value="@(new Icons.Regular.Size32.ArrowDownload())" />
+                <span>Drop on the target</span>
+            </div>
+        </div>
     }
     <ExplorerPane @ref="_source" Role="Source" IsSource="true" OnChanged="OnPaneChanged" />
     <ExplorerPane @ref="_target" Role="Target" IsSource="false" OnChanged="OnPaneChanged" OnDropRequested="OnDropToTarget" />

@@ -21,9 +21,13 @@
 
     @if (_tasks.Count == 0)
     {
-        <div style="padding:48px 16px; text-align:center;">
-            <FluentIcon Value="@(new Icons.Regular.Size32.Folder())" Color="Color.Neutral" />
-            <p class="hint">No copy tasks yet. Start one from the explorer.</p>
+        <div style="padding:44px 16px; text-align:center;">
+            <p style="margin:0 0 4px; font-size:15px; font-weight:600;">Nothing is copying right now</p>
+            <p class="hint">This screen shows live progress while copies run. Finished copies live in Run History.</p>
+            <div class="btn-row" style="justify-content:center; margin-top:16px;">
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowRight())" @onclick="@(() => Nav.NavigateTo("/explore"))">New copy task</FluentButton>
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.History())" @onclick="@(() => Nav.NavigateTo("/history"))">View Run History</FluentButton>
+            </div>
         </div>
     }
     else
