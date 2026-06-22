@@ -18,18 +18,23 @@ public static class PageDumpTest
         var conn = new SpConnection(site, new CertTokenProvider(creds));
         try
         {
-            using var listDoc = await conn.Rest.GetJsonAsync($"{site}/_api/web/lists/GetByTitle('Site Pages')/items?$select=Id,FileLeafRef&$filter=FileLeafRef eq 'Modern.aspx'");
-            var arr = listDoc.RootElement.GetProperty("value");
+            // List item fields (ClientSideApplicationId lives here, not on the page API).
+            using var itemDoc = await conn.Rest.GetJsonAsync($"{site}/_api/web/lists/GetByTitle('Site Pages')/items?$select=Id,FileLeafRef,ClientSideApplicationId,PageLayoutType,ContentTypeId&$filter=FileLeafRef eq 'Modern.aspx'");
+            var arr = itemDoc.RootElement.GetProperty("value");
             if (arr.GetArrayLength() == 0) { Console.WriteLine($"== {label}: no Modern.aspx =="); return; }
-            var id = arr[0].GetProperty("Id").GetInt32();
+            var row = arr[0];
+            var id = row.GetProperty("Id").GetInt32();
+            string IGet(string k) => row.TryGetProperty(k, out var v) && v.ValueKind != System.Text.Json.JsonValueKind.Null ? v.ToString() : "(null)";
+            Console.WriteLine($"== {label} page id {id} ==");
+            Console.WriteLine($"  [item] ClientSideApplicationId: {IGet("ClientSideApplicationId")}  PageLayoutType: {IGet("PageLayoutType")}  ContentTypeId: {IGet("ContentTypeId")}");
+
             using var p = await conn.Rest.GetJsonAsync($"{site}/_api/sitepages/pages({id})");
             string Get(string k) => p.RootElement.TryGetProperty(k, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() ?? "" : (p.RootElement.TryGetProperty(k, out var v2) ? v2.ToString() : "");
-            Console.WriteLine($"== {label} page id {id} ==");
-            Console.WriteLine($"  PageLayoutType: {Get("PageLayoutType")}  PromotedState: {Get("PromotedState")}  ContentTypeId: {Get("ContentTypeId")}");
+            Console.WriteLine($"  [page] PageLayoutType: {Get("PageLayoutType")}  PromotedState: {Get("PromotedState")}");
             var canvas = Get("CanvasContent1");
             var layout = Get("LayoutWebpartsContent");
-            Console.WriteLine($"  CanvasContent1 ({canvas.Length}): {canvas[..Math.Min(900, canvas.Length)]}");
-            Console.WriteLine($"  LayoutWebpartsContent ({layout.Length}): {layout[..Math.Min(500, layout.Length)]}");
+            Console.WriteLine($"  CanvasContent1 ({canvas.Length}) TAIL: …{canvas[Math.Max(0, canvas.Length - 700)..]}");
+            Console.WriteLine($"  LayoutWebpartsContent ({layout.Length}): {layout}");
         }
         catch (Exception ex) { Console.WriteLine($"== {label}: ERROR {ex.Message}"); }
     }
