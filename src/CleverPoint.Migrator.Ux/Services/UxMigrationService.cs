@@ -62,6 +62,16 @@ public class UxMigrationService
             onRecord(rec);
         };
 
+        // Reuse the source->target item id map from prior runs so a re-copy of a
+        // generic LIST updates/skips existing items (per ExistingMode) instead of
+        // duplicating them. Libraries key off file path and ignore this.
+        var pairKey = HistoryStore.PairKey(sourceSite, sourceListTitle, targetSite, options.TargetListTitle);
+        if (options.UpsertItemMap == null)
+        {
+            var prior = store.GetItemMap(pairKey);
+            if (prior.Count > 0) options.UpsertItemMap = prior;
+        }
+
         var status = "Completed";
         try
         {
@@ -93,6 +103,9 @@ public class UxMigrationService
         }
         finally
         {
+            // Persist new id mappings so the next copy of this list can update in place.
+            if (result.ItemMappings.Count > 0)
+                store.SaveItemMap(pairKey, result.ItemMappings);
             store.FinishRun(runId, result, status);
         }
         return (result, status);

@@ -158,6 +158,23 @@ public class ItemCopier
                 if (isUpdate)
                 {
                     targetItem = targetList.GetItemById(options.UpsertItemMap![sourceItem.Id]);
+                    if (options.ExistingMode == Model.ExistingItemMode.Skip)
+                    {
+                        result.Add("Item", fileRef, targetPath, ItemCopyStatus.Skipped, "already exists (skip mode)");
+                        continue;
+                    }
+                    if (options.ExistingMode == Model.ExistingItemMode.CopyIfNewer)
+                    {
+                        _targetCtx.Load(targetItem, i => i["Modified"]);
+                        await _targetCtx.ExecuteQueryAsync();
+                        var sMod = sourceItem["Modified"] is DateTime sd ? sd : DateTime.MaxValue;
+                        var tMod = targetItem["Modified"] is DateTime td ? td : DateTime.MinValue;
+                        if (sMod <= tMod)
+                        {
+                            result.Add("Item", fileRef, targetPath, ItemCopyStatus.Skipped, "target item is already up to date");
+                            continue;
+                        }
+                    }
                 }
                 else
                 {
