@@ -31,12 +31,8 @@
             </div>
             <div class="field" style="margin-bottom:18px;">
                 <span class="field-label">Default file versions to copy</span>
-                <FluentSelect TOption="string" @bind-Value="_defaultVersions" Style="min-width:240px;">
-                    <FluentOption Value="1">Latest version only</FluentOption>
-                    <FluentOption Value="5">Last 5 versions</FluentOption>
-                    <FluentOption Value="10">Last 10 versions</FluentOption>
-                    <FluentOption Value="50">All versions (up to 50)</FluentOption>
-                </FluentSelect>
+                <FluentNumberField @bind-Value="Settings.DefaultMaxVersions" Min="1" Max="2000" Style="width:140px;" />
+                <span class="hint">1 = latest only. Up to 2000. New copy tasks start with this; you can change it per task.</span>
             </div>
             <FluentButton Appearance="Appearance.Accent" @onclick="SavePrefs">Save preferences</FluentButton>
         </div>
@@ -89,12 +85,11 @@
 
 @code {
     private string _tab = "perf";
-    private string _defaultVersions = "1";
 
     protected override void OnInitialized()
     {
         Settings.EnsureLoaded();
-        _defaultVersions = Settings.DefaultMaxVersions.ToString();
+        if (Settings.DefaultMaxVersions < 1) Settings.DefaultMaxVersions = 1;
     }
 
     private void OpenSettingsFile()
@@ -106,7 +101,7 @@
 
     private void SavePrefs()
     {
-        Settings.DefaultMaxVersions = int.TryParse(_defaultVersions, out var v) ? v : 1;
+        if (Settings.DefaultMaxVersions < 1) Settings.DefaultMaxVersions = 1;
         Settings.Save();
         Toasts.ShowSuccess("Preferences saved.");
     }

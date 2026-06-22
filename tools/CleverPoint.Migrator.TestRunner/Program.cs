@@ -81,6 +81,7 @@ public static class Program
             ["batch"] = Scenarios.BatchAndBrowseTests.BatchSameTenantAsync,
             ["batch-cross"] = Scenarios.BatchAndBrowseTests.BatchCrossTenantAsync,
             ["seed-history"] = Scenarios.SeedHistoryTests.RunAsync,
+            ["page-group"] = Scenarios.PageGroupTest.RunAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();
