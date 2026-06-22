@@ -50,27 +50,45 @@
         }
         else if (CurrentList is null && _lists.Count > 0)
         {
+            @if (_webCrumbs.Count > 1)
+            {
+                <div class="exp-crumbs">
+                    @for (var i = 0; i < _webCrumbs.Count; i++)
+                    {
+                        var idx = i;
+                        <span class="crumb @(idx == _webCrumbs.Count - 1 ? "current" : "")" role="button"
+                              @onclick="@(() => NavigateToWeb(idx))">@_webCrumbs[idx].Title</span>
+                        @if (idx < _webCrumbs.Count - 1)
+                        {
+                            <span class="crumb-sep">/</span>
+                        }
+                    }
+                </div>
+            }
             <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()"
                             GridTemplateColumns="@(IsSource ? "44px 2fr 1fr" : "2fr 1fr")" ShowHover="true" Style="width:100%;"
                             RowClass="@(_ => "click-row")"
-                            OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is not null) await OpenList(r.Item); })">
+                            OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is null) return; if (r.Item.IsSubsite) await OpenSubsite(r.Item); else await OpenList(r.Item); })">
                 @if (IsSource)
                 {
                     <TemplateColumn Title="">
-                        <div @onclick:stopPropagation="true">
-                            <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="OnListTicked"
-                                            Title="Tick to copy this whole list/library" />
-                        </div>
+                        @if (!context.IsSubsite)
+                        {
+                            <div @onclick:stopPropagation="true">
+                                <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="OnListTicked"
+                                                Title="Tick to copy this whole list/library" />
+                            </div>
+                        }
                     </TemplateColumn>
                 }
                 <TemplateColumn Title="Name">
                     <div class="entry-cell">
-                        <img class="ft-icon" src="@(string.IsNullOrEmpty(context.IconUrl) ? FileIcons.ForList(context) : context.IconUrl)"
-                             onerror="@($"this.onerror=null;this.src='{FileIcons.ForList(context)}'")" alt="" />
-                        <span class="entry-name">@context.Title</span>
+                        <img class="ft-icon" src="@(context.IsSubsite ? FileIcons.Url("spo") : (string.IsNullOrEmpty(context.IconUrl) ? FileIcons.ForList(context) : context.IconUrl))"
+                             onerror="@($"this.onerror=null;this.src='{(context.IsSubsite ? FileIcons.Url("spo") : FileIcons.ForList(context))}'")" alt="" />
+                        <span class="entry-name @(context.IsSubsite ? "entry-folder" : "")">@context.Title</span>
                     </div>
                 </TemplateColumn>
-                <PropertyColumn Property="@(l => (l.IsLibrary ? "Library" : "List") + ", " + l.ItemCount + " items")" Title="Details" Align="Align.End" />
+                <PropertyColumn Property="@(l => l.IsSubsite ? "Subsite" : (l.IsLibrary ? "Library" : "List") + ", " + l.ItemCount + " items")" Title="Details" Align="Align.End" />
             </FluentDataGrid>
         }
         else if (CurrentList is not null)
@@ -159,6 +177,9 @@
     private string _folderUrl = "";
     private readonly List<(string Name, string Url)> _crumbs = new();
 
+    // Web navigation: the chain of webs (root site -> subsite -> …) we've drilled into.
+    private readonly List<(string Title, string Url)> _webCrumbs = new();
+
     // Selection persists across folder navigation (it spans folders), so it lives
     // in sets keyed by what the engine needs: paths for libraries, IDs for lists.
     private readonly HashSet<string> _pickedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -242,7 +263,7 @@
     private async Task Reload()
     {
         if (CurrentList is not null) await LoadCurrentAsync();
-        else await OpenAsync(forceRefresh: true);
+        else await LoadWebContentAsync(forceRefresh: true);
     }
 
     private async Task OpenAsync(bool forceRefresh = false)
@@ -255,12 +276,23 @@
             return;
         }
         Connection = UxConnectionResolver.Find(Settings, _site);
-        CurrentList = null;
-        _items.Clear();
         if (Connection is null) { _status = "No saved connection for that site."; return; }
 
-        // Browser connections sign in via the WebView2 helper popup, then reuse
-        // the captured session for this site and every other on the tenant.
+        // Start a fresh web chain at the chosen connection's site.
+        _webCrumbs.Clear();
+        _webCrumbs.Add((FriendlyName(_site!), _site!));
+        await LoadWebContentAsync(forceRefresh);
+    }
+
+    /// <summary>Loads lists, libraries AND subsites for the current web (_site).</summary>
+    private async Task LoadWebContentAsync(bool forceRefresh = false)
+    {
+        if (Connection is null || string.IsNullOrWhiteSpace(_site)) return;
+        CurrentList = null;
+        _items.Clear();
+
+        // Browser connections sign in via the WebView2 helper popup, then reuse the
+        // captured session for this site and every other one on the tenant.
         if (!UxConnectionResolver.IsCert(Connection) && !SignIn.HasSession(_site))
         {
             _loading = true; _status = "Opening sign-in…"; StateHasChanged();
@@ -269,16 +301,42 @@
             if (!ok) { _status = msg; await OnChanged.InvokeAsync(); return; }
         }
 
-        _loading = true; _status = "Loading lists…"; StateHasChanged();
+        _loading = true; _status = "Loading…"; StateHasChanged();
         try
         {
             var conn = UxConnectionResolver.Resolve(Connection, _site, SignIn);
-            _lists = await Browser.GetListsAsync(conn, useCache: !forceRefresh);
-            _status = $"{_lists.Count} lists and libraries"
-                + (IsSource ? "  ·  tick several to copy them all, or click one to pick items" : "");
+            var lists = await Browser.GetListsAsync(conn, useCache: !forceRefresh);
+            // Subsites first, then lists/libraries.
+            var subs = await Browser.GetSubwebsAsync(conn, useCache: !forceRefresh);
+            var subRows = subs.Select(s => new SpListInfo(s.Title, s.Url, false, 0) { IsSubsite = true, SubWebUrl = s.Url });
+            _lists = subRows.Concat(lists).ToList();
+            _status = $"{subs.Count} subsites · {lists.Count} lists and libraries"
+                + (IsSource ? "  ·  tick several to copy them, click one to open, or open a subsite" : "");
         }
         catch (Exception ex) { _status = $"Could not open: {Short(ex.Message)}"; }
         finally { _loading = false; await OnChanged.InvokeAsync(); }
+    }
+
+    /// <summary>Drill into a subsite (recursive web navigation).</summary>
+    private async Task OpenSubsite(SpListInfo sub)
+    {
+        _webCrumbs.Add((sub.Title, sub.SubWebUrl));
+        _site = sub.SubWebUrl;
+        await LoadWebContentAsync();
+    }
+
+    private async Task NavigateToWeb(int index)
+    {
+        if (index < 0 || index >= _webCrumbs.Count) return;
+        if (index < _webCrumbs.Count - 1) _webCrumbs.RemoveRange(index + 1, _webCrumbs.Count - index - 1);
+        _site = _webCrumbs[index].Url;
+        await LoadWebContentAsync();
+    }
+
+    private static string FriendlyName(string url)
+    {
+        try { var u = new Uri(url.TrimEnd('/')); var seg = u.Segments.LastOrDefault()?.Trim('/'); return string.IsNullOrEmpty(seg) ? u.Host.Split('.')[0] : seg; }
+        catch { return url; }
     }
 
     private async Task OnListTicked()

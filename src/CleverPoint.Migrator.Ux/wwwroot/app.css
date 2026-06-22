@@ -252,9 +252,9 @@ html, body {
 /* Subtle drag -> drop hint (arch arrow flanked by glyphs) until something connects. */
 .explorer-hints { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: space-evenly; gap: 12px; pointer-events: none; color: var(--neutral-foreground-rest); }
 .explorer-arrow { width: 28%; height: auto; opacity: .07; flex: 0 0 auto; }
-.explorer-hints .eh { display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: .16; text-align: center; flex: 0 0 auto; }
-.explorer-hints .eh svg { width: 54px; height: 54px; }
-.explorer-hints .eh span { font-size: 13px; font-weight: 600; }
+.explorer-hints .eh { display: flex; flex-direction: column; align-items: center; gap: 16px; opacity: .16; text-align: center; flex: 0 0 auto; margin-top: 48px; }
+.explorer-hints .eh svg { width: 116px !important; height: 116px !important; }
+.explorer-hints .eh span { font-size: 24px; font-weight: 600; }
 
 /* Connections grid: give rows enough height so buttons aren't clipped. */
 .conn-table .fluent-data-grid.grid { grid-auto-rows: minmax(50px, auto); }
@@ -294,7 +294,7 @@ html, body {
 .entry-go { margin-left: auto; flex: 0 0 auto; opacity: .5; }
 .copy-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 4px 0; }
 /* Centered, roomy primary action on the copy task page. */
-.begin-bar { display: flex; justify-content: center; margin: 40px 0 44px; }
+.begin-bar { display: flex; justify-content: center; margin: 64px 0 56px; }
 /* Prominent call-to-action button (Fluent buttons are control-height by default). */
 .cp-cta::part(control) { height: 64px !important; min-height: 64px !important; padding: 0 64px !important; font-size: 20px !important; font-weight: 600 !important; border-radius: 10px !important; }
 .cp-cta { min-width: 360px; }

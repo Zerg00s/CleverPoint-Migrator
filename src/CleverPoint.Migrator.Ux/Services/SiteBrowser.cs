@@ -11,6 +11,10 @@ public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary,
     public int BaseTemplate { get; set; }
     /// <summary>The list's own official icon URL from SharePoint (ImageUrl), absolute.</summary>
     public string IconUrl { get; set; } = "";
+    /// <summary>This row is a subsite (web) to drill into, not a list/library.</summary>
+    public bool IsSubsite { get; set; }
+    /// <summary>For a subsite row, the absolute web URL to navigate into.</summary>
+    public string SubWebUrl { get; set; } = "";
 }
 public record SpWebInfo(string Title, string Url);
 public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,

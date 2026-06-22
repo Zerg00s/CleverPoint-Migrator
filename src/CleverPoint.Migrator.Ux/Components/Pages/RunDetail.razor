@@ -52,11 +52,12 @@ else
         </div>
 
         <div class="run-counts">
-            <span class="count ok">@_run.Copied copied</span>
-            <span class="count">@_run.Skipped skipped</span>
+            <span class="count ok">@ItemsCopied items copied</span>
+            <span class="count">@_items.Count(i => IsItem(i.ItemType) && i.Status == "Skipped") skipped</span>
             <span class="count warn">@_run.Warnings warnings</span>
             <span class="count fail">@_run.Failed failed</span>
         </div>
+        <p class="hint" style="margin:6px 0 0;">Items = files, pages and list items. Columns, content types and lists aren't counted.</p>
     </FluentCard>
 
     <FluentCard style="margin-top:16px;">
@@ -159,6 +160,10 @@ else
             q = q.Where(i => i.Status == _logStatus);
         _filteredItems = q.ToList();
     }
+
+    // An "item" is a file, a page or a list item — not columns/content types/lists.
+    private static bool IsItem(string type) => type is "File" or "Page" or "Item";
+    private int ItemsCopied => _items.Count(i => IsItem(i.ItemType) && i.Status == "Copied");
 
     private (string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)? _detail;
 
