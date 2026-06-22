@@ -24,7 +24,7 @@ public static class CopyEngine
         using var targetCtx = target.CreateContext();
 
         var sourceList = sourceCtx.Web.Lists.GetByTitle(sourceListTitle);
-        sourceCtx.Load(sourceList, l => l.BaseType, l => l.Title);
+        sourceCtx.Load(sourceList, l => l.BaseType, l => l.Title, l => l.BaseTemplate);
         await sourceCtx.ExecuteQueryAsync();
 
         var users = new UserResolver(sourceCtx, targetCtx, userMap, options.UnresolvedUserFallback);
@@ -62,6 +62,21 @@ public static class CopyEngine
         {
             result.Add("List", sourceListTitle, options.TargetListTitle, ItemCopyStatus.Skipped, "schema-only copy: content skipped by settings");
             result.FinishedUtc = DateTime.UtcNow;
+            return result;
+        }
+
+        // Modern/wiki page libraries (BaseTemplate 119) can't be copied as plain
+        // files: SharePoint denies uploading .aspx via app-only, and pages store
+        // their content in list fields. Route them through the Pages API copier.
+        if (sourceList.BaseTemplate == 119)
+        {
+            var pageCopier = new PageCopier(source, target, overwrite: false)
+            {
+                IncludeNames = BuildIncludeNames(options),
+            };
+            await pageCopier.CopyPagesAsync(result, cancellationToken);
+            result.FinishedUtc = DateTime.UtcNow;
+            Diagnostics.TraceLog.Write("Copy", $"done '{sourceListTitle}' (pages): {result.Summary()}");
             return result;
         }
 
@@ -104,6 +119,17 @@ public static class CopyEngine
         result.FinishedUtc = DateTime.UtcNow;
         Diagnostics.TraceLog.Write("Copy", $"done '{sourceListTitle}': {result.Summary()}");
         return result;
+    }
+
+    /// <summary>Page file names to include (from a specific selection), or null for all pages.</summary>
+    private static HashSet<string>? BuildIncludeNames(CopyOptions options)
+    {
+        if (options.SelectedPaths is null || options.SelectedPaths.Count == 0) return null;
+        var names = options.SelectedPaths
+            .Select(p => p.Split('/')[^1])
+            .Where(n => n.EndsWith(".aspx", StringComparison.OrdinalIgnoreCase));
+        var set = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+        return set.Count > 0 ? set : null;
     }
 
     /// <summary>

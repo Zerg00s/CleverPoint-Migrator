@@ -197,7 +197,7 @@ html, body {
 .page-head p  { margin: 0; opacity: .65; font-size: 14px; }
 
 .section { margin-bottom: 26px; }
-.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--neutral-foreground-rest); opacity: .8; margin: 0 0 12px 0; }
+.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--neutral-foreground-rest); opacity: .95; margin: 0 0 12px 0; }
 
 .grid { display: grid; gap: 16px; }
 .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

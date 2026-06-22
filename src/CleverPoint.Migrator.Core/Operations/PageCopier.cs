@@ -24,6 +24,9 @@ public class PageCopier
     private readonly SpConnection _target;
     private readonly bool _overwrite;
 
+    /// <summary>When set, only these page file names (e.g. "Modern.aspx") are copied.</summary>
+    public HashSet<string>? IncludeNames { get; set; }
+
     public PageCopier(SpConnection source, SpConnection target, bool overwrite = false)
     {
         _source = source;
@@ -67,6 +70,7 @@ public class PageCopier
             var fileRef = (string)page["FileRef"];
             var name = fileRef.Split('/')[^1];
             if (!name.EndsWith(".aspx", StringComparison.OrdinalIgnoreCase)) continue;
+            if (IncludeNames is not null && !IncludeNames.Contains(name)) continue;
 
             var targetUrl = $"{targetList.RootFolder.ServerRelativeUrl}/{name}";
             if (targetPages.Contains(name) && !_overwrite)
