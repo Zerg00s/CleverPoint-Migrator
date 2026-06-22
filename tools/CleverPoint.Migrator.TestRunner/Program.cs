@@ -83,6 +83,7 @@ public static class Program
             ["seed-history"] = Scenarios.SeedHistoryTests.RunAsync,
             ["page-group"] = Scenarios.PageGroupTest.RunAsync,
             ["page-dump"] = Scenarios.PageDumpTest.RunAsync,
+            ["copy-cross-meta"] = Scenarios.CrossTenantMetaTest.RunAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();
