@@ -288,8 +288,8 @@ html, body {
 .entry-go { margin-left: auto; flex: 0 0 auto; opacity: .5; }
 .copy-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 4px 0; }
 /* Prominent call-to-action button (Fluent buttons are control-height by default). */
-.cp-cta::part(control) { height: 46px; padding: 0 36px; font-size: 15px; font-weight: 600; }
-.cp-cta { min-width: 240px; }
+.cp-cta::part(control) { height: 58px; padding: 0 54px; font-size: 18px; font-weight: 600; }
+.cp-cta { min-width: 320px; }
 
 /* ---- Misc ----------------------------------------------------------------- */
 /* Make grid text selectable + copyable (Fluent sets user-select:none by default).

@@ -90,7 +90,9 @@
         @{ var rows = _selected.Log.AsEnumerable().Reverse().ToList(); }
         <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px;">
             <FluentDataGrid Items="@rows.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
-                            GridTemplateColumns="0.7fr 2.4fr 0.9fr 2fr" ShowHover="true" Style="width:100%;">
+                            GridTemplateColumns="0.7fr 2.4fr 0.9fr 2fr" ShowHover="true" Style="width:100%;"
+                            RowClass="@(_ => "click-row")"
+                            OnRowClick="@((FluentDataGridRow<Core.Model.ItemCopyRecord> r) => { _rec = r.Item; return Task.CompletedTask; })">
                 <PropertyColumn Property="@(r => r.ItemType)" Title="Type" />
                 <PropertyColumn Property="@(r => r.SourcePath)" Title="Item" />
                 <TemplateColumn Title="Status">
@@ -100,6 +102,42 @@
             </FluentDataGrid>
         </div>
     </FluentCard>
+}
+
+@if (_rec is { } rec && _selected is { } sel)
+{
+    <div class="cp-modal-backdrop" @onclick="@(() => _rec = null)">
+        <div class="cp-modal" @onclick:stopPropagation="true">
+            <div class="cp-modal-head">
+                <span class="status-pill @ItemStatusClass(rec.Status)">@rec.Status</span>
+                <h3 style="margin:0;">@rec.ItemType details</h3>
+                <FluentSpacer />
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _rec = null)" />
+            </div>
+            <div class="cp-modal-body">
+                <div class="kv"><span class="k">Type</span><span class="v">@rec.ItemType</span></div>
+                <div class="kv"><span class="k">Status</span><span class="v">@rec.Status</span></div>
+                <div class="kv"><span class="k">Source</span><span class="v">@Full(sel.SourceSite, rec.SourcePath)</span></div>
+                <div class="kv"><span class="k">Target</span><span class="v">@Full(sel.TargetSite, rec.TargetPath)</span></div>
+                @if (!string.IsNullOrEmpty(rec.Message))
+                {
+                    <div class="kv"><span class="k">Detail</span><span class="v">@rec.Message</span></div>
+                }
+                @if (rec.TimestampUtc != default)
+                {
+                    <div class="kv"><span class="k">When</span><span class="v">@rec.TimestampUtc.ToLocalTime().ToString("F")</span></div>
+                }
+            </div>
+            <div class="cp-modal-foot">
+                @{ var openUrl = Full(sel.TargetSite, rec.TargetPath); }
+                @if (!string.IsNullOrEmpty(openUrl) && openUrl.StartsWith("http"))
+                {
+                    <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Open())" OnClick="@(() => Browser.Open(openUrl))">Open target in browser</FluentButton>
+                }
+                <FluentButton Appearance="Appearance.Accent" OnClick="@(() => _rec = null)">Close</FluentButton>
+            </div>
+        </div>
+    </div>
 }
 
 @code {
@@ -120,6 +158,21 @@
     private void Refresh() => _tasks = Runner.Snapshot();
 
     private void OpenInHistory(CopyTask t) => Nav.NavigateTo("/history");
+
+    private Core.Model.ItemCopyRecord? _rec;
+
+    private static string Full(string? site, string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        if (path.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return path;
+        if (string.IsNullOrEmpty(site)) return path;
+        try
+        {
+            var authority = new Uri(site).GetLeftPart(UriPartial.Authority);
+            return path.StartsWith("/") ? authority + path : $"{site.TrimEnd('/')}/{path}";
+        }
+        catch { return path; }
+    }
 
     private int _editId;
     private string _editName = "";
