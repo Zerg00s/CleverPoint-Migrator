@@ -50,7 +50,7 @@
         }
         else if (CurrentList is null && _lists.Count > 0)
         {
-            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()" ResizableColumns="true"
+            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()"
                             GridTemplateColumns="@(IsSource ? "44px 2fr 1fr" : "2fr 1fr")" ShowHover="true" Style="width:100%;"
                             RowClass="@(_ => "click-row")"
                             OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is not null) await OpenList(r.Item); })">
@@ -94,7 +94,6 @@
             </div>
             <div class="cp-scroll" style="height:100%; border:none;">
                 <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
-                                ResizableColumns="true"
                                 GridTemplateColumns="@(IsSource ? "44px 2fr 1.3fr 1.3fr" : "2fr 1.3fr 1.3fr")" ShowHover="true" Style="width:100%;"
                                 RowClass="@(e => e.IsFolder ? "folder-row" : "")"
                                 OnRowClick="@(async (FluentDataGridRow<SpFolderEntry> r) => { if (r.Item?.IsFolder == true) await OpenFolder(r.Item); })">
