@@ -139,10 +139,15 @@ public class PageCopier
 
                 // Canvas + metadata through SavePageAsDraft (the supported
                 // authoring surface; stores the canvas raw).
+                // PageLayoutType is REQUIRED: without it the target renders broken
+                // ("NoComponentId"). It's Article / Home / SingleWebPartAppPage.
+                var layoutType = Get("PageLayoutType");
+                if (string.IsNullOrEmpty(layoutType)) layoutType = "Article";
                 var payload = new Dictionary<string, object?>
                 {
                     ["__metadata"] = new Dictionary<string, string> { ["type"] = "SP.Publishing.SitePage" },
                     ["Title"] = Get("Title") ?? Path.GetFileNameWithoutExtension(name),
+                    ["PageLayoutType"] = layoutType,
                     ["CanvasContent1"] = RewriteUrls(Get("CanvasContent1") ?? "", sourceCtx.Web, targetCtx.Web),
                     ["LayoutWebpartsContent"] = RewriteUrls(Get("LayoutWebpartsContent") ?? "", sourceCtx.Web, targetCtx.Web),
                     ["BannerImageUrl"] = RewriteUrls(Get("BannerImageUrl") ?? "", sourceCtx.Web, targetCtx.Web),
@@ -170,6 +175,9 @@ public class PageCopier
                 if (editorId.HasValue) item["Editor"] = new FieldUserValue { LookupId = editorId.Value };
                 item["Created"] = ItemCopier.ToWriteDate(page["Created"]);
                 item["Modified"] = ItemCopier.ToWriteDate(page["Modified"]);
+                // PageLayoutType is set on the item (SavePageAsDraft ignores it); without
+                // it the page renders "NoComponentId".
+                item["PageLayoutType"] = layoutType;
                 item.UpdateOverwriteVersion();
                 await targetCtx.ExecuteQueryAsync();
 
