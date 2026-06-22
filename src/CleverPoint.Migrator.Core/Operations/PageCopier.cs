@@ -184,6 +184,9 @@ public class PageCopier
                 // e.g. M365 Group sites). SavePageAsDraft ignores both.
                 item["PageLayoutType"] = layoutType;
                 item["ClientSideApplicationId"] = ModernPagesAppId;
+                // Carry the promoted state so news posts arrive as news (0=page, 2=news).
+                if (page.FieldValues.TryGetValue("PromotedState", out var ps) && ps is not null)
+                    item["PromotedState"] = ps;
                 item.UpdateOverwriteVersion();
                 await targetCtx.ExecuteQueryAsync();
 

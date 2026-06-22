@@ -142,8 +142,22 @@
                 </FluentSelect>
             </div>
             <div></div>
-            <div class="field"><span class="field-label">From (on or after)</span><FluentDatePicker @bind-Value="_dateFrom" Disabled="_running" Style="width:100%;" /></div>
-            <div class="field"><span class="field-label">To (on or before)</span><FluentDatePicker @bind-Value="_dateTo" Disabled="_running" Style="width:100%;" /></div>
+            <div class="field">
+                <span class="field-label">From (on or after)</span>
+                <div style="display:flex; gap:8px;">
+                    <FluentDatePicker @bind-Value="_dateFrom" Disabled="_running" Style="flex:1 1 auto;" />
+                    <FluentTimePicker @bind-Value="_timeFrom" Disabled="_running" Style="width:130px;" />
+                </div>
+            </div>
+            <div class="field">
+                <span class="field-label">To (on or before)</span>
+                <div style="display:flex; gap:8px;">
+                    <FluentDatePicker @bind-Value="_dateTo" Disabled="_running" Style="flex:1 1 auto;" />
+                    <FluentTimePicker @bind-Value="_timeTo" Disabled="_running" Style="width:130px;" />
+                </div>
+            </div>
+            <div></div>
+            <span class="hint">Times are in your local timezone. Leave a time blank to include the whole day.</span>
         </div>
     }
 
@@ -154,8 +168,8 @@
         <FluentCheckbox @bind-Value="_contentTypes" Label="Copy content types &amp; site columns" Disabled="_running" />
     </div>
 
-    <div class="btn-row" style="margin-top:22px;">
-        <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Play())"
+    <div class="begin-bar">
+        <FluentButton Appearance="Appearance.Accent" Class="cp-cta" IconStart="@(new Icons.Regular.Size24.Play())"
                       @onclick="Start">Begin copy</FluentButton>
     </div>
 
@@ -182,6 +196,8 @@
     private string _dateField = "Modified";
     private DateTime? _dateFrom;
     private DateTime? _dateTo;
+    private DateTime? _timeFrom;
+    private DateTime? _timeTo;
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
@@ -255,6 +271,10 @@
 
     private static string DefaultUrl(string title) => string.Concat(title.Where(char.IsLetterOrDigit));
 
+    // Combine a picked date + optional time as local, return UTC.
+    private static DateTime LocalToUtc(DateTime date, DateTime? time)
+        => DateTime.SpecifyKind(date.Date.Add(time?.TimeOfDay ?? TimeSpan.Zero), DateTimeKind.Local).ToUniversalTime();
+
     // Friendly site name for the task title: the /sites/<name> segment, else the host label.
     private static string SiteName(string url)
     {
@@ -322,10 +342,12 @@
                     _ => ExistingItemMode.Overwrite,
                 },
                 DateField = _dateField == "Created" ? DateFilterField.Created : DateFilterField.Modified,
-                ModifiedSinceUtc = _useDateFilter && _dateFrom.HasValue
-                    ? DateTime.SpecifyKind(_dateFrom.Value.Date, DateTimeKind.Utc) : null,
+                // Interpret the picked date/time as LOCAL and convert to UTC (so a day
+                // boundary isn't off by the timezone). No time = whole-day inclusive.
+                ModifiedSinceUtc = _useDateFilter && _dateFrom.HasValue ? LocalToUtc(_dateFrom.Value, _timeFrom) : null,
                 ModifiedBeforeUtc = _useDateFilter && _dateTo.HasValue
-                    ? DateTime.SpecifyKind(_dateTo.Value.Date.AddDays(1), DateTimeKind.Utc) : null,
+                    ? LocalToUtc(_dateTo.Value, _timeTo).Add(_timeTo.HasValue ? TimeSpan.FromSeconds(1) : TimeSpan.FromDays(1))
+                    : null,
             };
 
             Runner.Enqueue(name, _src, _tgt, job.SourceListTitle, options, _engine);

@@ -42,7 +42,7 @@
         <div class="cp-grid cp-scroll runs-grid" style="@($"max-height: calc(100vh - {(ShowPageSize ? 320 : 360)}px); min-height:200px;")">
             <FluentDataGrid Items="@_view.AsQueryable()" Pagination="@_pagination" ResizableColumns="true"
                             GenerateHeader="GenerateHeaderOption.Sticky"
-                            GridTemplateColumns="72px 2fr 1.1fr 1.1fr 0.7fr 1.2fr 1.9fr" ShowHover="true" Style="width:100%;"
+                            GridTemplateColumns="70px 360px 150px 150px 90px 150px 360px" ShowHover="true" Style="width:100%;"
                             OnRowClick="@(async (FluentDataGridRow<Core.History.MigrationRun> r) => { await Task.CompletedTask; if (r.Item is not null) Nav.NavigateTo($"/run/{r.Item.Id}"); })">
                 <PropertyColumn Property="@(r => r.Id)" Title="#" Sortable="true" />
                 <PropertyColumn Property="@(r => r.Name)" Title="Name" Sortable="true" />

@@ -20,7 +20,7 @@ else
 {
     <div class="conn-table cp-grid">
         <FluentDataGrid Items="@Settings.Connections.AsQueryable()" ResizableColumns="true"
-                        GridTemplateColumns="1.2fr 1fr 2.4fr 1.4fr 210px" ShowHover="true" Style="width:100%;">
+                        GridTemplateColumns="200px 150px 460px 220px 210px" ShowHover="true" Style="width:100%;">
             <PropertyColumn Property="@(c => c.Name)" Title="Name" />
             <TemplateColumn Title="Sign-in">@(context.AuthMode == "AppCertificate" ? "App + certificate" : "Browser")</TemplateColumn>
             <PropertyColumn Property="@(c => c.SiteUrl)" Title="Site" />
