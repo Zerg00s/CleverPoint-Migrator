@@ -76,7 +76,9 @@ else
             else
             {
                 <FluentDataGrid Items="@_filteredItems.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
-                                GridTemplateColumns="0.7fr 2.6fr 0.9fr 2.2fr 1.1fr" ShowHover="true" Style="width:100%;">
+                                GridTemplateColumns="0.7fr 2.6fr 0.9fr 2.2fr 1.1fr" ShowHover="true" Style="width:100%;"
+                                RowClass="@(_ => "click-row")"
+                                OnRowClick="@((FluentDataGridRow<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> r) => { _detail = r.Item; return Task.CompletedTask; })">
                     <PropertyColumn Property="@(i => i.ItemType)" Title="Type" />
                     <PropertyColumn Property="@(i => i.SourcePath)" Title="Item" />
                     <TemplateColumn Title="Status">
@@ -88,6 +90,42 @@ else
             }
         </div>
     </FluentCard>
+}
+
+@if (_detail is { } d)
+{
+    <div class="cp-modal-backdrop" @onclick="@(() => _detail = null)">
+        <div class="cp-modal" @onclick:stopPropagation="true">
+            <div class="cp-modal-head">
+                <span class="status-pill @ItemStatusClass(d.Status)">@d.Status</span>
+                <h3 style="margin:0;">@d.ItemType details</h3>
+                <FluentSpacer />
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _detail = null)" />
+            </div>
+            <div class="cp-modal-body">
+                <div class="kv"><span class="k">Type</span><span class="v">@d.ItemType</span></div>
+                <div class="kv"><span class="k">Status</span><span class="v">@d.Status</span></div>
+                <div class="kv"><span class="k">Source</span><span class="v">@Full(_run?.SourceUrl, d.SourcePath)</span></div>
+                <div class="kv"><span class="k">Target</span><span class="v">@Full(_run?.TargetUrl, string.IsNullOrEmpty(d.ItemUrl) ? d.TargetPath : d.ItemUrl)</span></div>
+                @if (!string.IsNullOrEmpty(d.Message))
+                {
+                    <div class="kv"><span class="k">Detail</span><span class="v">@d.Message</span></div>
+                }
+                @if (d.WhenUtc.HasValue)
+                {
+                    <div class="kv"><span class="k">When</span><span class="v">@d.WhenUtc.Value.ToLocalTime().ToString("F")</span></div>
+                }
+            </div>
+            <div class="cp-modal-foot">
+                @{ var openUrl = Full(_run?.TargetUrl, string.IsNullOrEmpty(d.ItemUrl) ? d.TargetPath : d.ItemUrl); }
+                @if (!string.IsNullOrEmpty(openUrl) && openUrl.StartsWith("http"))
+                {
+                    <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Open())" OnClick="@(() => Browser.Open(openUrl))">Open target in browser</FluentButton>
+                }
+                <FluentButton Appearance="Appearance.Accent" OnClick="@(() => _detail = null)">Close</FluentButton>
+            </div>
+        </div>
+    </div>
 }
 
 @code {
@@ -120,6 +158,22 @@ else
         if (_logStatus != "All")
             q = q.Where(i => i.Status == _logStatus);
         _filteredItems = q.ToList();
+    }
+
+    private (string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)? _detail;
+
+    // Build an absolute URL from a site + (server-relative or already-absolute) path.
+    private static string Full(string? site, string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        if (path.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return path;
+        if (string.IsNullOrEmpty(site)) return path;
+        try
+        {
+            var authority = new Uri(site).GetLeftPart(UriPartial.Authority);
+            return path.StartsWith("/") ? authority + path : $"{site.TrimEnd('/')}/{path}";
+        }
+        catch { return path; }
     }
 
     private bool _editingName;

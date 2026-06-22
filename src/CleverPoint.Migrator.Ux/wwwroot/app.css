@@ -30,6 +30,16 @@
     --cp-fail-text: #f08a93;
 }
 
+/* ---- Detail modal (log item) ---------------------------------------------- */
+.cp-modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.cp-modal { width: min(640px, 92vw); max-height: 86vh; overflow: auto; background: var(--neutral-layer-1); border: 1px solid var(--neutral-stroke-divider-rest, #444); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,.4); }
+.cp-modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #3a3a3a); }
+.cp-modal-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.cp-modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--neutral-stroke-divider-rest, #3a3a3a); }
+.cp-modal .kv { display: grid; grid-template-columns: 90px 1fr; gap: 12px; align-items: start; }
+.cp-modal .kv .k { font-size: 12px; font-weight: 600; opacity: .65; text-transform: uppercase; letter-spacing: .4px; padding-top: 2px; }
+.cp-modal .kv .v { word-break: break-all; user-select: text; }
+
 /* ---- Activity (background runner) ----------------------------------------- */
 .nav-badge { margin-left: auto; background: var(--cp-accent); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 7px; min-width: 18px; text-align: center; }
 .footer-link { cursor: pointer; }
