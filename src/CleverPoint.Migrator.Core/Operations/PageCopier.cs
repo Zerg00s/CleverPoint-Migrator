@@ -132,6 +132,11 @@ public class PageCopier
                 var targetWebUrl = targetCtx.Web.Url.TrimEnd('/');
                 var pageId = stubItem.Id;
 
+                // On some libraries (notably M365 Group sites) AddTemplateFile leaves the
+                // stub WITHOUT the modern Site Page content type, so the SitePages API
+                // rejects it ("does not have the site page content type"). Promote it.
+                await EnsureSitePageContentTypeAsync(targetCtx, targetList, targetUrl);
+
                 // Canvas + metadata through SavePageAsDraft (the supported
                 // authoring surface; stores the canvas raw).
                 var payload = new Dictionary<string, object?>
@@ -200,6 +205,41 @@ public class PageCopier
             ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(actualRef)).MoveTo(intendedUrl, MoveOperations.Overwrite);
             await ctx.ExecuteQueryAsync();
         }
+    }
+
+    // The modern Site Page content type's base id. A library's "Site Page" CT
+    // inherits from this (its StringId starts with it).
+    private const string SitePageContentTypeBaseId = "0x0101009D1CB255DA76424F860D91F20E6C4118";
+
+    /// <summary>
+    /// Ensures the page item carries the Site Page content type, so the SitePages
+    /// REST API (checkoutpage / SavePageAsDraft / publish) accepts it. Some
+    /// libraries create AddTemplateFile stubs with a non-site-page content type.
+    /// </summary>
+    private static async Task EnsureSitePageContentTypeAsync(ClientContext ctx, List list, string fileUrl)
+    {
+        try
+        {
+            var item = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(fileUrl)).ListItemAllFields;
+            ctx.Load(item, i => i["ContentTypeId"]);
+            ctx.Load(list.ContentTypes, cts => cts.Include(c => c.Name, c => c.StringId));
+            await ctx.ExecuteQueryAsync();
+
+            var current = item["ContentTypeId"]?.ToString() ?? "";
+            if (current.StartsWith(SitePageContentTypeBaseId, StringComparison.OrdinalIgnoreCase))
+                return; // already a site page
+
+            var sitePageCt = list.ContentTypes.AsEnumerable().FirstOrDefault(c =>
+                c.StringId.StartsWith(SitePageContentTypeBaseId, StringComparison.OrdinalIgnoreCase))
+                ?? list.ContentTypes.AsEnumerable().FirstOrDefault(c =>
+                    c.Name.Equals("Site Page", StringComparison.OrdinalIgnoreCase));
+            if (sitePageCt is null) return;
+
+            item["ContentTypeId"] = sitePageCt.StringId;
+            item.UpdateOverwriteVersion();
+            await ctx.ExecuteQueryAsync();
+        }
+        catch { /* best-effort; the SitePages call will surface a clear error if it still fails */ }
     }
 
     private static string Esc(string s) => Uri.EscapeDataString(s).Replace("'", "''");
