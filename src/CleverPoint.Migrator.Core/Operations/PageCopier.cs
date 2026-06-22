@@ -14,6 +14,9 @@ namespace CleverPoint.Migrator.Core.Operations;
 /// </summary>
 public class PageCopier
 {
+    /// <summary>The SitePages client-side application id that marks an item as a modern page.</summary>
+    private const string ModernPagesAppId = "b6917cb1-93a0-4b97-a84d-7cf49975d4ec";
+
     private static readonly string[] PageFields =
     {
         "Title", "CanvasContent1", "LayoutWebpartsContent", "PageLayoutType",
@@ -175,9 +178,12 @@ public class PageCopier
                 if (editorId.HasValue) item["Editor"] = new FieldUserValue { LookupId = editorId.Value };
                 item["Created"] = ItemCopier.ToWriteDate(page["Created"]);
                 item["Modified"] = ItemCopier.ToWriteDate(page["Modified"]);
-                // PageLayoutType is set on the item (SavePageAsDraft ignores it); without
-                // it the page renders "NoComponentId".
+                // A modern page MUST carry these on its item or it renders broken
+                // ("NoComponentId"): PageLayoutType, and ClientSideApplicationId set to
+                // the SitePages app id (AddTemplateFile leaves it null on some sites,
+                // e.g. M365 Group sites). SavePageAsDraft ignores both.
                 item["PageLayoutType"] = layoutType;
+                item["ClientSideApplicationId"] = ModernPagesAppId;
                 item.UpdateOverwriteVersion();
                 await targetCtx.ExecuteQueryAsync();
 
