@@ -22,16 +22,16 @@ public class PageCopier
 
     private readonly SpConnection _source;
     private readonly SpConnection _target;
-    private readonly bool _overwrite;
+    private readonly ExistingItemMode _mode;
 
     /// <summary>When set, only these page file names (e.g. "Modern.aspx") are copied.</summary>
     public HashSet<string>? IncludeNames { get; set; }
 
-    public PageCopier(SpConnection source, SpConnection target, bool overwrite = false)
+    public PageCopier(SpConnection source, SpConnection target, ExistingItemMode mode = ExistingItemMode.Overwrite)
     {
+        _mode = mode;
         _source = source;
         _target = target;
-        _overwrite = overwrite;
     }
 
     public async Task<CopyResult> CopyPagesAsync(CopyResult? liveResult = null, CancellationToken ct = default)
@@ -52,13 +52,16 @@ public class PageCopier
         var users = new UserResolver(sourceCtx, targetCtx);
         await users.PrimeSourceUsersAsync();
 
-        // Existing target pages (skip-or-overwrite decision).
-        var targetPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Existing target pages with their Modified date (skip / overwrite / if-newer).
+        var targetPages = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         var existingQuery = targetList.GetItems(CamlQuery.CreateAllItemsQuery(500));
         targetCtx.Load(existingQuery);
         await targetCtx.ExecuteQueryAsync();
         foreach (var item in existingQuery)
-            targetPages.Add(((string)item["FileRef"]).Split('/')[^1]);
+        {
+            var n = ((string)item["FileRef"]).Split('/')[^1];
+            targetPages[n] = item["Modified"] is DateTime dt ? dt : DateTime.MinValue;
+        }
 
         var pages = sourceList.GetItems(CamlQuery.CreateAllItemsQuery(500));
         sourceCtx.Load(pages);
@@ -73,10 +76,22 @@ public class PageCopier
             if (IncludeNames is not null && !IncludeNames.Contains(name)) continue;
 
             var targetUrl = $"{targetList.RootFolder.ServerRelativeUrl}/{name}";
-            if (targetPages.Contains(name) && !_overwrite)
+            if (targetPages.TryGetValue(name, out var targetModified))
             {
-                result.Add("Page", fileRef, targetUrl, ItemCopyStatus.Skipped, "page already exists on target (overwrite is off)");
-                continue;
+                if (_mode == ExistingItemMode.Skip)
+                {
+                    result.Add("Page", fileRef, targetUrl, ItemCopyStatus.Skipped, "page already exists (skip mode)");
+                    continue;
+                }
+                if (_mode == ExistingItemMode.CopyIfNewer)
+                {
+                    var sourceModified = page["Modified"] is DateTime sm ? sm : DateTime.MaxValue;
+                    if (sourceModified <= targetModified)
+                    {
+                        result.Add("Page", fileRef, targetUrl, ItemCopyStatus.Skipped, "target page is already up to date");
+                        continue;
+                    }
+                }
             }
 
             try
@@ -156,7 +171,7 @@ public class PageCopier
                 await _target.Rest.PostAsync($"{targetWebUrl}/_api/sitepages/pages({pageId})/publish");
 
                 result.Add("Page", fileRef, targetUrl, ItemCopyStatus.Copied,
-                    targetPages.Contains(name) ? "overwritten" : null);
+                    targetPages.ContainsKey(name) ? "overwritten" : null);
             }
             catch (Exception ex)
             {

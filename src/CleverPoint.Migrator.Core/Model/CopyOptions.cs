@@ -1,11 +1,22 @@
 namespace CleverPoint.Migrator.Core.Model;
 
+/// <summary>What to do when the item already exists on the target.</summary>
+public enum ExistingItemMode { Overwrite, CopyIfNewer, Skip }
+
+/// <summary>Which date a date filter applies to.</summary>
+public enum DateFilterField { Modified, Created }
+
 /// <summary>
 /// Options for one list/library copy operation. Defaults follow the
 /// "preserve everything, touch nothing extra" philosophy.
 /// </summary>
 public class CopyOptions
 {
+    /// <summary>What to do when the target item already exists.</summary>
+    public ExistingItemMode ExistingMode { get; set; } = ExistingItemMode.Overwrite;
+
+    /// <summary>Which date the Since/Before filter applies to.</summary>
+    public DateFilterField DateField { get; set; } = DateFilterField.Modified;
     /// <summary>Title for the target list. When the target list does not exist it is created.</summary>
     public string TargetListTitle { get; set; } = "";
 

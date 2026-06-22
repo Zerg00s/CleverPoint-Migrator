@@ -119,7 +119,33 @@
             <FluentNumberField @bind-Value="_maxVersions" Min="1" Max="2000" Style="width:140px;" Disabled="_running" />
             <span class="hint">1 = latest only. Up to 2000.</span>
         </div>
+        <div class="field">
+            <span class="field-label">If the item already exists on the target</span>
+            <FluentSelect TOption="string" @bind-Value="_existingMode" Style="width:100%;" Disabled="_running">
+                <FluentOption Value="Overwrite">Overwrite (replace the target copy)</FluentOption>
+                <FluentOption Value="CopyIfNewer">Copy if newer (skip when the target is up to date)</FluentOption>
+                <FluentOption Value="Skip">Skip (leave existing target items alone)</FluentOption>
+            </FluentSelect>
+        </div>
     </div>
+
+    <div class="section-title" style="margin-top:18px;">Date filter (optional)</div>
+    <FluentCheckbox @bind-Value="_useDateFilter" Label="Only copy items within a date range" Disabled="_running" />
+    @if (_useDateFilter)
+    {
+        <div class="grid cols-2" style="gap:14px 28px; margin-top:10px; max-width:760px;">
+            <div class="field">
+                <span class="field-label">Based on</span>
+                <FluentSelect TOption="string" @bind-Value="_dateField" Style="width:100%;" Disabled="_running">
+                    <FluentOption Value="Modified">Last modified date</FluentOption>
+                    <FluentOption Value="Created">Created date</FluentOption>
+                </FluentSelect>
+            </div>
+            <div></div>
+            <div class="field"><span class="field-label">From (on or after)</span><FluentDatePicker @bind-Value="_dateFrom" Disabled="_running" Style="width:100%;" /></div>
+            <div class="field"><span class="field-label">To (on or before)</span><FluentDatePicker @bind-Value="_dateTo" Disabled="_running" Style="width:100%;" /></div>
+        </div>
+    }
 
     <div class="grid cols-2" style="gap:8px 28px; margin:10px 0 4px;">
         <FluentCheckbox @bind-Value="_preserve" Label="Preserve authors and dates" Disabled="_running" />
@@ -151,6 +177,11 @@
     private bool _lockContentOnly;
     private bool _targetLocked;
     private int _maxVersions = 1;
+    private string _existingMode = "Overwrite";
+    private bool _useDateFilter;
+    private string _dateField = "Modified";
+    private DateTime? _dateFrom;
+    private DateTime? _dateTo;
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
@@ -284,6 +315,17 @@
                 MaxVersions = _maxVersions,
                 SelectedPaths = job.SelectedPaths,
                 ItemIds = job.SelectedItemIds,
+                ExistingMode = _existingMode switch
+                {
+                    "CopyIfNewer" => ExistingItemMode.CopyIfNewer,
+                    "Skip" => ExistingItemMode.Skip,
+                    _ => ExistingItemMode.Overwrite,
+                },
+                DateField = _dateField == "Created" ? DateFilterField.Created : DateFilterField.Modified,
+                ModifiedSinceUtc = _useDateFilter && _dateFrom.HasValue
+                    ? DateTime.SpecifyKind(_dateFrom.Value.Date, DateTimeKind.Utc) : null,
+                ModifiedBeforeUtc = _useDateFilter && _dateTo.HasValue
+                    ? DateTime.SpecifyKind(_dateTo.Value.Date.AddDays(1), DateTimeKind.Utc) : null,
             };
 
             Runner.Enqueue(name, _src, _tgt, job.SourceListTitle, options, _engine);

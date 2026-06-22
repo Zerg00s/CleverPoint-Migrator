@@ -70,7 +70,7 @@ public static class CopyEngine
         // their content in list fields. Route them through the Pages API copier.
         if (sourceList.BaseTemplate == 119)
         {
-            var pageCopier = new PageCopier(source, target, overwrite: false)
+            var pageCopier = new PageCopier(source, target, options.ExistingMode)
             {
                 IncludeNames = BuildIncludeNames(options),
             };

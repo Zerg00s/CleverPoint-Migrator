@@ -91,6 +91,22 @@ public class FileCopier
                 continue;
             }
 
+            // Date filter (files only; folders must remain so children can land).
+            if (sourceItem.FileSystemObjectType == FileSystemObjectType.File
+                && (options.ModifiedSinceUtc.HasValue || options.ModifiedBeforeUtc.HasValue))
+            {
+                var date = options.DateField == Model.DateFilterField.Created
+                    ? ItemCopier.ReadUtc(sourceItem["Created"]) : ItemCopier.ReadUtc(sourceItem["Modified"]);
+                if ((options.ModifiedSinceUtc.HasValue && date < options.ModifiedSinceUtc.Value)
+                    || (options.ModifiedBeforeUtc.HasValue && date >= options.ModifiedBeforeUtc.Value))
+                {
+                    if (options.RecordSkippedItems)
+                        result.Add("File", fileRef, targetPath, ItemCopyStatus.Skipped,
+                            $"filtered out by date ({options.DateField.ToString().ToLowerInvariant()} {date:yyyy-MM-dd}Z)");
+                    continue;
+                }
+            }
+
             try
             {
                 if (sourceItem.FileSystemObjectType == FileSystemObjectType.Folder)
@@ -101,6 +117,27 @@ public class FileCopier
                         await _itemCopier.ApplyFolderMetadataAsync(sourceItem, folderItem, result, fileRef);
                     result.Add("Folder", fileRef, targetPath, ItemCopyStatus.Copied);
                     continue;
+                }
+
+                // Existing-file handling (Skip / Copy-if-newer). Default Overwrite
+                // does no extra read, so large copies aren't slowed.
+                if (options.ExistingMode != Model.ExistingItemMode.Overwrite)
+                {
+                    var targetMod = await ReadServerModifiedAsync(targetPath);
+                    if (targetMod.HasValue)
+                    {
+                        if (options.ExistingMode == Model.ExistingItemMode.Skip)
+                        {
+                            result.Add("File", fileRef, targetPath, ItemCopyStatus.Skipped, "already exists (skip mode)");
+                            continue;
+                        }
+                        var sourceMod = sourceItem["Modified"] is DateTime sd ? sd : DateTime.MaxValue;
+                        if (sourceMod <= targetMod.Value)
+                        {
+                            result.Add("File", fileRef, targetPath, ItemCopyStatus.Skipped, "target file is already up to date");
+                            continue;
+                        }
+                    }
                 }
 
                 var parentDir = relativePath.Contains('/')

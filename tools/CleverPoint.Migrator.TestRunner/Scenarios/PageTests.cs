@@ -138,7 +138,7 @@ public static class PageTests
         }
 
         // ---- Copy pages cross-site (subsite -> parent web) ----
-        var copier = new PageCopier(site, Program.Source, overwrite: false);
+        var copier = new PageCopier(site, Program.Source, CleverPoint.Migrator.Core.Model.ExistingItemMode.Skip);
         var result = await copier.CopyPagesAsync();
         Console.WriteLine($"  pages: {result.Summary()}");
         foreach (var r in result.Records.Where(r => r.Status == ItemCopyStatus.Copied).Take(3))

@@ -381,16 +381,17 @@ public class ItemCopier
 
                 if (options.ModifiedSinceUtc.HasValue || options.ModifiedBeforeUtc.HasValue)
                 {
-                    var modified = itemModified;
+                    // Filter on the chosen date field (Modified by default, or Created).
+                    var date = options.DateField == Model.DateFilterField.Created ? ReadUtc(item["Created"]) : itemModified;
                     var filtered =
-                        (options.ModifiedSinceUtc.HasValue && modified < options.ModifiedSinceUtc.Value) ||
-                        (options.ModifiedBeforeUtc.HasValue && modified >= options.ModifiedBeforeUtc.Value);
+                        (options.ModifiedSinceUtc.HasValue && date < options.ModifiedSinceUtc.Value) ||
+                        (options.ModifiedBeforeUtc.HasValue && date >= options.ModifiedBeforeUtc.Value);
                     if (filtered)
                     {
-                        // Delta runs must SHOW what they skipped.
+                        // Delta/filter runs must SHOW what they skipped.
                         if (options.RecordSkippedItems && DeltaSkipLog != null)
                             DeltaSkipLog.Add("Item", (string)item["FileRef"], "", ItemCopyStatus.Skipped,
-                                $"delta: unchanged (modified {modified:yyyy-MM-dd HH:mm}Z)");
+                                $"filtered out by date ({options.DateField.ToString().ToLowerInvariant()} {date:yyyy-MM-dd}Z)");
                         continue;
                     }
                 }
