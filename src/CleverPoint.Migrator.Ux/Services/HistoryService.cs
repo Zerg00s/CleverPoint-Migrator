@@ -5,6 +5,18 @@ namespace CleverPoint.Migrator.Ux.Services;
 /// <summary>Thin façade over the engine's real SQLite history store (Core).</summary>
 public class HistoryService
 {
+    /// <summary>At startup, mark any run left "Running" by a previous session as
+    /// Interrupted (jobs run in-process, so none can still be running here).</summary>
+    public void ReconcileOrphanedRuns()
+    {
+        try
+        {
+            using var store = new HistoryStore(UxSettings.HistoryDbPath);
+            store.MarkRunningAsInterrupted();
+        }
+        catch { /* non-fatal */ }
+    }
+
     public List<MigrationRun> GetRuns(int limit = 2000)
     {
         try

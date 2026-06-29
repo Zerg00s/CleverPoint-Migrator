@@ -4,6 +4,7 @@
 @inject BrowserSignIn SignIn
 @inject IToastService Toasts
 @inject DragState Drag
+@inject ExplorerState State
 @implements IDisposable
 
 <div class="exp-pane @(!IsSource && Drag.Active ? "drop-ready" : "") @(_dragOver ? "drop-hot" : "")"
@@ -65,24 +66,19 @@
                     }
                 </div>
             }
-            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()"
-                            GridTemplateColumns="@(IsSource ? "44px 2fr 1fr" : "2fr 1fr")" ShowHover="true" Style="width:100%;"
+            <FluentDataGrid TGridItem="SpListInfo" Items="@_lists.AsQueryable()" ResizableColumns="true"
+                            GridTemplateColumns="2fr 1fr" ShowHover="true" Style="width:100%;"
                             RowClass="@(_ => "click-row")"
                             OnRowClick="@(async (FluentDataGridRow<SpListInfo> r) => { if (r.Item is null) return; if (r.Item.IsSubsite) await OpenSubsite(r.Item); else await OpenList(r.Item); })">
-                @if (IsSource)
-                {
-                    <TemplateColumn Title="">
-                        @if (!context.IsSubsite)
-                        {
-                            <div @onclick:stopPropagation="true">
-                                <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="OnListTicked"
-                                                Title="Tick to copy this whole list/library" />
-                            </div>
-                        }
-                    </TemplateColumn>
-                }
                 <TemplateColumn Title="Name">
                     <div class="entry-cell">
+                        @if (IsSource && !context.IsSubsite)
+                        {
+                            <span class="entry-check" @onclick:stopPropagation="true">
+                                <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="OnListTicked"
+                                                Title="Tick to copy this whole list/library" />
+                            </span>
+                        }
                         <img class="ft-icon" src="@(context.IsSubsite ? FileIcons.Url("spo") : (string.IsNullOrEmpty(context.IconUrl) ? FileIcons.ForList(context) : context.IconUrl))"
                              onerror="@($"this.onerror=null;this.src='{(context.IsSubsite ? FileIcons.Url("spo") : FileIcons.ForList(context))}'")" alt="" />
                         <span class="entry-name @(context.IsSubsite ? "entry-folder" : "")">@context.Title</span>
@@ -111,30 +107,30 @@
                 }
             </div>
             <div class="cp-scroll" style="height:100%; border:none;">
-                <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
-                                GridTemplateColumns="@(IsSource ? "44px 2fr 1.3fr 1.3fr" : "2fr 1.3fr 1.3fr")" ShowHover="true" Style="width:100%;"
-                                RowClass="@(e => e.IsFolder ? "folder-row" : "")"
-                                OnRowClick="@(async (FluentDataGridRow<SpFolderEntry> r) => { if (r.Item?.IsFolder == true) await OpenFolder(r.Item); })">
-                    @if (IsSource)
-                    {
-                        <TemplateColumn Title="">
-                            <div @onclick:stopPropagation="true">
-                                <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="@(() => OnEntryTicked(context))"
-                                                Title="Tick to copy this item" />
-                            </div>
-                        </TemplateColumn>
-                    }
+                <FluentDataGrid Items="@_items.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky" ResizableColumns="true"
+                                GridTemplateColumns="2fr 0.8fr 1.2fr 1.2fr" ShowHover="true" Style="width:100%;"
+                                RowClass="@(e => e.IsFolder && !e.IsOneNote ? "folder-row" : "")"
+                                OnRowClick="@(async (FluentDataGridRow<SpFolderEntry> r) => { if (r.Item?.IsFolder == true && !r.Item.IsOneNote) await OpenFolder(r.Item); })">
                     <TemplateColumn Title="Name">
                         <div class="entry-cell" draggable="@(IsSource ? "true" : "false")"
                              @ondragstart="@(() => OnDragStart(context))" @ondragend="OnDragEnd">
+                            @if (IsSource)
+                            {
+                                <span class="entry-check" @onclick:stopPropagation="true">
+                                    <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="@(() => OnEntryTicked(context))"
+                                                    Title="Tick to copy this item" />
+                                </span>
+                            }
                             <img class="ft-icon" src="@FileIcons.ForEntry(context)" alt="" />
-                            <span class="entry-name @(context.IsFolder ? "entry-folder" : "")">@context.Name</span>
-                            @if (context.IsFolder)
+                            <span class="entry-name @(context.IsFolder && !context.IsOneNote ? "entry-folder" : "")"
+                                  title="@(context.IsOneNote ? "OneNote notebook - copied as a single unit" : null)">@context.Name</span>
+                            @if (context.IsFolder && !context.IsOneNote)
                             {
                                 <FluentIcon Value="@(new Icons.Regular.Size16.ChevronRight())" Class="entry-go" Title="Open" />
                             }
                         </div>
                     </TemplateColumn>
+                    <PropertyColumn Property="@(i => FormatSize(i))" Title="Size" Align="Align.End" />
                     <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" Align="Align.End" />
                     <PropertyColumn Property="@(i => i.ModifiedBy)" Title="Modified by" Sortable="true" Align="Align.End" />
                 </FluentDataGrid>
@@ -192,6 +188,27 @@
     public bool CurrentListIsLibrary => CurrentList?.IsLibrary ?? false;
     public bool HasConnection => Connection is not null;
 
+    /// <summary>A list or library is currently open in this pane.</summary>
+    public bool IsListOpen => CurrentList is not null;
+
+    /// <summary>The pane has drilled into a subfolder below the open library's root.</summary>
+    public bool IsInSubfolder => CurrentList is not null && _crumbs.Count > 1;
+
+    /// <summary>Server-relative URL of the folder currently shown in this pane.</summary>
+    public string CurrentFolderServerRelativeUrl => _folderUrl;
+
+    /// <summary>The open folder relative to the open list root (empty = list root).</summary>
+    public string CurrentSubfolderRelative
+    {
+        get
+        {
+            var root = CurrentList?.ServerRelativeUrl?.TrimEnd('/') ?? "";
+            var f = (_folderUrl ?? "").TrimEnd('/');
+            return f.Length > root.Length && f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                ? f[(root.Length + 1)..] : "";
+        }
+    }
+
     /// <summary>Library file/folder paths ticked across all folders (empty = whole list).</summary>
     public List<string> SelectedPaths => _pickedPaths.ToList();
 
@@ -216,7 +233,116 @@
     }
 
     private void OnDragChanged() => InvokeAsync(StateHasChanged);
-    public void Dispose() => Drag.Changed -= OnDragChanged;
+
+    private async Task NotifyChangedAsync()
+    {
+        SaveSnapshot();
+        await OnChanged.InvokeAsync();
+    }
+
+    private bool _restored;
+
+    // Restore the pane's last location + selection when returning to the explorer.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _restored) return;
+        _restored = true;
+        var snap = IsSource ? State.Source : State.Target;
+        if (snap is not null && !string.IsNullOrWhiteSpace(snap.Site))
+            await RestoreAsync(snap);
+    }
+
+    private async Task RestoreAsync(PaneSnapshot snap)
+    {
+        _site = snap.Site;
+        _selectedSites = new List<string> { snap.Site };
+        Connection = UxConnectionResolver.Find(Settings, _site);
+        if (Connection is null) return;
+        _webCrumbs.Clear();
+        _webCrumbs.AddRange(snap.WebCrumbs.Count > 0 ? snap.WebCrumbs : new[] { (FriendlyName(_site), _site) });
+
+        await LoadWebContentAsync();          // re-loads lists + subsites for this web
+        foreach (var l in _lists)             // re-tick whole-list selections
+            if (snap.TickedListTitles.Contains(l.Title)) l.Selected = true;
+
+        // Re-open the list + folder and re-apply the item selection. Match by URL when
+        // known (in-app navigation), else by title (restoring from a history run).
+        if (!string.IsNullOrEmpty(snap.OpenListServerRelativeUrl) || !string.IsNullOrEmpty(snap.OpenListTitle))
+        {
+            var list = _lists.FirstOrDefault(l => !l.IsSubsite && l.ServerRelativeUrl == snap.OpenListServerRelativeUrl)
+                    ?? _lists.FirstOrDefault(l => !l.IsSubsite && string.Equals(l.Title, snap.OpenListTitle, StringComparison.OrdinalIgnoreCase));
+            if (list is not null)
+            {
+                CurrentList = list;
+                _pickedPaths.Clear(); _pickedPaths.UnionWith(snap.PickedPaths);
+                _pickedFolders.Clear(); _pickedFolders.UnionWith(snap.PickedFolders);
+                _pickedIds.Clear(); _pickedIds.UnionWith(snap.PickedIds);
+                // Prefer an absolute FolderUrl; otherwise build it from a relative subfolder
+                // under the list we just resolved (history restore doesn't know the root).
+                _folderUrl = !string.IsNullOrEmpty(snap.FolderUrl) ? snap.FolderUrl
+                    : !string.IsNullOrEmpty(snap.OpenSubfolderRelative) ? $"{list.ServerRelativeUrl}/{snap.OpenSubfolderRelative.Trim('/')}"
+                    : list.ServerRelativeUrl;
+                _crumbs.Clear();
+                if (snap.FolderCrumbs.Count > 0)
+                    _crumbs.AddRange(snap.FolderCrumbs);
+                else
+                    _crumbs.AddRange(BuildFolderCrumbs(list, _folderUrl));   // history restore: derive from the path
+                await LoadCurrentAsync();
+            }
+        }
+        await NotifyChangedAsync();
+        StateHasChanged();
+    }
+
+    // Snapshot the current location + selection so a return to the explorer restores
+    // it. Saved continuously (Dispose timing across navigations isn't reliable).
+    private void SaveSnapshot()
+    {
+        // A pane with no connection (e.g. freshly mounted or being disposed during
+        // navigation) must NOT wipe a previously saved snapshot - that's exactly what
+        // we're trying to restore.
+        if (string.IsNullOrWhiteSpace(_site) || Connection is null) return;
+        var snap = new PaneSnapshot
+        {
+            Site = _site!,
+            WebCrumbs = _webCrumbs.ToList(),
+            OpenListServerRelativeUrl = CurrentList?.ServerRelativeUrl ?? "",
+            OpenListTitle = CurrentList?.Title ?? "",
+            OpenListIsLibrary = CurrentList?.IsLibrary ?? false,
+            FolderCrumbs = _crumbs.ToList(),
+            FolderUrl = _folderUrl,
+            PickedPaths = new(_pickedPaths, StringComparer.OrdinalIgnoreCase),
+            PickedFolders = new(_pickedFolders, StringComparer.OrdinalIgnoreCase),
+            PickedIds = new(_pickedIds),
+            TickedListTitles = _lists.Where(l => l.Selected).Select(l => l.Title).ToHashSet(StringComparer.OrdinalIgnoreCase),
+        };
+        if (IsSource) State.Source = snap; else State.Target = snap;
+    }
+
+    // Rebuild folder breadcrumbs from a server-relative folder URL under a list root,
+    // used when restoring from a history run (which only stored the folder path).
+    private static List<(string Name, string Url)> BuildFolderCrumbs(SpListInfo list, string folderUrl)
+    {
+        var crumbs = new List<(string Name, string Url)> { (list.Title, list.ServerRelativeUrl) };
+        var root = list.ServerRelativeUrl.TrimEnd('/');
+        var full = (folderUrl ?? "").TrimEnd('/');
+        if (full.Length > root.Length && full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            var url = root;
+            foreach (var seg in full.Substring(root.Length).Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                url += "/" + seg;
+                crumbs.Add((Uri.UnescapeDataString(seg), url));
+            }
+        }
+        return crumbs;
+    }
+
+    public void Dispose()
+    {
+        Drag.Changed -= OnDragChanged;
+        SaveSnapshot();
+    }
 
     // ---- Drag from source, drop on target -----------------------------------
     private void OnDragStart(SpFolderEntry entry)
@@ -298,7 +424,7 @@
             _loading = true; _status = "Opening sign-in…"; StateHasChanged();
             var (ok, msg) = await SignIn.SignInAsync(_site);
             _loading = false;
-            if (!ok) { _status = msg; await OnChanged.InvokeAsync(); return; }
+            if (!ok) { _status = msg; await NotifyChangedAsync(); return; }
         }
 
         _loading = true; _status = "Loading…"; StateHasChanged();
@@ -314,7 +440,7 @@
                 + (IsSource ? "  ·  tick several to copy them, click one to open, or open a subsite" : "");
         }
         catch (Exception ex) { _status = $"Could not open: {Short(ex.Message)}"; }
-        finally { _loading = false; await OnChanged.InvokeAsync(); }
+        finally { _loading = false; await NotifyChangedAsync(); }
     }
 
     /// <summary>Drill into a subsite (recursive web navigation).</summary>
@@ -345,7 +471,7 @@
         _status = n > 0
             ? $"{n} ticked to copy  ·  or click a list to pick individual items"
             : $"{_lists.Count} lists and libraries";
-        await OnChanged.InvokeAsync();
+        await NotifyChangedAsync();
     }
 
     // Contains-search (not just prefix): match anywhere in the connection URL.
@@ -434,7 +560,7 @@
             _status = BuildItemStatus();
         }
         catch (Exception ex) { _status = $"Could not open {here}: {Short(ex.Message)}"; }
-        finally { _loading = false; await OnChanged.InvokeAsync(); }
+        finally { _loading = false; await NotifyChangedAsync(); }
     }
 
     private async Task OnEntryTicked(SpFolderEntry entry)
@@ -458,7 +584,7 @@
             else _pickedIds.Remove(entry.ItemId);
         }
         _status = BuildItemStatus();
-        await OnChanged.InvokeAsync();
+        await NotifyChangedAsync();
     }
 
     private string BuildItemStatus()
@@ -484,8 +610,19 @@
         _pickedPaths.Clear(); _pickedFolders.Clear(); _pickedIds.Clear();
         _status = $"{_lists.Count} lists and libraries"
             + (IsSource ? "  ·  tick several to copy them all, or click one to open it" : "");
-        await OnChanged.InvokeAsync();
+        await NotifyChangedAsync();
     }
 
     private static string Short(string m) => m.Length > 140 ? m[..140] + "…" : m;
+
+    // Human-readable file size (B / KB / MB / GB / TB), 2 decimals above bytes.
+    private static string FormatSize(SpFolderEntry e)
+    {
+        if (e.IsFolder || e.Size <= 0) return "";
+        double s = e.Size;
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        var u = 0;
+        while (s >= 1024 && u < units.Length - 1) { s /= 1024; u++; }
+        return u == 0 ? $"{e.Size} B" : $"{s:0.00} {units[u]}";
+    }
 }

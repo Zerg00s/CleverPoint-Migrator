@@ -23,6 +23,11 @@ public class CopyOptions
     /// <summary>URL leaf for a newly created target list (e.g. "Lists/MyCopy" or "MyCopyLib").</summary>
     public string? TargetListUrl { get; set; }
 
+    /// <summary>Optional subfolder INSIDE the target list to copy into (relative to the
+    /// list root, e.g. "Archive/2024"). Empty/null copies into the list root. Used when
+    /// the user drops onto a specific folder in the target pane.</summary>
+    public string? TargetSubfolderRelative { get; set; }
+
     public bool CopyViews { get; set; } = true;
     public bool CopyListSettings { get; set; } = true;
 

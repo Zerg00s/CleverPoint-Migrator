@@ -22,7 +22,16 @@ public class CopyTask
     public int Warnings { get; set; }
     public int Failed { get; set; }
     public int LogCount { get; set; }
+
+    // Progress: Total is the scan's planned item count (files/folders/items); Processed
+    // counts content rows seen so far. Percent drives the live progress bar. Total stays
+    // 0 until the source scan finishes (and for the Migration API engine, which is phase-based).
+    public int Total { get; set; }
+    public int Processed { get; set; }
+    public int Percent => Total > 0 ? Math.Min(100, Processed * 100 / Total) : 0;
+
     public string? Message { get; set; }
+    public string? Phase { get; set; }   // live progress text (esp. for the Migration API engine)
     public DateTime QueuedUtc { get; set; }
     public DateTime? StartedUtc { get; set; }
     public DateTime? FinishedUtc { get; set; }
@@ -136,7 +145,9 @@ public class MigrationRunner
             var (result, status) = await _mig.RunAsync(
                 t.SourceSite, t.TargetSite, t.SourceList, t.Options,
                 rec => AddRecord(t, rec), t.Cts.Token, t.Engine, t.Name,
-                onRunStarted: id => t.HistoryRunId = id);
+                onRunStarted: id => t.HistoryRunId = id,
+                onPhase: msg => { t.Phase = msg; Raise(force: true); },
+                onTotal: n => { if (n > t.Total) { t.Total = n; Raise(force: true); } });
             t.Copied = result.Copied; t.Skipped = result.Skipped;
             t.Warnings = result.Warnings; t.Failed = result.Failed;
             t.State = status switch
@@ -175,6 +186,9 @@ public class MigrationRunner
             if (t.Log.Count > MaxLogKept) t.Log.RemoveRange(0, t.Log.Count - MaxLogKept);
         }
         t.LogCount++;
+        // Count only content rows toward progress (skip schema/progress rows like
+        // Field, View, List, Site column, Progress) so Processed lines up with Total.
+        if (rec.ItemType is "Item" or "File" or "Folder" or "OneNote") t.Processed++;
         Raise();
     }
 

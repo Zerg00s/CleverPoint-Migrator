@@ -1,6 +1,8 @@
 namespace CleverPoint.Migrator.Core.Model;
 
-public enum ItemCopyStatus { Copied, Skipped, Warning, Failed }
+// Info is a non-counting status used for progress/phase log rows (e.g. Migration API
+// packaging and job updates) so they show in the log without affecting any tallies.
+public enum ItemCopyStatus { Copied, Skipped, Warning, Failed, Info }
 
 /// <summary>One row of the migration log: a single item, file, or folder.</summary>
 public class ItemCopyRecord

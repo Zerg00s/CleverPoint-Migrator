@@ -11,6 +11,55 @@ public static class FileIcons
     /// <summary>Type-specific icon for a list/library by its SharePoint template.</summary>
     public static string ForList(SpListInfo l) => Url(IconForTemplate(l.BaseTemplate, l.IsLibrary));
 
+    /// <summary>Icon for a log row. File rows use the real extension (docx, pptx, txt,
+    /// one, onetoc2, ...); everything else falls back to the item-type icon.</summary>
+    public static string ForRecord(string? itemType, string? sourcePath)
+    {
+        // Only "File" rows carry a real extension. A "OneNote" row is a notebook root
+        // (a folder with no extension), so it keeps its notebook icon via ForRecordType.
+        if (string.Equals(itemType, "file", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrEmpty(sourcePath))
+            return Url(ForExtension(Path.GetExtension(sourcePath)));
+        return ForRecordType(itemType);
+    }
+
+    /// <summary>Icon for a log row's item type (File / Page / Item / Folder / ...).</summary>
+    public static string ForRecordType(string? itemType) => Url((itemType ?? "").ToLowerInvariant() switch
+    {
+        "file" => "genericfile",
+        "page" => "sponews",
+        "item" => "listitem",
+        "folder" => "folder",
+        "list" => "splist",
+        "user" => "contact",
+        "sitecolumn" or "column" or "field" => "listform",
+        "contenttype" or "content type" => "docset",
+        "view" => "listform",
+        "onenote" => "onetoc",
+        "progress" => "copilot",
+        _ => "spo",
+    });
+
+    /// <summary>User-friendly label for a log row's item type ("SiteColumn" -> "Site Column").</summary>
+    public static string FriendlyType(string? itemType) => (itemType ?? "").ToLowerInvariant() switch
+    {
+        "file" => "File",
+        "folder" => "Folder",
+        "page" => "Page",
+        "item" => "List item",
+        "list" => "List",
+        "user" => "User",
+        "sitecolumn" or "column" or "field" => "Site column",
+        "contenttype" or "content type" => "Content type",
+        "view" => "View",
+        "run" => "Run",
+        "onenote" => "OneNote notebook",
+        "progress" => "Progress",
+        "" => "",
+        // Fall back to splitting CamelCase so any unmapped type still reads nicely.
+        _ => System.Text.RegularExpressions.Regex.Replace(itemType!, "(?<=[a-z])(?=[A-Z])", " "),
+    };
+
     private static string IconForTemplate(int template, bool isLibrary) => template switch
     {
         101 or 700 => "documentsfolder",         // Document library
@@ -27,7 +76,9 @@ public static class FileIcons
     };
 
     public static string ForEntry(SpFolderEntry e) =>
-        e.IsFolder ? Url("folder") : Url(ForExtension(Path.GetExtension(e.Name)));
+        e.IsOneNote ? Url("onetoc")                              // notebook, shown as a OneNote unit
+        : e.IsFolder ? Url("folder")
+        : Url(ForExtension(Path.GetExtension(e.Name)));
 
     private static string ForExtension(string ext)
     {

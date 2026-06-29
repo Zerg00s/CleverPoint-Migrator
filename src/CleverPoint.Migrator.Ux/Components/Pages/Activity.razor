@@ -1,8 +1,11 @@
 @page "/activity"
 @namespace CleverPoint.Migrator.Ux.Components.Pages
+@using CleverPoint.Migrator.Ux.Services
 @inject MigrationRunner Runner
 @inject HistoryService History
+@inject ExplorerState Explorer
 @inject NavigationManager Nav
+@inject IToastService Toasts
 @implements IDisposable
 
 <div class="page-head">
@@ -10,21 +13,22 @@
 </div>
 
 <FluentCard>
-    <FluentToolbar Style="width:100%;">
-        <span class="hint">@Runner.RunningCount running · @Runner.QueuedCount queued · @_tasks.Count total</span>
-        <FluentSpacer />
-        <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowRight())"
-                      @onclick="@(() => Nav.NavigateTo("/explore"))">New copy task</FluentButton>
-        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Broom())"
-                      Disabled="@(!_tasks.Any(t => !t.IsActive))" @onclick="Runner.ClearFinished">Clear finished</FluentButton>
-    </FluentToolbar>
+    @if (_tasks.Count > 0)
+    {
+        <FluentToolbar Style="width:100%;">
+            <FluentSpacer />
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowRight())"
+                          @onclick="@(() => Nav.NavigateTo("/explore"))">New copy task</FluentButton>
+            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Broom())"
+                          Disabled="@(!_tasks.Any(t => !t.IsActive))" @onclick="Runner.ClearFinished">Clear finished</FluentButton>
+        </FluentToolbar>
+    }
 
     @if (_tasks.Count == 0)
     {
         <div style="padding:44px 16px; text-align:center;">
             <p style="margin:0 0 4px; font-size:15px; font-weight:600;">Nothing is copying right now</p>
-            <p class="hint">This screen shows live progress while copies run. Finished copies live in Run History.</p>
-            <div class="btn-row" style="justify-content:center; margin-top:16px;">
+            <div class="btn-row" style="justify-content:center; margin-top:40px;">
                 <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowRight())" @onclick="@(() => Nav.NavigateTo("/explore"))">New copy task</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.History())" @onclick="@(() => Nav.NavigateTo("/history"))">View Run History</FluentButton>
             </div>
@@ -36,7 +40,29 @@
             @foreach (var t in _tasks)
             {
                 <div class="task-row @(t.Id == _selectedId ? "sel" : "")" @onclick="@(() => _selectedId = t.Id)" role="button">
-                    <span class="status-pill @StateClass(t.State)">@StateLabel(t.State)</span>
+                    <div class="task-spin" title="@StateLabel(t.State)">
+                        @switch (t.State)
+                        {
+                            case CopyTaskState.Running:
+                                <FluentProgressRing Style="width:20px;height:20px;" />
+                                break;
+                            case CopyTaskState.Queued:
+                                <FluentIcon Value="@(new Icons.Regular.Size20.Clock())" Color="Color.Neutral" />
+                                break;
+                            case CopyTaskState.Completed:
+                                <FluentIcon Value="@(new Icons.Regular.Size20.CheckmarkCircle())" Color="Color.Success" />
+                                break;
+                            case CopyTaskState.CompletedWithIssues:
+                                <FluentIcon Value="@(new Icons.Regular.Size20.Warning())" Color="Color.Warning" />
+                                break;
+                            case CopyTaskState.Failed:
+                                <FluentIcon Value="@(new Icons.Regular.Size20.DismissCircle())" Color="Color.Error" />
+                                break;
+                            default:
+                                <FluentIcon Value="@(new Icons.Regular.Size20.DismissCircle())" Color="Color.Neutral" />
+                                break;
+                        }
+                    </div>
                     <div class="task-main">
                         @if (_editId == t.Id)
                         {
@@ -48,15 +74,31 @@
                         }
                         else
                         {
-                            <div class="task-name">@t.Name</div>
-                            <div class="task-sub hint">@t.SourceList &rarr; @t.Options.TargetListTitle</div>
+                            <div class="task-name" style="display:flex; align-items:center; gap:6px;">
+                                <span>@t.Name</span>
+                                <span @onclick:stopPropagation="true">
+                                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Edit())"
+                                                  Title="Rename this task" OnClick="@(() => StartRename(t))" />
+                                </span>
+                            </div>
+                            <div class="task-sub hint">
+                                @(t.State == CopyTaskState.Running && !string.IsNullOrEmpty(t.Phase)
+                                    ? t.Phase
+                                    : $"{t.SourceList} → {t.Options.TargetListTitle}")
+                            </div>
+                            @if (t.State == CopyTaskState.Running && t.Total > 0)
+                            {
+                                <div class="task-prog">
+                                    <div class="task-prog-bar"><span style="width:@(t.Percent)%"></span></div>
+                                    <span class="task-prog-pct">@t.Percent% · @t.Processed / @t.Total</span>
+                                </div>
+                            }
                         }
                     </div>
                     <div class="task-stat">
                         @if (t.State == CopyTaskState.Running)
                         {
-                            <FluentProgressRing Style="width:18px;height:18px;" />
-                            <span class="hint">@t.LogCount processed</span>
+                            <span class="hint">@(t.Total > 0 ? $"{t.Percent}%" : $"{t.LogCount} processed")</span>
                         }
                         else if (t.State == CopyTaskState.Queued)
                         {
@@ -66,10 +108,9 @@
                         {
                             <span class="hint">@t.Copied copied · @t.Failed failed</span>
                         }
+                        <span class="status-pill @StateClass(t.State)">@StateLabel(t.State)</span>
                     </div>
                     <div @onclick:stopPropagation="true" style="display:flex; gap:4px;">
-                        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Edit())"
-                                      Title="Rename this task" OnClick="@(() => StartRename(t))" />
                         @if (t.IsActive)
                         {
                             <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.DismissCircle())"
@@ -90,20 +131,61 @@
 @if (_selected is not null)
 {
     <FluentCard style="margin-top:16px;">
-        <div class="section-title">@_selected.Name · live log (@_selected.LogCount items@(_selected.State == CopyTaskState.Running ? ", running…" : ""))</div>
+        <FluentToolbar Style="width:100%;">
+            @if (_selected.State == CopyTaskState.Running)
+            {
+                <FluentProgressRing Style="width:16px;height:16px;" />
+            }
+            <span class="section-title" style="margin:0;">@_selected.Name · live log (@_selected.LogCount items)</span>
+            <FluentSpacer />
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Edit())"
+                          @onclick="@(() => OpenCopyTask(_selected))" Title="Open this copy task's settings (the New Copy Task screen)">Copy task</FluentButton>
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())"
+                          @onclick="@(() => OpenInExplorer(_selected))" Title="Open the explorer at this copy's source and target">Explorer</FluentButton>
+            <FluentButton Id="activityExportBtn" Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowDownload())"
+                          @onclick="@(() => _exportOpen = !_exportOpen)" Disabled="@(_selected.Log.Count == 0)">Export</FluentButton>
+            <FluentMenu Anchor="activityExportBtn" @bind-Open="_exportOpen">
+                <FluentMenuItem OnClick="@(() => Export(LogExporter.Format.Csv))">CSV (.csv)</FluentMenuItem>
+                <FluentMenuItem OnClick="@(() => Export(LogExporter.Format.Xlsx))">Excel (.xlsx)</FluentMenuItem>
+            </FluentMenu>
+        </FluentToolbar>
+        @if (_selected.State == CopyTaskState.Running && _selected.Total > 0)
+        {
+            <div class="task-prog" style="margin-top:10px;">
+                <div class="task-prog-bar"><span style="width:@(_selected.Percent)%"></span></div>
+                <span class="task-prog-pct">@_selected.Percent% · @_selected.Processed / @_selected.Total copied</span>
+            </div>
+        }
         @{ var rows = _selected.Log.AsEnumerable().Reverse().ToList(); }
-        <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px;">
-            <FluentDataGrid Items="@rows.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
-                            GridTemplateColumns="0.7fr 2.4fr 0.9fr 2fr" ShowHover="true" Style="width:100%;"
-                            RowClass="@(_ => "click-row")"
-                            OnRowClick="@((FluentDataGridRow<Core.Model.ItemCopyRecord> r) => { _rec = r.Item; return Task.CompletedTask; })">
-                <PropertyColumn Property="@(r => r.ItemType)" Title="Type" />
-                <PropertyColumn Property="@(r => r.SourcePath)" Title="Item" />
-                <TemplateColumn Title="Status">
-                    <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
-                </TemplateColumn>
-                <PropertyColumn Property="@(r => r.Message)" Title="Detail" />
-            </FluentDataGrid>
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px; margin-top:12px;">
+            @if (rows.Count == 0)
+            {
+                <div style="padding:48px 16px; text-align:center;">
+                    <span class="hint">@(_selected.State == CopyTaskState.Running
+                        ? (string.IsNullOrEmpty(_selected.Phase) ? "Waiting for the first item…" : _selected.Phase)
+                        : "No items were logged for this task.")</span>
+                </div>
+            }
+            else
+            {
+                <FluentDataGrid Items="@rows.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
+                                GridTemplateColumns="0.9fr 1.2fr 0.9fr 2.4fr 2fr" ShowHover="true" Style="width:100%;"
+                                RowClass="@(_ => "click-row")"
+                                OnRowClick="@((FluentDataGridRow<Core.Model.ItemCopyRecord> r) => { _rec = r.Item; return Task.CompletedTask; })">
+                    <TemplateColumn Title="Type">
+                        <div class="entry-cell">
+                            <img class="ft-icon" src="@FileIcons.ForRecord(context.ItemType, context.SourcePath)" alt="" />
+                            <span>@FileIcons.FriendlyType(context.ItemType)</span>
+                        </div>
+                    </TemplateColumn>
+                    <PropertyColumn Property="@(r => DateText(r.TimestampUtc))" Title="Date" />
+                    <TemplateColumn Title="Status">
+                        <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
+                    </TemplateColumn>
+                    <PropertyColumn Property="@(r => r.SourcePath)" Title="Item" />
+                    <PropertyColumn Property="@(r => r.Message)" Title="Detail" />
+                </FluentDataGrid>
+            }
         </div>
     </FluentCard>
 }
@@ -113,7 +195,6 @@
     <div class="cp-modal-backdrop" @onclick="@(() => _rec = null)">
         <div class="cp-modal" @onclick:stopPropagation="true">
             <div class="cp-modal-head">
-                <span class="status-pill @ItemStatusClass(rec.Status)">@rec.Status</span>
                 <h3 style="margin:0;">@rec.ItemType details</h3>
                 <FluentSpacer />
                 <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _rec = null)" />
@@ -144,6 +225,27 @@
     </div>
 }
 
+@if (_exportedPath is not null)
+{
+    <div class="cp-modal-backdrop" @onclick="@(() => _exportedPath = null)">
+        <div class="cp-modal" style="min-height:auto;" @onclick:stopPropagation="true">
+            <div class="cp-modal-head">
+                <h3 style="margin:0;">Export complete</h3>
+                <FluentSpacer />
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _exportedPath = null)" />
+            </div>
+            <div class="cp-modal-body">
+                <span class="hint">The log was saved to:</span>
+                <span class="v" style="word-break:break-all; user-select:text;">@_exportedPath</span>
+            </div>
+            <div class="cp-modal-foot">
+                <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => _exportedPath = null)">Close</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Open())" OnClick="OpenExported">Open file</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private IReadOnlyList<CopyTask> _tasks = Array.Empty<CopyTask>();
     private int _selectedId;
@@ -162,6 +264,74 @@
     private void Refresh() => _tasks = Runner.Snapshot();
 
     private void OpenInHistory(CopyTask t) => Nav.NavigateTo("/history");
+
+    private bool _exportOpen;
+    private string? _exportedPath;
+
+    // Export this task's log (CSV or XLSX) to Downloads, then offer to open it.
+    private void Export(LogExporter.Format fmt)
+    {
+        _exportOpen = false;
+        if (_selected is not { } t) return;
+        try
+        {
+            var headers = new[] { "Type", "Date", "Status", "Item", "Detail" };
+            List<Core.Model.ItemCopyRecord> snapshot;
+            lock (t.Log) snapshot = t.Log.ToList();
+            var rows = snapshot.Select(r => new[]
+            {
+                FileIcons.FriendlyType(r.ItemType), DateText(r.TimestampUtc), r.Status.ToString(),
+                r.SourcePath, r.Message ?? "",
+            });
+            var path = LogExporter.DownloadsPath($"{t.Name} log", fmt);
+            LogExporter.Write(fmt, path, headers, rows);
+            _exportedPath = path;
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not export the log: {ex.Message}");
+        }
+    }
+
+    private void OpenExported()
+    {
+        if (_exportedPath is not null) Browser.Open(_exportedPath);
+        _exportedPath = null;
+    }
+
+    // Local time, e.g. "5/31/2026 7:59:49 PM".
+    private static string DateText(DateTime utc) => utc == default
+        ? "" : utc.ToLocalTime().ToString("M/d/yyyy h:mm:ss tt", System.Globalization.CultureInfo.InvariantCulture);
+
+    // Re-open the wizard (New Copy Task) for this task, prefilled from its settings.
+    private void OpenCopyTask(CopyTask? t)
+    {
+        if (t is null) return;
+        var q = $"?src={Uri.EscapeDataString(t.SourceSite)}&tgt={Uri.EscapeDataString(t.TargetSite)}"
+              + $"&lists={Uri.EscapeDataString(t.SourceList)}&tlist={Uri.EscapeDataString(t.Options.TargetListTitle ?? "")}";
+        Nav.NavigateTo("/wizard" + q);
+    }
+
+    // Re-open the explorer positioned at this task's source and target.
+    private void OpenInExplorer(CopyTask? t)
+    {
+        if (t is null) return;
+        Explorer.Source = new PaneSnapshot
+        {
+            Site = t.SourceSite,
+            OpenListTitle = t.SourceList,
+            FolderUrl = t.Options.SourceFolderServerRelativeUrl ?? "",
+            PickedPaths = new(t.Options.SelectedPaths ?? new(), StringComparer.OrdinalIgnoreCase),
+            PickedIds = new(t.Options.ItemIds ?? new()),
+        };
+        Explorer.Target = new PaneSnapshot
+        {
+            Site = t.TargetSite,
+            OpenListTitle = t.Options.TargetListTitle ?? "",
+            OpenSubfolderRelative = t.Options.TargetSubfolderRelative ?? "",
+        };
+        Nav.NavigateTo("/explore?restore=1");
+    }
 
     private Core.Model.ItemCopyRecord? _rec;
 
@@ -225,6 +395,7 @@
         Core.Model.ItemCopyStatus.Copied => "st-ok",
         Core.Model.ItemCopyStatus.Warning => "st-issues",
         Core.Model.ItemCopyStatus.Failed => "st-failed",
+        Core.Model.ItemCopyStatus.Info => "st-info",
         _ => "st-interrupted",
     };
 

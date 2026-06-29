@@ -128,6 +128,16 @@ public class HistoryStore : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>Jobs run only in-process, so any run still marked "Running" at startup
+    /// is orphaned from a previous session that closed mid-run. Flip them to Interrupted.</summary>
+    public int MarkRunningAsInterrupted()
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = "UPDATE runs SET status='Interrupted', finished_utc=COALESCE(finished_utc,$f) WHERE status='Running'";
+        cmd.Parameters.AddWithValue("$f", DateTime.UtcNow.ToString("o"));
+        return cmd.ExecuteNonQuery();
+    }
+
     private const string RunColumns = "id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc,scope_json";
 
     public List<MigrationRun> GetRuns(int limit = 200)

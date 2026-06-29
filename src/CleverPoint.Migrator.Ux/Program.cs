@@ -27,11 +27,16 @@ internal class Program
         builder.Services.AddSingleton<UxMigrationService>();
         builder.Services.AddSingleton<PendingMigration>();
         builder.Services.AddSingleton<DragState>();
+        builder.Services.AddSingleton<ExplorerState>();
         builder.Services.AddSingleton<MigrationRunner>();
 
         builder.RootComponents.Add<App>("#app");
 
         var app = builder.Build();
+
+        // A run still "Running" in history can only be a leftover from a session that
+        // closed mid-copy, so reconcile it to Interrupted on startup.
+        (app.Services.GetService(typeof(HistoryService)) as HistoryService)?.ReconcileOrphanedRuns();
 
         app.MainWindow
             .SetTitle("CleverPoint Migrator")

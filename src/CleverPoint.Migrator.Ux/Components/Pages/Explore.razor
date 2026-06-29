@@ -1,9 +1,11 @@
 @page "/explore"
 @namespace CleverPoint.Migrator.Ux.Components.Pages
+@using CleverPoint.Migrator.Ux.Services
 @inject NavigationManager Nav
 @inject IToastService Toasts
 @inject PendingMigration Pending
 @inject DragState Drag
+@inject ExplorerState State
 
 <div class="page-head">
     <h1>Copy</h1>
@@ -34,7 +36,11 @@
 </div>
 
 <div class="copy-bar">
-    <FluentButton Appearance="Appearance.Accent" Class="cp-cta" Disabled="@(!_canCopy)"
+    @if (_blockedReason is { } reason)
+    {
+        <div class="copy-blocked"><FluentIcon Value="@(new Icons.Regular.Size20.Warning())" /> @reason</div>
+    }
+    <FluentButton Appearance="Appearance.Accent" Class="cp-cta" Disabled="@(!_canCopy || _blockedReason is not null)"
                   IconEnd="@(new Icons.Regular.Size24.ArrowRight())" @onclick="StartCopy"
                   Title="@(_canCopy ? "Start the migration" : "Open a source list and a target connection first")">Copy to target</FluentButton>
 </div>
@@ -45,12 +51,51 @@
     private bool _canCopy;
     private bool _showArrow = true;
 
+    private string? _blockedReason;
+
+    // Set to "1" by "Back to explorer" (wizard) and "Restore in explorer" (history).
+    // A plain Copy navigation has no query, so it starts fresh. Carrying intent in the
+    // URL is deterministic even if the page initializes more than once per navigation.
+    [SupplyParameterFromQuery(Name = "restore")] public string? RestoreParam { get; set; }
+
+    protected override void OnInitialized()
+    {
+        if (RestoreParam != "1")
+        {
+            State.Source = null;
+            State.Target = null;
+        }
+    }
+
     private void OnPaneChanged()
     {
         _canCopy = (_source?.IsReady ?? false) && (_target?.IsReady ?? false);
         // Subtle direction hint, only while nothing is connected yet.
         _showArrow = !(_source?.HasConnection ?? false) && !(_target?.HasConnection ?? false);
+        _blockedReason = ComputeBlockedReason();
         StateHasChanged();
+    }
+
+    // Structure copies (whole lists/libraries) recreate a list at the target site root.
+    // That's incompatible with dropping into a folder, or merging many lists into one
+    // open list. Item-selection copies are content-only and may target an open list/folder.
+    private string? ComputeBlockedReason()
+    {
+        if (_source is null || _target is null) return null;
+        var tickedCount = _source.SelectedLists.Count;
+        // A structure copy recreates a list at the target SITE ROOT. That only applies
+        // to ticked lists, or a list opened at its root with nothing picked. A source
+        // drilled into a subfolder (or with items picked) is a content copy, which is
+        // fine to land inside a target folder, so it must NOT be blocked.
+        var structureCopy = tickedCount > 0
+            || (_source.IsListOpen && !_source.IsInSubfolder && !_source.HasItemSelection);
+        if (!structureCopy) return null;
+
+        if (_target.IsInSubfolder)
+            return "The target is a folder. A whole list or library is recreated at the site, so open the target at its site (not inside a folder).";
+        if (tickedCount >= 2 && _target.IsListOpen)
+            return "You picked several lists/libraries but the target is a single list. Open the target at its site so each one is created there.";
+        return null;
     }
 
     // Files/folders dragged from the source were dropped on the target pane.
@@ -71,6 +116,7 @@
         }
         Pending.Reset(Drag.SourceSite, _target.SiteUrl);
         Pending.TargetListTitle = _target.CurrentList.Title;
+        Pending.TargetSubfolderRelative = _target.CurrentSubfolderRelative;   // drop into the open target folder
         Pending.ContentOnly = true;
         Pending.Jobs.Add(new PendingJob
         {
@@ -120,6 +166,7 @@
                     return;
                 }
                 Pending.TargetListTitle = _target.CurrentList.Title;
+                Pending.TargetSubfolderRelative = _target.CurrentSubfolderRelative;   // into the open target folder
                 Pending.ContentOnly = true;
             }
             Pending.Jobs.Add(new PendingJob

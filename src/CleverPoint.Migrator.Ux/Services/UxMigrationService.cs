@@ -37,7 +37,7 @@ public class UxMigrationService
     public async Task<(CopyResult Result, string Status)> RunAsync(
         string sourceSite, string targetSite, string sourceListTitle, CopyOptions options,
         Action<ItemCopyRecord> onRecord, CancellationToken ct, string engine = "Classic", string? runName = null,
-        Action<long>? onRunStarted = null)
+        Action<long>? onRunStarted = null, Action<string>? onPhase = null, Action<int>? onTotal = null)
     {
         var sConn = UxConnectionResolver.Find(_settings, sourceSite)!;
         var tConn = UxConnectionResolver.Find(_settings, targetSite)!;
@@ -51,6 +51,16 @@ public class UxMigrationService
             SourceUrl = sourceSite, SourceList = sourceListTitle,
             TargetUrl = targetSite, TargetList = options.TargetListTitle,
             Engine = engine == "MigrationApi" ? "MigrationApi" : "Classic",
+            // Remember the exact source scope so the run can be re-opened in the
+            // explorer later (folder + the picked files/folders/list items).
+            ScopeJson = System.Text.Json.JsonSerializer.Serialize(new RunScope
+            {
+                SourceFolder = options.SourceFolderServerRelativeUrl,
+                TargetListUrl = options.TargetListUrl,
+                TargetSubfolder = options.TargetSubfolderRelative,
+                SelectedPaths = options.SelectedPaths,
+                ItemIds = options.ItemIds,
+            }),
         });
         onRunStarted?.Invoke(runId);
 
@@ -59,6 +69,9 @@ public class UxMigrationService
         result.RecordAdded += rec =>
         {
             lock (gate) store.RecordItem(runId, rec);
+            // The scan sets PlannedItems before content rows stream; surface it for the
+            // live progress bar (idempotent: the runner only grows the total).
+            if (onTotal != null && result.PlannedItems > 0) onTotal(result.PlannedItems);
             onRecord(rec);
         };
 
@@ -79,8 +92,17 @@ public class UxMigrationService
             {
                 // The Migration API engine returns its records at the end; replay
                 // them into the live log + history (it doesn't stream like Classic).
-                var apiResult = await Task.Run(() =>
-                    new Core.MigrationApi.MigrationApiEngine(source, target).CopyLibraryAsync(sourceListTitle, options), ct);
+                var apiEngine = new Core.MigrationApi.MigrationApiEngine(source, target);
+                // The API engine returns its item records only at the end, so without
+                // this the live log is empty for the whole (long) run. Surface its phase
+                // messages both as the task's headline phase AND as Info log rows so the
+                // user sees a running activity feed (reading, packaging, jobs, etc.).
+                apiEngine.OnProgress += msg =>
+                {
+                    onPhase?.Invoke(msg);
+                    result.Add("Progress", msg, "", ItemCopyStatus.Info);
+                };
+                var apiResult = await Task.Run(() => apiEngine.CopyLibraryAsync(sourceListTitle, options), ct);
                 foreach (var rec in apiResult.Records)
                     result.Add(rec.ItemType, rec.SourcePath, rec.TargetPath, rec.Status, rec.Message);
                 if (result.Failed > 0) status = "CompletedWithIssues";

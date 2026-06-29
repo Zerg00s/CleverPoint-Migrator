@@ -1,5 +1,5 @@
 /* ===========================================================================
-   CleverPoint Migrator — application chrome & polish (Fluent UI design tokens).
+   CleverPoint Migrator - application chrome & polish (Fluent UI design tokens).
    Brand: deep blue #1F4E79, teal accent #179C8E.
    =========================================================================== */
 
@@ -31,8 +31,9 @@
 }
 
 /* ---- Detail modal (log item) ---------------------------------------------- */
-.cp-modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.cp-modal { width: min(640px, 92vw); max-height: 86vh; overflow: auto; background: var(--neutral-layer-1); border: 1px solid var(--neutral-stroke-divider-rest, #444); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,.4); }
+.cp-modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.45); display: flex; align-items: flex-start; justify-content: center; padding: 24px; }
+.cp-modal { width: min(640px, 92vw); margin-top: 6vh; min-height: 360px; max-height: 88vh; overflow: auto; background: var(--neutral-layer-1); border: 1px solid var(--neutral-stroke-divider-rest, #444); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,.4); display: flex; flex-direction: column; }
+.cp-modal .cp-modal-body { flex: 1 1 auto; }
 .cp-modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--neutral-stroke-divider-rest, #3a3a3a); }
 .cp-modal-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
 .cp-modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--neutral-stroke-divider-rest, #3a3a3a); }
@@ -51,7 +52,22 @@
 .task-main { flex: 1 1 auto; min-width: 0; }
 .task-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-stat { display: flex; align-items: center; gap: 8px; min-width: 150px; justify-content: flex-end; }
+.task-stat { display: flex; align-items: center; gap: 10px; min-width: 170px; justify-content: flex-end; }
+.task-spin { flex: 0 0 22px; display: flex; align-items: center; justify-content: center; }
+/* Live copy-progress bar with percentage. */
+.task-prog { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+.task-prog-bar { flex: 1 1 auto; height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--cp-accent) 16%, transparent); }
+.task-prog-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--cp-accent); transition: width .3s ease; }
+.task-prog-pct { flex: 0 0 auto; font-size: 12px; color: var(--neutral-foreground-hint, #888); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Breadcrumb above a detail page title. */
+.page-crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0 0 6px 2px; }
+.page-crumbs .crumb-link { color: var(--cp-accent); cursor: pointer; }
+.page-crumbs .crumb-link:hover { text-decoration: underline; }
+.page-crumbs .crumb-sep { opacity: .5; }
+.page-crumbs .crumb-current { opacity: .7; }
+/* Collapsible section header (chevron + label). */
+.section-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-weight: 600; padding: 6px 0; }
+.section-toggle:hover { color: var(--cp-accent); }
 
 /* ---- New Copy Task (wizard) ----------------------------------------------- */
 .wizard-head { display: flex; align-items: center; gap: 14px; }
@@ -107,7 +123,7 @@ html, body {
     height: 100%; flex: 1 1 auto; min-height: 0; width: 100%; overflow: hidden;
 }
 /* Assign rows EXPLICITLY. The status-banner row is conditionally rendered, so
-   without this the 3 remaining children auto-place into rows 1-3 — pushing
+   without this the 3 remaining children auto-place into rows 1-3 - pushing
    app-main into an auto row and the footer into the 1fr row, which left a big
    empty gap below the footer. Pinning by grid-row makes the footer always the
    last (auto) row at the very bottom regardless of whether the banner shows. */
@@ -255,11 +271,14 @@ html, body {
 /* ---- Explorer two-pane ---------------------------------------------------- */
 .explorer { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; position: relative; }
 /* Subtle drag -> drop hint (arch arrow flanked by glyphs) until something connects. */
-.explorer-hints { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: space-evenly; gap: 12px; pointer-events: none; color: var(--neutral-foreground-rest); }
-.explorer-arrow { width: 28%; height: auto; opacity: .07; flex: 0 0 auto; }
-.explorer-hints .eh { display: flex; flex-direction: column; align-items: center; gap: 16px; opacity: .16; text-align: center; flex: 0 0 auto; margin-top: 48px; }
-.explorer-hints .eh svg { width: 116px !important; height: 116px !important; }
-.explorer-hints .eh span { font-size: 24px; font-weight: 600; }
+.explorer-hints { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: space-evenly; gap: 12px; pointer-events: none; color: var(--neutral-foreground-rest); overflow: hidden; }
+.explorer-arrow { width: 28%; height: auto; opacity: .07; flex: 0 1 auto; }
+.explorer-hints .eh { display: flex; flex-direction: column; align-items: center; gap: clamp(6px, 1.4vh, 16px); opacity: .16; text-align: center; flex: 0 1 auto; min-width: 0; margin-top: clamp(8px, 6vh, 48px); }
+/* Scale glyph + label with the window so a shrunken pane doesn't overflow. */
+.explorer-hints .eh svg { width: clamp(40px, 9vw, 116px) !important; height: clamp(40px, 9vw, 116px) !important; }
+.explorer-hints .eh span { font-size: clamp(12px, 1.7vw, 24px); font-weight: 600; }
+/* Below a certain height the hints crowd the panes; drop the labels, keep glyphs. */
+@media (max-height: 560px) { .explorer-hints .eh span { display: none; } .explorer-hints .eh { margin-top: 0; } }
 
 /* Connections grid: give rows enough height so buttons aren't clipped. */
 .conn-table .fluent-data-grid.grid { grid-auto-rows: minmax(50px, auto); }
@@ -293,11 +312,19 @@ html, body {
 .cp-grid .click-row, .cp-grid .click-row * { cursor: pointer !important; }
 .cp-grid .folder-row:hover, .cp-grid .click-row:hover { background: color-mix(in srgb, var(--cp-accent) 8%, transparent); }
 .entry-cell { display: flex; align-items: center; gap: 8px; width: 100%; }
+/* Inline tick lives in the Name cell now (no separate checkbox column), so the
+   source and target grids share one column layout and resize identically. */
+.entry-check { display: inline-flex; align-items: center; flex: 0 0 auto; cursor: default; }
+/* Badge marking a OneNote notebook (a folder that is not openable, copied whole). */
+.onenote-tag { flex: 0 0 auto; margin-left: 8px; padding: 1px 7px; border-radius: 9px; font-size: 11px; font-weight: 600;
+    color: #6b2fb3; background: rgba(123, 47, 191, .14); border: 1px solid rgba(123, 47, 191, .35); }
 .ft-icon { width: 20px; height: 20px; flex: 0 0 auto; }
 .entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry-folder { color: var(--cp-link); font-weight: 500; }
 .entry-go { margin-left: auto; flex: 0 0 auto; opacity: .5; }
-.copy-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 4px 0; }
+.copy-bar { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; padding: 18px 0 4px 0; }
+.copy-blocked { display: flex; align-items: center; gap: 8px; max-width: 640px; text-align: center; color: var(--warning-foreground, #b9770e); font-size: 13px; }
+.copy-blocked svg { flex: 0 0 auto; }
 /* Centered, roomy primary action on the copy task page. */
 .begin-bar { display: flex; justify-content: center; margin: 64px 0 56px; }
 /* Prominent call-to-action button (Fluent buttons are control-height by default). */
@@ -309,7 +336,7 @@ html, body {
 
 /* ---- Misc ----------------------------------------------------------------- */
 /* Make grid text selectable + copyable (Fluent sets user-select:none by default).
-   Note: do NOT force cursor:text here — it makes the scrollbar show an I-beam.
+   Note: do NOT force cursor:text here - it makes the scrollbar show an I-beam.
    Selection still works on drag; the cursor stays a normal arrow. */
 .cp-grid, .cp-grid * { user-select: text !important; -webkit-user-select: text !important; }
 .cp-grid a, .cp-grid button, .cp-grid [role="button"], .cp-grid fluent-checkbox { cursor: pointer; }
@@ -344,8 +371,19 @@ html, body {
 .status-pill.st-ok { background: #1e7e34; }
 .status-pill.st-issues { background: #b8860b; }
 .status-pill.st-interrupted { background: #5a6b7b; }
-.status-pill.st-running { background: #1f6fb2; }
+.status-pill.st-running { background: #1f6fb2; display: inline-flex; align-items: center; gap: 6px; }
+/* Small animated spinner inside any "Running" status pill. */
+.status-pill.st-running::before {
+    content: ""; width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.45); border-top-color: #fff;
+    animation: cp-spin .7s linear infinite;
+}
+@keyframes cp-spin { to { transform: rotate(360deg); } }
 .status-pill.st-failed { background: #b02a37; }
+.status-pill.st-info { background: #3a5566; }
+/* Keep the per-page selector compact (FluentSelect's control ignores the host width). */
+.cp-perpage { width: 92px !important; min-width: 92px !important; }
+.cp-perpage::part(control) { width: 92px !important; min-width: 92px !important; }
 
 /* ---- Run detail ----------------------------------------------------------- */
 .run-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }

@@ -48,9 +48,11 @@ public class MigrationApiEngine
         targetCtx.Load(targetList, l => l.Id, l => l.RootFolder.UniqueId, l => l.RootFolder.ServerRelativeUrl);
         await targetCtx.ExecuteQueryAsync();
 
+        OnProgress?.Invoke("reading the source library… (this can take a while for very large libraries)");
         var itemCopier = new ItemCopier(sourceCtx, targetCtx, users);
         var copyFields = await itemCopier.GetCopyFieldsAsync(sourceList, targetList);
         var allItems = await itemCopier.LoadAllItemsAsync(sourceList, options);
+        OnProgress?.Invoke($"loaded {allItems.Count:N0} item(s); resolving users and preparing packages…");
         await users.PreResolveAsync(ItemCopier.CollectUserIds(allItems, copyFields));
 
         var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
@@ -131,6 +133,13 @@ public class MigrationApiEngine
 
         var pendingJobs = new Dictionary<Guid, byte[]>();  // job id -> encryption key
         var totalBytes = 0L;
+        var targetRootSrv = targetList.RootFolder.ServerRelativeUrl;
+
+        // Per-item logging: the API submits batch jobs and emits no per-file success
+        // event, so we remember each job's folders/files and log them as Copied once
+        // the jobs finish (minus any file the job reported as failed).
+        var jobEmits = new Dictionary<Guid, List<(string Type, string Source, string Target)>>();
+        var failedRelPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);  // rel path -> reason
 
         async Task<Guid> SubmitChunkAsync(MigrationPackageBuilder builder, List<ListItem> chunkFiles, int chunkNo)
         {
@@ -140,11 +149,16 @@ public class MigrationApiEngine
             var key = containers.Value.EncryptionKey;
 
             // Stream the chunk's files one at a time.
+            if (chunkFiles.Count > 0)
+                OnProgress?.Invoke($"chunk {chunkNo}: packaging {chunkFiles.Count:N0} file(s)…");
+            var packagedInChunk = 0;
             foreach (var item in chunkFiles)
             {
                 var fileRef = (string)item["FileRef"];
                 var rel = fileRef[(sourceRoot.Length + 1)..];
                 var blobName = $"{Guid.NewGuid()}.dat";
+                if (++packagedInChunk % 100 == 0)
+                    OnProgress?.Invoke($"chunk {chunkNo}: packaged {packagedInChunk:N0}/{chunkFiles.Count:N0} file(s)…");
 
                 var file = sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(fileRef));
                 var stream = file.OpenBinaryStream();
@@ -192,6 +206,18 @@ public class MigrationApiEngine
                 queueUri, new EncryptionOption { AES256CBCKey = key });
             await targetCtx.ExecuteQueryAsync();
             pendingJobs[jobId.Value] = key;
+
+            // Remember this job's items so they can be logged as copied once it ends.
+            var emits = new List<(string, string, string)>();
+            foreach (var f in builder.Folders)
+                emits.Add(("Folder", $"{sourceRoot}/{f.LibraryRelativePath}", $"{targetRootSrv}/{f.LibraryRelativePath}"));
+            foreach (var item in chunkFiles)
+            {
+                var fr = (string)item["FileRef"];
+                emits.Add(("File", fr, $"{targetRootSrv}/{fr[(sourceRoot.Length + 1)..]}"));
+            }
+            jobEmits[jobId.Value] = emits;
+
             OnProgress?.Invoke($"chunk {chunkNo}: job {jobId.Value} submitted ({builder.FoldersToDefine.Count} folders, {builder.Files.Count} files)");
             return jobId.Value;
         }
@@ -209,7 +235,7 @@ public class MigrationApiEngine
         while (fileQueue.Count > 0 && firstBuilder.FoldersToDefine.Count + firstChunkFiles.Count < maxItems)
             firstChunkFiles.Add(fileQueue.Dequeue());
         var firstJob = await SubmitChunkAsync(firstBuilder, firstChunkFiles, chunkNo++);
-        await WaitForJobsAsync(targetCtx, queueUri, new[] { firstJob }, pendingJobs, result);
+        await WaitForJobsAsync(targetCtx, queueUri, new[] { firstJob }, pendingJobs, result, failedRelPaths);
 
         // ---- Remaining chunks: upload + submit pipelined, wait at the end ----
         var laterJobs = new List<Guid>();
@@ -222,9 +248,20 @@ public class MigrationApiEngine
             laterJobs.Add(await SubmitChunkAsync(builder, chunkFiles, chunkNo++));
         }
         if (laterJobs.Count > 0)
-            await WaitForJobsAsync(targetCtx, queueUri, laterJobs, pendingJobs, result);
+            await WaitForJobsAsync(targetCtx, queueUri, laterJobs, pendingJobs, result, failedRelPaths);
 
         OnProgress?.Invoke($"all jobs done: {chunkNo - 1} chunk(s), {fileItems.Count} files, {totalBytes / 1024.0 / 1024.0:F1} MB transferred");
+
+        // Log an explicit status for every packaged folder and file: Copied, or Failed
+        // (with the reason) when the job reported that specific file as failed.
+        foreach (var emits in jobEmits.Values)
+            foreach (var (type, src, tgt) in emits)
+            {
+                if (type == "File" && failedRelPaths.TryGetValue(src[(sourceRoot.Length + 1)..], out var reason))
+                    result.Add("File", src, tgt, ItemCopyStatus.Failed, reason);
+                else
+                    result.Add(type, src, tgt, ItemCopyStatus.Copied);
+            }
 
         // Hybrid tail: oversized files via streaming chunked upload.
         if (largeItems.Count > 0)
@@ -255,7 +292,7 @@ public class MigrationApiEngine
 
     /// <summary>Polls the shared queue (and job status as fallback) until every given job ends.</summary>
     private async Task WaitForJobsAsync(ClientContext targetCtx, string queueUri,
-        IEnumerable<Guid> jobIds, Dictionary<Guid, byte[]> keys, CopyResult result)
+        IEnumerable<Guid> jobIds, Dictionary<Guid, byte[]> keys, CopyResult result, Dictionary<string, string> failedRelPaths)
     {
         var waiting = new HashSet<Guid>(jobIds);
         var deadline = DateTime.UtcNow.AddMinutes(40);
@@ -274,7 +311,16 @@ public class MigrationApiEngine
                     if (evt is "JobError" or "JobFatalError" or "JobWarning")
                     {
                         var message = doc.RootElement.TryGetProperty("Message", out var m) ? m.GetString() : json;
-                        result.Add("Job", jobId.ToString(), "", evt == "JobWarning" ? ItemCopyStatus.Warning : ItemCopyStatus.Failed, message);
+                        // A per-file error names the file ("...name <rel> already exists/...").
+                        // Record it so that file gets its own Failed row (with the reason)
+                        // instead of a generic Job row. Job-level issues stay as a Job row.
+                        var mt = evt != "JobWarning" && message != null
+                            ? System.Text.RegularExpressions.Regex.Match(message, @"name\s+(.+?)\s+(?:already exists|could not|is|was)")
+                            : System.Text.RegularExpressions.Match.Empty;
+                        if (mt.Success)
+                            failedRelPaths[mt.Groups[1].Value.Trim()] = message!;
+                        else
+                            result.Add("Job", jobId.ToString(), "", evt == "JobWarning" ? ItemCopyStatus.Warning : ItemCopyStatus.Failed, message);
                     }
                     if (evt == "JobEnd")
                     {

@@ -22,6 +22,10 @@ public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder
 {
     /// <summary>UI selection state (source-pane checkbox).</summary>
     public bool Selected { get; set; }
+
+    /// <summary>This "folder" is actually a OneNote notebook (contains a .onetoc2).
+    /// It must be shown with the OneNote icon and copied as a unit, not opened.</summary>
+    public bool IsOneNote { get; set; }
 }
 
 /// <summary>
@@ -99,7 +103,7 @@ public class SiteBrowser
                     FolderServerRelativeUrl = folderServerRelativeUrl,
                     Paging = paging,
                     // Default scope (NOT RecursiveAll) returns just this folder's direct
-                    // children — files and subfolders — which is what folder-by-folder
+                    // children - files and subfolders - which is what folder-by-folder
                     // navigation needs. No <OrderBy>: sorting on the non-indexed
                     // FileLeafRef past the 5000-row threshold returns HTTP 500; the
                     // default (indexed) paging order is threshold-safe and we sort below.
@@ -126,7 +130,50 @@ public class SiteBrowser
                 ? nh.GetString()!.TrimStart('?') : null;
         } while (paging != null && entries.Count < MaxItemsLoaded);
 
+        // Flag any child folder that is a OneNote notebook (directly contains a
+        // .onetoc2). Because notebooks aren't openable, any we meet while browsing is
+        // a topmost notebook - exactly the folder the copy engine must mark.
+        if (entries.Any(e => e.IsFolder))
+        {
+            var notebooks = await DetectNotebookFoldersAsync(conn, folderServerRelativeUrl);
+            if (notebooks.Count > 0)
+                foreach (var e in entries.Where(e => e.IsFolder && notebooks.Contains(e.ServerRelativeUrl)))
+                    e.IsOneNote = true;
+        }
+
         return entries.OrderByDescending(e => e.IsFolder).ThenBy(e => e.Name).ToList();
+    }
+
+    /// <summary>Server-relative URLs of immediate subfolders that are OneNote
+    /// notebooks (have a .onetoc2 directly inside). One round trip via $expand.</summary>
+    private static async Task<HashSet<string>> DetectNotebookFoldersAsync(SpConnection conn, string folderServerRelativeUrl)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var esc = Uri.EscapeDataString(folderServerRelativeUrl.Replace("'", "''"));
+            // Nested "$expand=Files($select=Name)" is rejected (HTTP 400) by this
+            // endpoint; the flat "$expand=Files&$select=Files/Name" form works.
+            using var doc = await conn.Rest.GetJsonAsync(
+                $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativeUrl('{esc}')/Folders?$expand=Files&$select=ServerRelativeUrl,Files/Name");
+            foreach (var f in doc.RootElement.GetProperty("value").EnumerateArray())
+            {
+                if (!f.TryGetProperty("Files", out var files)) continue;
+                var arr = files.ValueKind == JsonValueKind.Object && files.TryGetProperty("results", out var r) ? r : files;
+                if (arr.ValueKind != JsonValueKind.Array) continue;
+                foreach (var file in arr.EnumerateArray())
+                {
+                    var n = file.TryGetProperty("Name", out var nn) ? nn.GetString() : null;
+                    if (n != null && n.EndsWith(".onetoc2", StringComparison.OrdinalIgnoreCase))
+                    {
+                        set.Add(f.GetProperty("ServerRelativeUrl").GetString() ?? "");
+                        break;
+                    }
+                }
+            }
+        }
+        catch { /* detection is best-effort; fall back to treating them as plain folders */ }
+        return set;
     }
 
     /// <summary>Generic-list items, paged up to MaxItemsLoaded (live IDs for selection).</summary>

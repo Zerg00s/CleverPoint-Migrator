@@ -12,7 +12,7 @@
 
 <div class="page-head wizard-head">
     <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
-                  Disabled="_running" @onclick="@(() => Nav.NavigateTo("/explore"))">Back to explorer</FluentButton>
+                  Disabled="_running" @onclick="BackToExplorer">Back to explorer</FluentButton>
     <h1>New Copy Task</h1>
 </div>
 
@@ -73,7 +73,14 @@
                     <span class="field-label">Target list</span>
                     <div class="ro-value">@_targetTitle</div>
                 </div>
-                <span class="hint">Items are added to this existing list, so the name and URL are fixed.</span>
+                @if (!string.IsNullOrEmpty(_targetSubfolder))
+                {
+                    <div class="ro-field">
+                        <span class="field-label">Target folder</span>
+                        <div class="ro-value">@_targetSubfolder</div>
+                    </div>
+                }
+                <span class="hint">Items are added to this existing @(string.IsNullOrEmpty(_targetSubfolder) ? "list" : "folder"), so the name and URL are fixed.</span>
             }
             else
             {
@@ -89,7 +96,7 @@
                     <span class="url-preview">@FullTargetUrl()</span>
                 </div>
             }
-            @if (!_batch && _targetState != TargetState.Unknown)
+            @if (!_batch && !_targetLocked && _targetState != TargetState.Unknown)
             {
                 <span class="target-chip @TargetChipClass">@_targetStateMsg</span>
             }
@@ -150,20 +157,14 @@
             <div></div>
             <div class="field">
                 <span class="field-label">From (on or after)</span>
-                <div style="display:flex; gap:8px;">
-                    <FluentDatePicker @bind-Value="_dateFrom" Disabled="_running" Style="flex:1 1 auto;" />
-                    <FluentTimePicker @bind-Value="_timeFrom" Disabled="_running" Style="width:130px;" />
-                </div>
+                <FluentDatePicker @bind-Value="_dateFrom" Culture="DateDisplayCulture" Disabled="_running" Style="width:100%;" />
             </div>
             <div class="field">
                 <span class="field-label">To (on or before)</span>
-                <div style="display:flex; gap:8px;">
-                    <FluentDatePicker @bind-Value="_dateTo" Disabled="_running" Style="flex:1 1 auto;" />
-                    <FluentTimePicker @bind-Value="_timeTo" Disabled="_running" Style="width:130px;" />
-                </div>
+                <FluentDatePicker @bind-Value="_dateTo" Culture="DateDisplayCulture" Disabled="_running" Style="width:100%;" />
             </div>
             <div></div>
-            <span class="hint">Times are in your local timezone. Leave a time blank to include the whole day.</span>
+            <span class="hint">Dates are in your local timezone. The whole day is included for both ends of the range.</span>
         </div>
     }
 
@@ -200,8 +201,10 @@
     [SupplyParameterFromQuery(Name = "src")] public string? Src { get; set; }
     [SupplyParameterFromQuery(Name = "tgt")] public string? Tgt { get; set; }
     [SupplyParameterFromQuery(Name = "lists")] public string? Lists { get; set; }
+    [SupplyParameterFromQuery(Name = "tlist")] public string? TargetListName { get; set; }
 
     private string _src = "", _tgt = "", _list = "", _taskName = "", _targetTitle = "", _targetUrl = "", _engine = "Classic";
+    private string _targetSubfolder = "";   // subfolder inside the target list (drop target), read-only
     private string _copyMode = "full";
     private bool _lockContentOnly;
     private bool _targetLocked;
@@ -211,8 +214,6 @@
     private string _dateField = "Modified";
     private DateTime? _dateFrom;
     private DateTime? _dateTo;
-    private DateTime? _timeFrom;
-    private DateTime? _timeTo;
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
@@ -241,11 +242,20 @@
     private string? _status;
     private MessageIntent _statusIntent = MessageIntent.Info;
 
+    private void BackToExplorer()
+    {
+        // Returning to the explorer should land back on the same source/target, so ask
+        // for a restore (?restore=1). A plain Copy nav has no param and starts fresh.
+        Nav.NavigateTo("/explore?restore=1");
+    }
+
     protected override void OnInitialized()
     {
-        // Selection comes from the explorer via PendingMigration; query params are a
-        // fallback for a direct/stale navigation.
-        if (Pending.Jobs.Count > 0)
+        // "Run again" navigates here with query params for a SPECIFIC run, so those win.
+        // The explorer flow navigates without params and carries its richer selection
+        // through PendingMigration. Preferring Pending when params are present would
+        // show the last explorer selection for every run, which is the bug we fix here.
+        if (string.IsNullOrWhiteSpace(Src) && Pending.Jobs.Count > 0)
         {
             _src = Pending.SourceSite;
             _tgt = Pending.TargetSite;
@@ -262,20 +272,31 @@
             _tgt = Tgt ?? "";
             _jobs = (Lists ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(t => new PendingJob { SourceListTitle = t }).ToList();
+            // Query-param navigation (e.g. "Run again") carries no list type, so the
+            // source list/library kind is resolved live before the target check runs.
+            _resolveSourceTypes = true;
         }
+        var fromRunAgain = !string.IsNullOrWhiteSpace(Src);
         _batch = _jobs.Count > 1;
         // Picking specific files/folders/items means there's no structure to recreate;
-        // lock to content-only so "Structure + content" isn't offered.
-        _lockContentOnly = Pending.ContentOnly || _jobs.Any(j => !j.WholeList);
+        // lock to content-only so "Structure + content" isn't offered. The Pending flags
+        // belong to the explorer flow only, never to a query-param "Run again".
+        _lockContentOnly = (!fromRunAgain && Pending.ContentOnly) || _jobs.Any(j => !j.WholeList);
         if (_lockContentOnly) _copyMode = "content";
         _list = _jobs.FirstOrDefault()?.SourceListTitle ?? "";
         _sameSite = string.Equals(_src.TrimEnd('/'), _tgt.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
-        // When copying a selection into an already-open target list, use that list
-        // (content-only); otherwise default to a new list named after the source.
-        if (!string.IsNullOrWhiteSpace(Pending.TargetListTitle))
+        // "Run again" restores the exact target list from the run. The explorer flow may
+        // instead drop a selection into an already-open target list (content-only).
+        if (fromRunAgain && !string.IsNullOrWhiteSpace(TargetListName))
+        {
+            _targetTitle = TargetListName!;
+            _targetUrl = DefaultUrl(_targetTitle);
+        }
+        else if (!fromRunAgain && !string.IsNullOrWhiteSpace(Pending.TargetListTitle))
         {
             _targetTitle = Pending.TargetListTitle!;
             _targetUrl = string.IsNullOrWhiteSpace(Pending.TargetListUrl) ? DefaultUrl(_targetTitle) : Pending.TargetListUrl!;
+            _targetSubfolder = Pending.TargetSubfolderRelative ?? "";
             _targetLocked = true;
         }
         else
@@ -307,13 +328,52 @@
 
     private static string DefaultUrl(string title) => string.Concat(title.Where(char.IsLetterOrDigit));
 
-    // Combine a picked date + optional time as local, return UTC.
-    private static DateTime LocalToUtc(DateTime date, DateTime? time)
-        => DateTime.SpecifyKind(date.Date.Add(time?.TimeOfDay ?? TimeSpan.Zero), DateTimeKind.Local).ToUniversalTime();
+    // Show dates with the month spelled out (e.g. "14 May 2026") to avoid d/m vs m/d confusion.
+    private static readonly System.Globalization.CultureInfo DateDisplayCulture = BuildDateCulture();
+    private static System.Globalization.CultureInfo BuildDateCulture()
+    {
+        var c = (System.Globalization.CultureInfo)System.Globalization.CultureInfo.InvariantCulture.Clone();
+        c.DateTimeFormat.ShortDatePattern = "dd MMM yyyy";
+        return c;
+    }
+
+    // Treat the picked day's local midnight as the UTC boundary (whole-day range).
+    private static DateTime LocalDayStartUtc(DateTime date)
+        => DateTime.SpecifyKind(date.Date, DateTimeKind.Local).ToUniversalTime();
+
+    private bool _resolveSourceTypes;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender) await CheckTargetAsync();
+        if (firstRender)
+        {
+            await ResolveSourceTypesAsync();
+            await CheckTargetAsync();
+        }
+    }
+
+    // When the source list kind is unknown (navigated here by query params), ask the
+    // source site whether each list is a library so the mismatch check is accurate.
+    private async Task ResolveSourceTypesAsync()
+    {
+        if (!_resolveSourceTypes || string.IsNullOrWhiteSpace(_src)) return;
+        var conn = UxConnectionResolver.Find(Settings, _src);
+        if (conn is null || !UxConnectionResolver.CanResolve(conn, SignIn)) return;
+        try
+        {
+            var resolved = UxConnectionResolver.Resolve(conn, _src, SignIn);
+            foreach (var j in _jobs)
+            {
+                var titleEnc = Uri.EscapeDataString(j.SourceListTitle.Trim().Replace("'", "''"));
+                using var doc = await resolved.Rest.GetJsonAsync(
+                    $"{resolved.SiteUrl}/_api/web/lists?$select=BaseType&$filter=Title eq '{titleEnc}'&$top=1");
+                var arr = doc.RootElement.GetProperty("value");
+                if (arr.GetArrayLength() > 0)
+                    j.IsLibrary = arr[0].GetProperty("BaseType").GetInt32() == 1;
+            }
+        }
+        catch { /* leave the default; the chip just stays conservative */ }
+        StateHasChanged();
     }
 
     // Live check of the target list: new / exists / type-mismatch. Non-blocking.
@@ -335,7 +395,7 @@
             if (arr.GetArrayLength() == 0)
             {
                 _targetState = TargetState.New;
-                _targetStateMsg = "New — will be created.";
+                _targetStateMsg = "New (will be created)";
             }
             else
             {
@@ -350,7 +410,7 @@
                 else
                 {
                     _targetState = TargetState.Exists;
-                    _targetStateMsg = $"Exists · {(tgtIsLibrary ? "Library" : "List")} · {count:N0} items — items are added/updated per the mode below.";
+                    _targetStateMsg = $"Exists · {(tgtIsLibrary ? "Library" : "List")} · {count:N0} items. Items are added or updated per the mode below.";
                 }
             }
         }
@@ -402,12 +462,13 @@
                 ? (_sameSite ? $"{job.SourceListTitle} - Copy" : job.SourceListTitle)
                 : (string.IsNullOrWhiteSpace(_targetTitle) ? job.SourceListTitle : _targetTitle);
             var url = _batch || string.IsNullOrWhiteSpace(_targetUrl) ? DefaultUrl(title) : _targetUrl.Trim();
-            var name = _batch ? $"{_taskName} — {job.SourceListTitle}" : _taskName;
+            var name = _batch ? $"{_taskName}: {job.SourceListTitle}" : _taskName;
 
             var options = new CopyOptions
             {
                 TargetListTitle = title,
                 TargetListUrl = url,
+                TargetSubfolderRelative = _targetSubfolder,
                 PreserveAuthorsAndDates = _preserve,
                 CopyAttachments = _attachments,
                 CopyPermissions = _permissions,
@@ -425,11 +486,12 @@
                     _ => ExistingItemMode.Overwrite,
                 },
                 DateField = _dateField == "Created" ? DateFilterField.Created : DateFilterField.Modified,
-                // Interpret the picked date/time as LOCAL and convert to UTC (so a day
-                // boundary isn't off by the timezone). No time = whole-day inclusive.
-                ModifiedSinceUtc = _useDateFilter && _dateFrom.HasValue ? LocalToUtc(_dateFrom.Value, _timeFrom) : null,
+                // Interpret each picked day as LOCAL and convert to UTC so the boundary
+                // isn't off by the timezone. The whole day is inclusive on both ends:
+                // "from" starts at the day's local midnight, "to" runs to end of that day.
+                ModifiedSinceUtc = _useDateFilter && _dateFrom.HasValue ? LocalDayStartUtc(_dateFrom.Value) : null,
                 ModifiedBeforeUtc = _useDateFilter && _dateTo.HasValue
-                    ? LocalToUtc(_dateTo.Value, _timeTo).Add(_timeTo.HasValue ? TimeSpan.FromSeconds(1) : TimeSpan.FromDays(1))
+                    ? LocalDayStartUtc(_dateTo.Value).Add(TimeSpan.FromDays(1))
                     : null,
             };
 

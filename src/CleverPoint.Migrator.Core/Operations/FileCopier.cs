@@ -62,8 +62,16 @@ public class FileCopier
     {
         var copyFields = await _itemCopier.GetCopyFieldsAsync(sourceList, targetList);
         var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
-        var targetRoot = targetList.RootFolder.ServerRelativeUrl;
         var targetWeb = _targetCtx.Web;
+        var listRoot = targetList.RootFolder.ServerRelativeUrl;
+
+        // Copy into a subfolder of the target list when one was chosen (drop onto a
+        // folder); otherwise into the list root. Items keep their source-relative paths
+        // beneath this root.
+        var sub = options.TargetSubfolderRelative?.Trim('/');
+        var targetRoot = string.IsNullOrEmpty(sub) ? listRoot : $"{listRoot}/{sub}";
+        if (!string.IsNullOrEmpty(sub))
+            await EnsureFolderAsync(targetWeb, listRoot, sub);   // create the destination folder chain first
 
         var allItems = await _itemCopier.LoadAllItemsAsync(sourceList, options);
         result.PlannedItems = allItems.Count;
@@ -75,6 +83,11 @@ public class FileCopier
             .OrderByDescending(i => i.FileSystemObjectType == FileSystemObjectType.Folder)
             .ThenBy(i => ((string)i["FileRef"]).Count(c => c == '/'))
             .ToList();
+
+        // OneNote notebooks are folders that directly hold a .onetoc2. Only the TOPMOST
+        // such folder is marked on the target so SharePoint renders it as a notebook;
+        // marking nested section groups would fracture a cohesive notebook.
+        var notebookRoots = BuildNotebookRoots(allItems, sourceRoot);
 
         foreach (var sourceItem in ordered)
         {
@@ -115,7 +128,10 @@ public class FileCopier
                     var folderItem = await GetItemByPathAsync(_targetCtx, targetList, targetPath, true);
                     if (options.PreserveAuthorsAndDates && folderItem != null)
                         await _itemCopier.ApplyFolderMetadataAsync(sourceItem, folderItem, result, fileRef);
-                    result.Add("Folder", fileRef, targetPath, ItemCopyStatus.Copied);
+                    var isNotebook = folderItem != null && notebookRoots.Contains(relativePath);
+                    if (isNotebook)
+                        await MarkOneNoteNotebookAsync(folderItem!, result, targetPath);
+                    result.Add(isNotebook ? "OneNote" : "Folder", fileRef, targetPath, ItemCopyStatus.Copied);
                     continue;
                 }
 
@@ -399,6 +415,48 @@ public class FileCopier
                         "this site refuses metadata preservation under the current sign-in. "
                         + "Connect with app + certificate to preserve authors and dates.");
             }
+        }
+    }
+
+    // Relative folder paths that directly contain a .onetoc2 AND have no ancestor that
+    // does (so a notebook's section groups don't each get marked). "" (the library
+    // root) is never a markable folder, so it's excluded.
+    private static HashSet<string> BuildNotebookRoots(IEnumerable<ListItem> items, string sourceRoot)
+    {
+        var withToc = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var it in items)
+        {
+            if (it.FileSystemObjectType != FileSystemObjectType.File) continue;
+            var fileRef = (string)it["FileRef"];
+            if (!fileRef.EndsWith(".onetoc2", StringComparison.OrdinalIgnoreCase)) continue;
+            if (fileRef.Length <= sourceRoot.Length + 1) continue;
+            var rel = fileRef[(sourceRoot.Length + 1)..];
+            var slash = rel.LastIndexOf('/');
+            if (slash < 0) continue;                       // .onetoc2 at library root: skip
+            withToc.Add(rel[..slash]);
+        }
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in withToc)
+            if (!withToc.Any(o => !string.Equals(o, f, StringComparison.OrdinalIgnoreCase)
+                                  && f.StartsWith(o + "/", StringComparison.OrdinalIgnoreCase)))
+                roots.Add(f);
+        return roots;
+    }
+
+    private async Task MarkOneNoteNotebookAsync(ListItem folderItem, CopyResult result, string targetPath)
+    {
+        // Setting HTML_x0020_File_x0020_Type cascades to the folder's ProgID and the
+        // WOPI flag, so SharePoint opens it as a notebook instead of a plain folder.
+        try
+        {
+            folderItem["HTML_x0020_File_x0020_Type"] = "OneNote.Notebook";
+            folderItem.UpdateOverwriteVersion();
+            await _targetCtx.ExecuteQueryAsync();
+        }
+        catch (Exception ex)
+        {
+            result.Add("Folder", targetPath, targetPath, Model.ItemCopyStatus.Warning,
+                "copied, but could not mark as a OneNote notebook: " + ex.Message);
         }
     }
 

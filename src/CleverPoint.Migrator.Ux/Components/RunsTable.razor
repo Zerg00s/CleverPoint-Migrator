@@ -26,7 +26,7 @@
                 @if (ShowPageSize)
                 {
                     <span class="hint">Per page</span>
-                    <FluentSelect TOption="string" @bind-Value="_perPage" @bind-Value:after="OnPerPageChanged" Style="width:96px;">
+                    <FluentSelect TOption="string" @bind-Value="_perPage" @bind-Value:after="OnPerPageChanged" Class="cp-perpage" Style="width:92px;">
                         @foreach (var n in _pageSizes)
                         {
                             <FluentOption Value="@n.ToString()">@n</FluentOption>
@@ -40,18 +40,18 @@
         </div>
 
         <div class="cp-grid cp-scroll runs-grid" style="@($"max-height: calc(100vh - {(ShowPageSize ? 320 : 360)}px); min-height:200px;")">
-            <FluentDataGrid Items="@_view.AsQueryable()" Pagination="@_pagination"
+            <FluentDataGrid Items="@_view.AsQueryable()" Pagination="@_pagination" ResizableColumns="true"
                             GenerateHeader="GenerateHeaderOption.Sticky"
-                            GridTemplateColumns="70px 2fr 1.1fr 1.1fr 0.7fr 1.2fr 1.9fr" ShowHover="true" Style="width:100%;"
+                            GridTemplateColumns="70px 2fr 1.2fr 1.1fr 1.1fr 0.7fr 1.9fr" ShowHover="true" Style="width:100%;"
                             OnRowClick="@(async (FluentDataGridRow<Core.History.MigrationRun> r) => { await Task.CompletedTask; if (r.Item is not null) Nav.NavigateTo($"/run/{r.Item.Id}"); })">
                 <PropertyColumn Property="@(r => r.Id)" Title="#" Sortable="true" />
                 <PropertyColumn Property="@(r => r.Name)" Title="Name" Sortable="true" />
-                <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" Sortable="true" />
-                <PropertyColumn Property="@(r => r.FinishedUtc.HasValue ? r.FinishedUtc.Value.ToLocalTime().ToString("g") : "")" Title="Finished" />
-                <PropertyColumn Property="@(r => Duration(r))" Title="Duration" />
                 <TemplateColumn Title="Status" Sortable="false">
                     <span class="status-pill @StatusClass(context)">@Pretty(context.Status)</span>
                 </TemplateColumn>
+                <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" Sortable="true" />
+                <PropertyColumn Property="@(r => r.FinishedUtc.HasValue ? r.FinishedUtc.Value.ToLocalTime().ToString("g") : "")" Title="Finished" />
+                <PropertyColumn Property="@(r => Duration(r))" Title="Duration" />
                 <PropertyColumn Property="@(r => $"{r.Copied} copied · {r.Skipped} skipped · {r.Warnings} warn · {r.Failed} failed")" Title="Result" />
             </FluentDataGrid>
         </div>

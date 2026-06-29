@@ -5,7 +5,7 @@ namespace CleverPoint.Migrator.Core.Http;
 /// <summary>
 /// Process-wide request pacing, shared per tenant host: when 2-3 migrations
 /// run in parallel they draw from ONE budget instead of multiplying load
-/// (the ShareGate-style "how many requests to send" control). A 429 anywhere
+/// (a "how many requests to send" pacing control). A 429 anywhere
 /// pauses everyone talking to that host for the server-requested delay.
 /// </summary>
 public static class RequestThrottle

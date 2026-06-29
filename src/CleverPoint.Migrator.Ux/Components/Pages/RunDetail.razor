@@ -1,10 +1,42 @@
 @page "/run/{Id:long}"
 @namespace CleverPoint.Migrator.Ux.Components.Pages
+@using CleverPoint.Migrator.Ux.Services
 @inject HistoryService History
+@inject ExplorerState Explorer
 @inject NavigationManager Nav
+@inject IToastService Toasts
 
-<div class="page-head">
-    <h1>Run #@Id</h1>
+<div class="page-crumbs">
+    <span class="crumb-link" role="button" @onclick="@(() => Nav.NavigateTo("/history"))">Run History</span>
+    <span class="crumb-sep">/</span>
+    <span class="crumb-current">@(_run?.Name ?? $"Run #{Id}")</span>
+</div>
+
+<div class="page-head" style="display:flex; flex-direction:column; gap:8px;">
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        @if (_run is null)
+        {
+            <h1 style="margin:0;">Run #@Id</h1>
+        }
+        else if (_editingName)
+        {
+            <FluentTextField @bind-Value="_nameEdit" Style="min-width:380px;" @onkeydown="NameKey" />
+            <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Checkmark())" Title="Save" OnClick="SaveName" />
+            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Cancel" OnClick="@(() => _editingName = false)" />
+        }
+        else
+        {
+            <h1 style="margin:0;">@_run.Name</h1>
+            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Edit())" Title="Rename this task" OnClick="StartRename" />
+        }
+    </div>
+    @if (_run is not null && !_editingName)
+    {
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span class="status-pill @StatusClass(_run)">@Pretty(_run.Status)</span>
+            <span class="hint">Run #@Id</span>
+        </div>
+    }
 </div>
 
 @if (_run is null)
@@ -20,36 +52,31 @@
 else
 {
     <FluentCard>
-        <div class="run-head">
-            <div class="run-title">
-                <span class="status-pill @StatusClass(_run)">@Pretty(_run.Status)</span>
-                @if (_editingName)
-                {
-                    <FluentTextField @bind-Value="_nameEdit" Style="min-width:340px;" @onkeydown="NameKey" />
-                    <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Checkmark())" Title="Save" OnClick="SaveName" />
-                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Cancel" OnClick="@(() => _editingName = false)" />
-                }
-                else
-                {
-                    <span class="run-name">@_run.Name</span>
-                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Edit())" Title="Rename this task" OnClick="StartRename" />
-                }
-            </div>
+        <div class="run-head" style="justify-content:flex-end;">
             <div class="btn-row">
                 <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())" @onclick="RestoreInExplorer"
+                              Title="Open the explorer at this run's source and target site, library and folder">Return to session</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
                               @onclick="@(() => Nav.NavigateTo("/history"))">Back</FluentButton>
             </div>
         </div>
 
-        <div class="run-meta">
-            <div><span class="field-label">Source</span><span>@_run.SourceUrl</span><span class="hint">@_run.SourceList</span></div>
-            <div><span class="field-label">Target</span><span>@_run.TargetUrl</span><span class="hint">@_run.TargetList</span></div>
-            <div><span class="field-label">Engine</span><span>@(_run.Engine == "MigrationApi" ? "Migration API" : "Classic copy")</span></div>
-            <div><span class="field-label">Started</span><span>@_run.StartedUtc.ToLocalTime().ToString("g")</span></div>
-            <div><span class="field-label">Finished</span><span>@(_run.FinishedUtc?.ToLocalTime().ToString("g") ?? "—")</span></div>
-            <div><span class="field-label">Duration</span><span>@Duration(_run)</span></div>
+        <div class="section-toggle" role="button" @onclick="@(() => _metaOpen = !_metaOpen)">
+            <FluentIcon Value="@((Icon)(_metaOpen ? new Icons.Regular.Size20.ChevronDown() : new Icons.Regular.Size20.ChevronRight()))" />
+            <span>Details</span>
         </div>
+        @if (_metaOpen)
+        {
+            <div class="run-meta">
+                <div><span class="field-label">Source</span><span>@_run.SourceUrl</span><span class="hint">@_run.SourceList</span></div>
+                <div><span class="field-label">Target</span><span>@_run.TargetUrl</span><span class="hint">@_run.TargetList</span></div>
+                <div><span class="field-label">Engine</span><span>@(_run.Engine == "MigrationApi" ? "Migration API" : "Classic copy")</span></div>
+                <div><span class="field-label">Started</span><span>@_run.StartedUtc.ToLocalTime().ToString("g")</span></div>
+                <div><span class="field-label">Finished</span><span>@(_run.FinishedUtc?.ToLocalTime().ToString("g") ?? "Not finished")</span></div>
+                <div><span class="field-label">Duration</span><span>@Duration(_run)</span></div>
+            </div>
+        }
 
         <div class="run-counts">
             <span class="count ok">@ItemsCopied items copied</span>
@@ -57,7 +84,6 @@ else
             <span class="count warn">@_run.Warnings warnings</span>
             <span class="count fail">@_run.Failed failed</span>
         </div>
-        <p class="hint" style="margin:6px 0 0;">Items = files, pages and list items. Columns, content types and lists aren't counted.</p>
     </FluentCard>
 
     <FluentCard style="margin-top:16px;">
@@ -67,6 +93,12 @@ else
             <FluentSearch @bind-Value="_logFilter" @bind-Value:after="ApplyLog" Immediate="true" ImmediateDelay="200" Placeholder="Filter the log…" />
             <FluentSelect TOption="string" @bind-Value="_logStatus" @bind-Value:after="ApplyLog"
                           Items="@_logStatuses" OptionText="@(s => s)" OptionValue="@(s => s)" Style="min-width:160px;" />
+            <FluentButton Id="exportLogBtn" Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowDownload())"
+                          @onclick="@(() => _exportOpen = !_exportOpen)" Disabled="@(_items.Count == 0)">Export</FluentButton>
+            <FluentMenu Anchor="exportLogBtn" @bind-Open="_exportOpen">
+                <FluentMenuItem OnClick="@(() => Export(LogExporter.Format.Csv))">CSV (.csv)</FluentMenuItem>
+                <FluentMenuItem OnClick="@(() => Export(LogExporter.Format.Xlsx))">Excel (.xlsx)</FluentMenuItem>
+            </FluentMenu>
         </FluentToolbar>
 
         <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:220px; margin-top:12px;">
@@ -77,16 +109,21 @@ else
             else
             {
                 <FluentDataGrid Items="@_filteredItems.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
-                                GridTemplateColumns="0.7fr 2.6fr 0.9fr 2.2fr 1.1fr" ShowHover="true" Style="width:100%;"
+                                GridTemplateColumns="0.9fr 1.2fr 0.9fr 2.4fr 2fr" ShowHover="true" Style="width:100%;"
                                 RowClass="@(_ => "click-row")"
                                 OnRowClick="@((FluentDataGridRow<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> r) => { _detail = r.Item; return Task.CompletedTask; })">
-                    <PropertyColumn Property="@(i => i.ItemType)" Title="Type" />
-                    <PropertyColumn Property="@(i => i.SourcePath)" Title="Item" />
+                    <TemplateColumn Title="Type">
+                        <div class="entry-cell">
+                            <img class="ft-icon" src="@FileIcons.ForRecord(context.ItemType, context.SourcePath)" alt="" />
+                            <span>@FileIcons.FriendlyType(context.ItemType)</span>
+                        </div>
+                    </TemplateColumn>
+                    <PropertyColumn Property="@(i => i.WhenUtc.HasValue ? i.WhenUtc.Value.ToLocalTime().ToString("M/d/yyyy h:mm:ss tt", System.Globalization.CultureInfo.InvariantCulture) : "")" Title="Date" />
                     <TemplateColumn Title="Status">
                         <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
                     </TemplateColumn>
+                    <PropertyColumn Property="@(i => i.SourcePath)" Title="Item" />
                     <PropertyColumn Property="@(i => i.Message)" Title="Detail" />
-                    <PropertyColumn Property="@(i => i.WhenUtc.HasValue ? i.WhenUtc.Value.ToLocalTime().ToString("g") : "")" Title="When" />
                 </FluentDataGrid>
             }
         </div>
@@ -98,7 +135,6 @@ else
     <div class="cp-modal-backdrop" @onclick="@(() => _detail = null)">
         <div class="cp-modal" @onclick:stopPropagation="true">
             <div class="cp-modal-head">
-                <span class="status-pill @ItemStatusClass(d.Status)">@d.Status</span>
                 <h3 style="margin:0;">@d.ItemType details</h3>
                 <FluentSpacer />
                 <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _detail = null)" />
@@ -129,6 +165,27 @@ else
     </div>
 }
 
+@if (_exportedPath is not null)
+{
+    <div class="cp-modal-backdrop" @onclick="@(() => _exportedPath = null)">
+        <div class="cp-modal" style="min-height:auto;" @onclick:stopPropagation="true">
+            <div class="cp-modal-head">
+                <h3 style="margin:0;">Export complete</h3>
+                <FluentSpacer />
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _exportedPath = null)" />
+            </div>
+            <div class="cp-modal-body">
+                <span class="hint">The log was saved to:</span>
+                <span class="v" style="word-break:break-all; user-select:text;">@_exportedPath</span>
+            </div>
+            <div class="cp-modal-foot">
+                <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => _exportedPath = null)">Close</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Open())" OnClick="OpenExported">Open file</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter] public long Id { get; set; }
 
@@ -138,6 +195,40 @@ else
     private string _logFilter = "";
     private string _logStatus = "All";
     private readonly string[] _logStatuses = { "All", "Copied", "Skipped", "Warning", "Failed" };
+
+    private bool _exportOpen;
+    private string? _exportedPath;
+    private bool _metaOpen;   // Details section starts collapsed.
+
+    // Export the full run log (not just the filtered view) to CSV or XLSX in Downloads,
+    // then offer to open it. The chosen format comes from the Export menu.
+    private void Export(LogExporter.Format fmt)
+    {
+        _exportOpen = false;
+        if (_run is null) return;
+        try
+        {
+            var headers = new[] { "Type", "Item", "Target", "Status", "Detail", "When" };
+            var rows = _items.Select(i => new[]
+            {
+                i.ItemType, i.SourcePath, i.TargetPath, i.Status, i.Message ?? "",
+                i.WhenUtc.HasValue ? i.WhenUtc.Value.ToLocalTime().ToString("g") : "",
+            });
+            var path = LogExporter.DownloadsPath($"Run {_run.Id} - {_run.Name} log", fmt);
+            LogExporter.Write(fmt, path, headers, rows);
+            _exportedPath = path;
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not export the log: {ex.Message}");
+        }
+    }
+
+    private void OpenExported()
+    {
+        if (_exportedPath is not null) Browser.Open(_exportedPath);
+        _exportedPath = null;
+    }
 
     protected override void OnParametersSet()
     {
@@ -161,7 +252,7 @@ else
         _filteredItems = q.ToList();
     }
 
-    // An "item" is a file, a page or a list item — not columns/content types/lists.
+    // An "item" is a file, a page or a list item - not columns/content types/lists.
     private static bool IsItem(string type) => type is "File" or "Page" or "Item";
     private int ItemsCopied => _items.Count(i => IsItem(i.ItemType) && i.Status == "Copied");
 
@@ -207,11 +298,39 @@ else
         else if (e.Key == "Escape") _editingName = false;
     }
 
+    // Rebuild both explorer panes from this run's saved context (site/subsite via the
+    // stored web URL, library by title, and folder + selection from the scope) and
+    // jump to the explorer positioned exactly where the run started.
+    private void RestoreInExplorer()
+    {
+        if (_run is null) return;
+        RunScope? scope = null;
+        if (!string.IsNullOrWhiteSpace(_run.ScopeJson))
+            try { scope = System.Text.Json.JsonSerializer.Deserialize<RunScope>(_run.ScopeJson!); } catch { }
+
+        Explorer.Source = new PaneSnapshot
+        {
+            Site = _run.SourceUrl,
+            OpenListTitle = _run.SourceList,
+            FolderUrl = scope?.SourceFolder ?? "",
+            PickedPaths = new(scope?.SelectedPaths ?? new(), StringComparer.OrdinalIgnoreCase),
+            PickedIds = new(scope?.ItemIds ?? new()),
+        };
+        Explorer.Target = new PaneSnapshot
+        {
+            Site = _run.TargetUrl,
+            OpenListTitle = _run.TargetList,
+            OpenSubfolderRelative = scope?.TargetSubfolder ?? "",
+        };
+        Nav.NavigateTo("/explore?restore=1");
+    }
+
     private void RunAgain()
     {
         if (_run is null) return;
         var q = $"?src={Uri.EscapeDataString(_run.SourceUrl)}&tgt={Uri.EscapeDataString(_run.TargetUrl)}"
-              + $"&lists={Uri.EscapeDataString(_run.SourceList)}";
+              + $"&lists={Uri.EscapeDataString(_run.SourceList)}"
+              + $"&tlist={Uri.EscapeDataString(_run.TargetList)}";
         Nav.NavigateTo("/wizard" + q);
     }
 
@@ -238,6 +357,7 @@ else
         "Failed" => "st-failed",
         "Warning" => "st-issues",
         "Skipped" => "st-interrupted",
+        "Info" => "st-info",
         _ => "st-ok",
     };
 }

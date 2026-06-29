@@ -18,6 +18,10 @@ public class PendingMigration
     public string? TargetListUrl { get; set; }
     public bool ContentOnly { get; set; }
 
+    /// <summary>Subfolder INSIDE the target list to drop into (relative to the list
+    /// root). Empty = the list root. Set when dropping onto a target folder.</summary>
+    public string? TargetSubfolderRelative { get; set; }
+
     public void Reset(string source, string target)
     {
         SourceSite = source;
@@ -26,6 +30,7 @@ public class PendingMigration
         TargetListTitle = null;
         TargetListUrl = null;
         ContentOnly = false;
+        TargetSubfolderRelative = null;
     }
 }
 

@@ -85,6 +85,10 @@ public static class Program
             ["page-dump"] = Scenarios.PageDumpTest.RunAsync,
             ["copy-cross-meta"] = Scenarios.CrossTenantMetaTest.RunAsync,
             ["date-filter"] = Scenarios.DateFilterTest.RunAsync,
+            ["quotes-probe"] = Scenarios.QuotesProbe.RunAsync,
+            ["onenote-probe"] = Scenarios.OneNoteProbe.RunAsync,
+            ["onenote-copy"] = Scenarios.OneNoteCopyTest.RunAsync,
+            ["subfolder-copy"] = Scenarios.SubfolderCopyTest.RunAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();
