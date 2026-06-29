@@ -11,8 +11,9 @@ CleverPoint Migrator is a tool that can be used by office workers and power user
 
 ![CleverPoint Migrator](/IMG/SharePoint_Online_Migrator.png)
 
-![Copy Demo](/IMG/CopyDemo.gif)
+See the animation below for a quick demo of how to use the tool.
 
+![Copy Demo](/IMG/CopyDemo.gif)
 
 ## Download and run
 
