@@ -32,13 +32,12 @@ src/CleverPoint.Migrator.Ux/publish/
 src/CleverPoint.Migrator.SignInHelper/bin/
 src/CleverPoint.Migrator.SignInHelper/obj/
 
-# Claude AI working notes / planning docs (not part of the product)
+# Local working notes / planning docs (not part of the product)
 PLAN.md
 NOTES.md
 notes/
-*.claude.md
-CLAUDE.local.md
-.claude/
+*.local.md
+.ai/
 
 # Captured browser sessions / local app state
 sessions.dat
