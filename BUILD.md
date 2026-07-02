@@ -48,12 +48,17 @@ folder (the csproj errors out if `PublishSingleFile=true`):
 
 ```bash
 dotnet publish src/CleverPoint.Migrator.Ux -c Release -r win-x64   --self-contained true -o publish/windows   # → CleverPoint.Migrator.Ux.exe
+# REQUIRED for Windows browser sign-in: publish the WebView2 helper into a SignInHelper\
+# subfolder next to the app, or the app shows "Sign-in helper not found". The MSBuild
+# bundle target only copies it into the dev BUILD output, never the publish folder.
+dotnet publish src/CleverPoint.Migrator.SignInHelper -c Release -r win-x64 --self-contained true -o publish/windows/SignInHelper
 dotnet publish src/CleverPoint.Migrator.Ux -c Release -r linux-x64 --self-contained true -o publish/linux
 ```
 
 Verified: the published folder contains the exe with `wwwroot/` beside it (scoped
-`*.styles.css` bundle, `*.modules.json`, Fluent `_content`, `_framework`). The bundled runtime
-means no .NET install is needed on the target.
+`*.styles.css` bundle, `*.modules.json`, Fluent `_content`, `_framework`) and a `SignInHelper/`
+subfolder holding `CleverPoint.Migrator.SignInHelper.exe`. The bundled runtime means no .NET
+install is needed on the target. `Sign-App.ps1` does both publishes automatically.
 
 Notes:
 - WSLg here runs the **Weston/Wayland** compositor; the GTK window must be forced onto

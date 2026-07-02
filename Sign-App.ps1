@@ -92,6 +92,19 @@ if (-not $SkipBuild) {
         -p:Version=$Version `
         -o $publishDir
     if ($LASTEXITCODE -ne 0) { throw "Publish failed" }
+
+    # Browser sign-in launches a separate WebView2 helper as its own process, so the
+    # helper exe MUST ship next to the app under SignInHelper\ (BrowserSignIn probes
+    # AppContext.BaseDirectory\SignInHelper\...). The MSBuild bundle target only copies
+    # it into the dev build output, never the publish folder, so publish it explicitly
+    # here. Self-contained so it runs even without .NET installed on the user's machine.
+    Write-Host "Publishing the browser sign-in helper into SignInHelper\ ..." -ForegroundColor Cyan
+    dotnet publish "$projectDir\src\CleverPoint.Migrator.SignInHelper" -c Release -r win-x64 --self-contained true `
+        -o "$publishDir\SignInHelper"
+    if ($LASTEXITCODE -ne 0) { throw "Sign-in helper publish failed" }
+    if (-not (Test-Path "$publishDir\SignInHelper\CleverPoint.Migrator.SignInHelper.exe")) {
+        throw "Sign-in helper exe missing after publish (browser auth would fail)"
+    }
 }
 
 # Step 2: Verify exe exists
