@@ -117,6 +117,7 @@
                 <FluentSelect TOption="string" @bind-Value="_copyMode" Style="width:100%;" Disabled="_running">
                     <FluentOption Value="full">Structure + content (recreate the list, then copy items)</FluentOption>
                     <FluentOption Value="content">Content only (target list already exists)</FluentOption>
+                    <FluentOption Value="structure">Structure only (recreate the list and columns, no items)</FluentOption>
                 </FluentSelect>
             }
         </div>
@@ -455,6 +456,7 @@
         }
 
         var contentOnly = _copyMode == "content";
+        var structureOnly = _copyMode == "structure";   // recreate list + schema, copy no items
         var queued = 0;
         foreach (var job in _jobs)
         {
@@ -472,7 +474,7 @@
                 PreserveAuthorsAndDates = _preserve,
                 CopyAttachments = _attachments,
                 CopyPermissions = _permissions,
-                CopyContent = true,
+                CopyContent = !structureOnly,
                 MergeSchema = !contentOnly,
                 CopyViews = !contentOnly,
                 CopyListSettings = !contentOnly,

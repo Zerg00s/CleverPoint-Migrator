@@ -44,6 +44,16 @@ public class MigrationApiEngine
 
         var schema = new SchemaCopier(sourceCtx, targetCtx);
         var targetList = await schema.CopyAsync(sourceList, options, result);
+
+        // Structure-only copy: the list + schema are created above; skip all content.
+        if (!options.CopyContent)
+        {
+            result.Add("List", sourceListTitle, options.TargetListTitle, ItemCopyStatus.Skipped,
+                "schema-only copy: content skipped by settings");
+            result.FinishedUtc = DateTime.UtcNow;
+            return result;
+        }
+
         targetCtx.Load(targetCtx.Web, w => w.Id, w => w.ServerRelativeUrl, w => w.Url);
         targetCtx.Load(targetList, l => l.Id, l => l.RootFolder.UniqueId, l => l.RootFolder.ServerRelativeUrl);
         await targetCtx.ExecuteQueryAsync();

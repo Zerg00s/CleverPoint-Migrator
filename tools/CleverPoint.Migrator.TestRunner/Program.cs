@@ -89,6 +89,7 @@ public static class Program
             ["onenote-probe"] = Scenarios.OneNoteProbe.RunAsync,
             ["onenote-copy"] = Scenarios.OneNoteCopyTest.RunAsync,
             ["subfolder-copy"] = Scenarios.SubfolderCopyTest.RunAsync,
+            ["structure-only"] = Scenarios.StructureOnlyTest.RunAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();
