@@ -54,7 +54,23 @@ else
     private AddConnectionDialog? _addDialog;
     private string? _busy;
 
+    // Set when arriving from the home screen's "Add your first connection" button
+    // (/connections?add=1) so the Add dialog opens automatically.
+    [Parameter, SupplyParameterFromQuery(Name = "add")]
+    public string? Add { get; set; }
+
     protected override void OnInitialized() => Settings.EnsureLoaded();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !string.IsNullOrEmpty(Add))
+        {
+            await OpenAdd();
+            // OnAfterRenderAsync does not auto-rerender; force a paint so the
+            // dialog's flipped Hidden state actually shows.
+            StateHasChanged();
+        }
+    }
 
     private async Task OpenAdd() { if (_addDialog is not null) await _addDialog.OpenAsync(); }
 

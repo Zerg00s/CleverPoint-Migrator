@@ -59,6 +59,14 @@
         </div>
     </FluentTab>
 
+    <FluentTab Id="trouble" Label="Troubleshoot">
+        <div style="padding-top:16px; max-width:640px;">
+            <p class="hint" style="margin-bottom:14px;">Opens the folder with error and crash logs.</p>
+            <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.FolderOpen())"
+                          @onclick="OpenLogs">Open Logs</FluentButton>
+        </div>
+    </FluentTab>
+
     <FluentTab Id="about" Label="About">
         <div style="padding-top:16px; max-width:640px;">
             <h3 style="margin:0 0 6px 0;">CleverPoint Migrator</h3>
@@ -74,7 +82,7 @@
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Bug())"
                               @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator/issues"))">Report an issue</FluentButton>
             </div>
-            <p class="hint" style="margin-top:16px;">Version 1.0</p>
+            <p class="hint" style="margin-top:16px;">Version @AppVersion</p>
             <p class="hint" style="margin-top:4px;">
                 Settings stored at
                 <a href="#" @onclick:preventDefault @onclick="OpenSettingsFile" style="color:var(--cp-link); cursor:pointer;"><code>@UxSettings.SettingsPath</code></a>
@@ -86,10 +94,24 @@
 @code {
     private string _tab = "perf";
 
+    // Comes from the assembly version stamped at publish time by Sign-App.ps1
+    // (-p:Version=X.Y.Z), so the About tab always reflects the released version.
+    private static readonly string AppVersion =
+        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
+            ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0";
+
     protected override void OnInitialized()
     {
         Settings.EnsureLoaded();
         if (Settings.DefaultMaxVersions < 1) Settings.DefaultMaxVersions = 1;
+    }
+
+    private void OpenLogs()
+    {
+        // The folder may not exist yet if nothing has ever been logged; create it
+        // so the button always opens something rather than silently doing nothing.
+        AppLog.EnsureFolder();
+        Browser.Open(AppLog.Folder);
     }
 
     private void OpenSettingsFile()

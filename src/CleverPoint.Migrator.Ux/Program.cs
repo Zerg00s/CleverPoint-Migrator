@@ -56,7 +56,18 @@ internal class Program
         catch { /* non-fatal */ }
 
         AppDomain.CurrentDomain.UnhandledException += (_, error) =>
+        {
+            AppLog.Error("UnhandledException", error.ExceptionObject);
             app.MainWindow.ShowMessage("Unexpected error", error.ExceptionObject?.ToString() ?? "Unknown error");
+        };
+
+        // Faulted background tasks (migration workers, etc.) surface here; record
+        // them to the log and mark observed so they don't tear down the process.
+        TaskScheduler.UnobservedTaskException += (_, error) =>
+        {
+            AppLog.Error("UnobservedTaskException", error.Exception);
+            error.SetObserved();
+        };
 
         // Closing during a migration warns first; the run keeps going unless the
         // user confirms. Returning true cancels the close.
