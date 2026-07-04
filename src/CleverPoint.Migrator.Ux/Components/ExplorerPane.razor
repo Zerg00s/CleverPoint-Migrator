@@ -595,11 +595,7 @@
         var picked = _pickedPaths.Count + _pickedIds.Count;
         var s = $"{here}: {count}";
         if (!IsSource) return s;
-        s += picked > 0
-            ? $"  ·  {picked} selected to copy"
-            : (CurrentList?.IsLibrary == true
-                ? "  ·  open folders to browse, tick items to copy (none = whole library)"
-                : "  ·  tick items to copy (none = whole list)");
+        if (picked > 0) s += $"  ·  {picked} selected to copy";
         if (capped) s += "  ·  open a folder to narrow down";
         return s;
     }
