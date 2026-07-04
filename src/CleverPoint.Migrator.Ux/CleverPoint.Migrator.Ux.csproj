@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- WinExe = Windows GUI subsystem: no console window is allocated when the
+         app launches (the UI is the Photino WebView). Console output goes nowhere;
+         crashes are captured in logs\app.log instead. -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
