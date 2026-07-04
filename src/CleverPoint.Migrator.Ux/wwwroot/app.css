@@ -3,6 +3,14 @@
    Brand: deep blue #1F4E79, teal accent #179C8E.
    =========================================================================== */
 
+/* Headings and body text are never interactive controls here. WebView2 parks
+   initial keyboard focus on the first element at startup, which drew a focus
+   ring around the hero heading; suppress it. Real controls (buttons, inputs,
+   the grid) keep their outlines. */
+h1, h2, h3, h4, h5, h6, p {
+    outline: none;
+}
+
 :root {
     --cp-primary: #1f4e79;
     --cp-primary-dark: #163a5c;

@@ -98,7 +98,7 @@
             {
                 <span>Ready</span>
             }
-            <span class="footer-sep">·</span><span>v1.0</span>
+            <span class="footer-sep">·</span><span>v@AppVersion</span>
         </div>
         <div class="footer-group footer-center">
             <span>CleverPoint Migrator</span>
@@ -119,6 +119,12 @@
     private DesignThemeModes _mode = DesignThemeModes.Light;
     private bool _navCollapsed;
     private string _currentPath = "";
+
+    // From the assembly version stamped at publish time by Sign-App.ps1
+    // (-p:Version=X.Y.Z), so the footer always matches the released version.
+    private static readonly string AppVersion =
+        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
+            ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0";
 
     private Icon _themeIcon => _mode == DesignThemeModes.Dark
         ? new Icons.Regular.Size20.WeatherSunny()

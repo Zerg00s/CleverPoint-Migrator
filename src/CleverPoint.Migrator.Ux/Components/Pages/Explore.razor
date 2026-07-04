@@ -83,18 +83,18 @@
     {
         if (_source is null || _target is null) return null;
         var tickedCount = _source.SelectedLists.Count;
-        // A structure copy recreates a list at the target SITE ROOT. That only applies
-        // to ticked lists, or a list opened at its root with nothing picked. A source
-        // drilled into a subfolder (or with items picked) is a content copy, which is
-        // fine to land inside a target folder, so it must NOT be blocked.
-        var structureCopy = tickedCount > 0
-            || (_source.IsListOpen && !_source.IsInSubfolder && !_source.HasItemSelection);
-        if (!structureCopy) return null;
 
-        if (_target.IsInSubfolder)
-            return "The target is a folder. A whole list or library is recreated at the site, so open the target at its site (not inside a folder).";
-        if (tickedCount >= 2 && _target.IsListOpen)
-            return "You picked several lists/libraries but the target is a single list. Open the target at its site so each one is created there.";
+        // Ticked lists are whole-list STRUCTURE copies: each is recreated at the target
+        // SITE root, so it can't land inside a folder, and several can't merge into one
+        // list. A single OPEN source list (even at its root, with nothing picked) is fine
+        // to copy INTO an open target list/folder as a content copy, so it is NOT blocked.
+        if (tickedCount > 0)
+        {
+            if (_target.IsInSubfolder)
+                return "You ticked a whole list or library, which is recreated at the target site. Open the target at its site (not inside a folder) - or open a single source list and copy its files into this folder instead.";
+            if (tickedCount >= 2 && _target.IsListOpen)
+                return "You picked several lists/libraries but the target is a single list. Open the target at its site so each one is created there.";
+        }
         return null;
     }
 
@@ -155,19 +155,21 @@
         }
         else if (_source.CurrentList is not null)
         {
-            // A specific item selection is content-only: it must go into an existing
-            // target list, so require one to be open on the right.
+            // If a target list/folder is open, land content INTO it: this covers both a
+            // specific item selection AND copying a whole source list's contents into the
+            // open target folder (no items picked = copy everything). With no target list
+            // open, this is a structure copy that recreates the source list at the site.
             var hasSelection = _source.SelectedPaths.Count > 0 || _source.SelectedItemIds.Count > 0;
-            if (hasSelection)
+            if (_target.CurrentList is not null)
             {
-                if (_target.CurrentList is null)
-                {
-                    Toasts.ShowWarning("Open the target library or list on the right to copy the selected items into it.");
-                    return;
-                }
                 Pending.TargetListTitle = _target.CurrentList.Title;
                 Pending.TargetSubfolderRelative = _target.CurrentSubfolderRelative;   // into the open target folder
                 Pending.ContentOnly = true;
+            }
+            else if (hasSelection)
+            {
+                Toasts.ShowWarning("Open the target library or list on the right to copy the selected items into it.");
+                return;
             }
             Pending.Jobs.Add(new PendingJob
             {
