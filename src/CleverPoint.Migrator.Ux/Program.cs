@@ -12,6 +12,12 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Only one instance per user session. A second one collides with the first
+        // over the WebView2 user-data folder (browser sign-in then crashes natively)
+        // and over the shared history db / settings / sign-in cache.
+        if (!SingleInstance.Acquire())
+            return; // already running; its window has been brought to the foreground
+
         var builder = PhotinoBlazorAppBuilder.CreateDefault(args);
 
         builder.Services.AddLogging();
@@ -69,15 +75,20 @@ internal class Program
             error.SetObserved();
         };
 
-        // Closing during a migration warns first; the run keeps going unless the
-        // user confirms. Returning true cancels the close.
-        var activity = app.Services.GetService(typeof(ActivityService)) as ActivityService;
+        // Closing while any migration is queued or running warns first; the run
+        // keeps going unless the user confirms. Returning true cancels the close.
+        // We ask the MigrationRunner (the real live state) rather than
+        // ActivityService, whose IsBusy flag is never set anywhere.
+        var runner = app.Services.GetService(typeof(MigrationRunner)) as MigrationRunner;
         app.MainWindow.WindowClosing += (_, _) =>
         {
-            if (activity is null || !activity.IsBusy) return false;
+            var active = runner?.ActiveCount ?? 0;
+            if (active == 0) return false;
             var result = app.MainWindow.ShowMessage(
                 "Migration in progress",
-                "A migration is still running. Close the app and stop it? Everything copied so far stays in place.",
+                active == 1
+                    ? "A migration is still running. Close the app and stop it? Everything copied so far stays in place."
+                    : $"{active} migrations are still running or queued. Close the app and stop them? Everything copied so far stays in place.",
                 PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Warning);
             return result != PhotinoDialogResult.Yes; // cancel close unless Yes
         };
