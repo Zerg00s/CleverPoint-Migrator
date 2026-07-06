@@ -45,10 +45,31 @@ public class CopyVerifier
         public int Extra;
     }
 
+    /// <summary>One row of the per-item verification table (source vs target, side by side).</summary>
+    public sealed class VerificationRow
+    {
+        public string RelPath = "", ItemType = "", FileName = "";
+        public string SourceRef = "", TargetRef = "";
+        public int SourceId, TargetId;
+        public long SourceSize, TargetSize;
+        public string SourceCreated = "", TargetCreated = "";
+        public string SourceModified = "", TargetModified = "";
+        public string SourceAuthor = "", TargetAuthor = "";
+        public string SourceVersion = "", TargetVersion = "";
+        public string Status = "", Notes = "";
+    }
+
+    private static string Str(ListItem i, string f) => i.FieldValues.GetValueOrDefault(f)?.ToString() ?? "";
+    private static long Size(ListItem i) => long.TryParse(Str(i, "File_x0020_Size"), out var l) ? l : 0;
+    private static string When(ListItem i, string f) => i.FieldValues.GetValueOrDefault(f) is DateTime d ? $"{d:yyyy-MM-dd HH:mm:ss}Z" : "";
+    private static string Who(ListItem i, string f) => i.FieldValues.GetValueOrDefault(f) is FieldUserValue u ? (u.Email ?? u.LookupValue ?? "") : "";
+    private static string TypeOf(ListItem i) => i.FileSystemObjectType == FileSystemObjectType.Folder ? "Folder"
+        : (i.FieldValues.ContainsKey("File_x0020_Size") && Size(i) >= 0 && !string.IsNullOrEmpty(Str(i, "FileLeafRef")) && Str(i, "FileLeafRef").Contains('.') ? "File" : "Item");
+
     public async Task<List<string>> VerifyAsync(List sourceList, List targetList,
         IEnumerable<string> compareFields, bool compareFileContent = false,
         Dictionary<string, string>? knownSourceHashes = null, bool compareUsers = true,
-        int contentSampleEvery = 1, VerificationStats? stats = null)
+        int contentSampleEvery = 1, VerificationStats? stats = null, List<VerificationRow>? itemRows = null)
     {
         var fileIndex = 0;
         var mismatches = new List<string>();
@@ -96,13 +117,23 @@ public class CopyVerifier
         foreach (var src in sourceItems)
         {
             var rel = KeyOf(src, sourceRoot);
+            var row = itemRows == null ? null : new VerificationRow
+            {
+                RelPath = rel, ItemType = TypeOf(src), FileName = Str(src, "FileLeafRef"),
+                SourceRef = Str(src, "FileRef"), SourceId = src.Id, SourceSize = Size(src),
+                SourceCreated = When(src, "Created"), SourceModified = When(src, "Modified"),
+                SourceAuthor = Who(src, "Author"), SourceVersion = Str(src, "_UIVersionString"),
+            };
+
             if (!targetByPath.TryGetValue(rel, out var tgt))
             {
                 mismatches.Add($"MISSING on target: {rel}");
                 if (stats != null) stats.Missing++;
+                if (row != null) { row.Status = "Missing on target"; itemRows!.Add(row); }
                 continue;
             }
             if (stats != null) stats.ItemsPaired++;
+            var before = mismatches.Count;
 
             foreach (var field in compareFields)
             {
@@ -130,6 +161,17 @@ public class CopyVerifier
                 if (srcHash != tgtHash)
                     mismatches.Add($"{rel}: CONTENT HASH differs (source={srcHash[..12]}..., target={tgtHash[..12]}...)");
             }
+
+            if (row != null)
+            {
+                row.TargetRef = Str(tgt, "FileRef"); row.TargetId = tgt.Id; row.TargetSize = Size(tgt);
+                row.TargetCreated = When(tgt, "Created"); row.TargetModified = When(tgt, "Modified");
+                row.TargetAuthor = Who(tgt, "Author"); row.TargetVersion = Str(tgt, "_UIVersionString");
+                var diffs = mismatches.GetRange(before, mismatches.Count - before);
+                row.Status = diffs.Count == 0 ? "Matched" : "Differs";
+                row.Notes = string.Join(" | ", diffs.Select(d => d.StartsWith(rel + ":") ? d[(rel.Length + 1)..].Trim() : d));
+                itemRows!.Add(row);
+            }
         }
 
         // Anything extra on the target?
@@ -138,6 +180,18 @@ public class CopyVerifier
         {
             mismatches.Add($"EXTRA on target: {extra}");
             if (stats != null) stats.Extra++;
+            if (itemRows != null)
+            {
+                var t = targetByPath[extra];
+                itemRows.Add(new VerificationRow
+                {
+                    RelPath = extra, ItemType = TypeOf(t), FileName = Str(t, "FileLeafRef"),
+                    TargetRef = Str(t, "FileRef"), TargetId = t.Id, TargetSize = Size(t),
+                    TargetCreated = When(t, "Created"), TargetModified = When(t, "Modified"),
+                    TargetAuthor = Who(t, "Author"), TargetVersion = Str(t, "_UIVersionString"),
+                    Status = "Extra on target",
+                });
+            }
         }
 
         return mismatches;

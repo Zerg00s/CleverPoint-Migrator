@@ -6,7 +6,8 @@
   upgrades stop working and users end up with two side-by-side installs. The ProductVersion and
   the harvest folder come from the build (-p:ProductVersion / -p:PublishDir).
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="CleverPoint Migrator"
            Manufacturer="Denis Molodtsov"
            Version="$(var.ProductVersion)"
@@ -17,6 +18,11 @@
     <!-- Block downgrades; replace an older install in place. -->
     <MajorUpgrade DowngradeErrorMessage="A newer version of CleverPoint Migrator is already installed." />
     <MediaTemplate EmbedCab="yes" />
+
+    <!-- Install wizard: a welcome+license page, a progress page, and a completion ("success")
+         page - so a double-click shows real UI instead of flashing and closing silently. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
 
     <!-- Per-user install root: %LocalAppData%\CleverPoint Migrator -->
     <StandardDirectory Id="LocalAppDataFolder">

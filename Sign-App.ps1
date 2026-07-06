@@ -13,6 +13,8 @@
 #   .\Sign-App.ps1 -Release                         # auto-increment + publish + sign + push GitHub release (zip)
 #   .\Sign-App.ps1 -Version 1.0.0 -SkipBuild        # sign only (already published)
 #   .\Sign-App.ps1 -Version 1.0.0 -Release -Draft    # push as draft release
+#   .\Sign-App.ps1 -Msi                              # publish + sign + build & sign the MSI (no zip, no GitHub)
+#   .\Sign-App.ps1 -Msi -SkipBuild                   # build & sign the MSI from the existing publish folder
 #
 # When -Version is omitted, the patch number is bumped from the highest existing
 # "vX.Y.Z" git tag (or the csproj <Version> if there are no tags yet, or 1.0.0 if
@@ -22,10 +24,53 @@ param(
     [string]$Version,
     [switch]$SkipBuild,
     [switch]$Release,
-    [switch]$Draft
+    [switch]$Draft,
+    [switch]$Msi
 )
 
 $ErrorActionPreference = "Stop"
+
+# Builds the per-user MSI (WiX 5) from the published folder and signs it. Returns the MSI path,
+# or "" if the WiX SDK is unavailable / the build fails (callers treat that as non-fatal).
+function Invoke-MsiBuild {
+    param($ProjectDir, $PublishDir, $Version, $SignTool, $Dlib, $MetadataJson)
+
+    $installerProj = "$ProjectDir\installer\CleverPoint.Migrator.Installer.wixproj"
+    if (-not (Test-Path $installerProj)) {
+        Write-Host "No installer project found; skipping MSI." -ForegroundColor Yellow
+        return ""
+    }
+
+    # Pipe the external commands' stdout to the host, NOT the pipeline: a function returns every
+    # uncaptured success-stream line, so without this the "dotnet build"/"signtool" chatter would
+    # be returned alongside the path and get passed as bogus args to "gh release create".
+    Write-Host "`nBuilding MSI installer (WiX 5)..." -ForegroundColor Cyan
+    dotnet build $installerProj -c Release -p:ProductVersion=$Version -p:PublishDir=$PublishDir 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "MSI build failed (is the WiX 5 SDK available?)." -ForegroundColor Yellow
+        return ""
+    }
+
+    $msi = Get-ChildItem "$ProjectDir\installer\bin" -Recurse -Filter "*.msi" -ErrorAction SilentlyContinue |
+           Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $msi) {
+        Write-Host "MSI not produced." -ForegroundColor Yellow
+        return ""
+    }
+
+    Write-Host "Signing MSI: $($msi.FullName)" -ForegroundColor Cyan
+    & $SignTool.FullName sign /v /debug /fd SHA256 `
+        /tr "http://timestamp.acs.microsoft.com" /td SHA256 `
+        /dlib $Dlib.FullName /dmdf $MetadataJson $msi.FullName 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "MSI signing failed." -ForegroundColor Yellow
+        return ""
+    }
+
+    Write-Host "MSI: $($msi.FullName) ($('{0:N1} MB' -f ($msi.Length / 1MB)))" -ForegroundColor Gray
+    # Emit ONLY the path as the function's return value.
+    return $msi.FullName
+}
 
 $projectDir   = $PSScriptRoot
 $uxProject    = "$projectDir\src\CleverPoint.Migrator.Ux"
@@ -155,43 +200,30 @@ Write-Host "Verifying signature..." -ForegroundColor Cyan
 
 Write-Host "`nSigned exe: $outputExe" -ForegroundColor Green
 
+# -Msi (without -Release): build + sign the MSI from the just-signed folder, then stop. Lets you
+# iterate on the installer without cutting a GitHub release.
+if ($Msi -and -not $Release) {
+    $msiPath = Invoke-MsiBuild -ProjectDir $projectDir -PublishDir $publishDir -Version $Version `
+        -SignTool $signTool -Dlib $dlib -MetadataJson $metadataJson
+    if (-not $msiPath) { throw "MSI build/sign failed" }
+    Write-Host "`nMSI ready: $msiPath" -ForegroundColor Green
+    exit 0
+}
+
 # Step 5: Push GitHub release (if -Release flag). The app ships as a folder, so the
 # release asset is a zip of the whole publish folder.
 if ($Release) {
-    Write-Host "`nPackaging release zip..." -ForegroundColor Cyan
-    $zipPath = "$uxProject\publish\CleverPoint.Migrator-win-x64-$Version.zip"
+    Write-Host "`nPackaging portable release zip..." -ForegroundColor Cyan
+    # "portable" in the name so testers can tell the no-install ZIP apart from the MSI installer.
+    $zipPath = "$uxProject\publish\CleverPoint.Migrator-portable-win-x64-$Version.zip"
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
     Compress-Archive -Path "$publishDir\*" -DestinationPath $zipPath
     Write-Host "Zip: $zipPath ($('{0:N1} MB' -f ((Get-Item $zipPath).Length / 1MB)))" -ForegroundColor Gray
 
-    # Build the per-user MSI installer (WiX 5) and sign it, so testers can install/update with a
-    # double-click. Non-fatal: if the WiX SDK is unavailable the release still ships the zip.
-    $msiPath = ""
-    $installerProj = "$projectDir\installer\CleverPoint.Migrator.Installer.wixproj"
-    if (Test-Path $installerProj) {
-        Write-Host "`nBuilding MSI installer (WiX 5)..." -ForegroundColor Cyan
-        dotnet build $installerProj -c Release -p:ProductVersion=$Version -p:PublishDir=$publishDir
-        if ($LASTEXITCODE -eq 0) {
-            $msi = Get-ChildItem "$projectDir\installer\bin" -Recurse -Filter "*.msi" -ErrorAction SilentlyContinue |
-                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($msi) {
-                Write-Host "Signing MSI: $($msi.FullName)" -ForegroundColor Cyan
-                & $signTool.FullName sign /v /debug /fd SHA256 `
-                    /tr "http://timestamp.acs.microsoft.com" /td SHA256 `
-                    /dlib $dlib.FullName /dmdf $metadataJson $msi.FullName
-                if ($LASTEXITCODE -eq 0) {
-                    $msiPath = $msi.FullName
-                    Write-Host "MSI: $msiPath ($('{0:N1} MB' -f ($msi.Length / 1MB)))" -ForegroundColor Gray
-                } else {
-                    Write-Host "MSI signing failed; releasing without the MSI." -ForegroundColor Yellow
-                }
-            } else {
-                Write-Host "MSI not produced; releasing without the MSI." -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host "MSI build failed (is the WiX 5 SDK available?); releasing without the MSI." -ForegroundColor Yellow
-        }
-    }
+    # Build + sign the per-user MSI so testers can install/update with a double-click. Non-fatal:
+    # if the WiX SDK is unavailable the release still ships the zip.
+    $msiPath = Invoke-MsiBuild -ProjectDir $projectDir -PublishDir $publishDir -Version $Version `
+        -SignTool $signTool -Dlib $dlib -MetadataJson $metadataJson
 
     Write-Host "Creating GitHub release $tag ..." -ForegroundColor Cyan
 

@@ -8,6 +8,7 @@
 @inject MigrationRunner Runner
 @inject UpdateService Updates
 @inject IToastService Toasts
+@inject IJSRuntime JS
 
 <FluentDesignTheme @bind-Mode="@_mode" StorageName="theme" />
 
@@ -62,9 +63,12 @@
             <NavLink class="nav-item" href="connections" ActiveClass="active" title="Connections">
                 <FluentIcon Value="@(new Icons.Regular.Size20.PlugConnected())" /> <span>Connections</span>
             </NavLink>
-            <NavLink class="nav-item" href="mapping" ActiveClass="active" title="Identity mapping">
-                <FluentIcon Value="@(new Icons.Regular.Size20.PeopleSwap())" /> <span>Mapping</span>
-            </NavLink>
+            @if (HasMultipleTenants)
+            {
+                <NavLink class="nav-item" href="mapping" ActiveClass="active" title="Identity mapping (cross-tenant)">
+                    <FluentIcon Value="@(new Icons.Regular.Size20.PeopleSwap())" /> <span>Mapping</span>
+                </NavLink>
+            }
             <NavLink class="nav-item" href="history" ActiveClass="active" title="Run History">
                 <FluentIcon Value="@(new Icons.Regular.Size20.History())" /> <span>Run History</span>
             </NavLink>
@@ -103,12 +107,16 @@
             {
                 <span>Ready</span>
             }
-            <span class="footer-sep">·</span><span>v@AppVersion</span>
+            <span class="footer-sep">·</span><span>v@(AppVersion)</span>
         </div>
         <div class="footer-group footer-center">
             <span>CleverPoint Migrator</span>
         </div>
-        <div class="footer-group"></div>
+        <div class="footer-group footer-zoom">
+            <span class="footer-zoom-btn" role="button" title="Zoom out" @onclick="@(() => ZoomBy(-0.1))">&minus;</span>
+            <span class="footer-zoom-pct" role="button" title="Reset zoom to 100%" @onclick="ResetZoom">@((int)Math.Round(_zoom * 100))%</span>
+            <span class="footer-zoom-btn" role="button" title="Zoom in" @onclick="@(() => ZoomBy(0.1))">+</span>
+        </div>
     </footer>
 
 </div>
@@ -130,6 +138,12 @@
     private static readonly string AppVersion =
         System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
             ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0";
+
+    // Identity mapping is a cross-tenant tool, so only surface it once there are connections to
+    // two or more distinct tenants (hosts).
+    private bool HasMultipleTenants => Settings.Connections
+        .Select(c => { try { return new Uri(c.SiteUrl).Host; } catch { return c.SiteUrl; } })
+        .Distinct(StringComparer.OrdinalIgnoreCase).Count() >= 2;
 
     private Icon _themeIcon => _mode == DesignThemeModes.Dark
         ? new Icons.Regular.Size20.WeatherSunny()
@@ -172,6 +186,20 @@
 
     private void OnStatusChanged() => InvokeAsync(StateHasChanged);
     private void ToggleNav() => _navCollapsed = !_navCollapsed;
+
+    // Page zoom (like a browser). Uses the CSS zoom property via a tiny JS helper; the level
+    // survives navigation (this layout persists) and is clamped to a sane range.
+    private double _zoom = 1.0;
+    private async Task ZoomBy(double delta)
+    {
+        _zoom = Math.Clamp(Math.Round(_zoom + delta, 2), 0.5, 2.0);
+        await JS.InvokeVoidAsync("cpSetZoom", _zoom);
+    }
+    private async Task ResetZoom()
+    {
+        _zoom = 1.0;
+        await JS.InvokeVoidAsync("cpSetZoom", _zoom);
+    }
     private void ToggleTheme()
     {
         _mode = _mode == DesignThemeModes.Dark ? DesignThemeModes.Light : DesignThemeModes.Dark;

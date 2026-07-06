@@ -29,7 +29,7 @@
     {
         <div style="padding:44px 16px; text-align:center;">
             <p style="margin:0 0 4px; font-size:15px; font-weight:600;">Nothing is copying right now</p>
-            <div class="btn-row" style="justify-content:center; margin-top:40px;">
+            <div class="btn-row" style="justify-content:center; margin-top:40px; gap:16px;">
                 <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowRight())" @onclick="@(() => Nav.NavigateTo("/explore"))">New copy task</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.History())" @onclick="@(() => Nav.NavigateTo("/history"))">View Run History</FluentButton>
             </div>

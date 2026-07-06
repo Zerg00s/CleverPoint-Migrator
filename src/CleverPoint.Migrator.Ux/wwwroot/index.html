@@ -33,6 +33,8 @@
     <script src="_framework/blazor.webview.js"></script>
     <!-- Freezes resizable grid columns to pixels on render to kill the first-drag jump. -->
     <script src="cp-grid.js"></script>
+    <!-- Footer page-zoom (browser-like +/-/reset). -->
+    <script>window.cpSetZoom = function (z) { document.documentElement.style.zoom = z; };</script>
 </body>
 
 </html>

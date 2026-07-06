@@ -66,15 +66,14 @@ else
                 {
                     <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
                 }
-                <FluentButton Id="verifyBtn" Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
-                              @onclick="@(() => _verifyOpen = !_verifyOpen)" Disabled="@_verifying"
-                              Title="Compare source and target and produce a client-ready verification report">
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
+                              @onclick="@(() => Verify(false))" Disabled="@_verifying"
+                              Title="Compare counts + metadata, then produce a client-ready verification report">
                     @(_verifying ? "Verifying…" : "Verify & report")
                 </FluentButton>
-                <FluentMenu Anchor="verifyBtn" @bind-Open="_verifyOpen">
-                    <FluentMenuItem OnClick="@(() => Verify(false))">Quick (counts + metadata)</FluentMenuItem>
-                    <FluentMenuItem OnClick="@(() => Verify(true))">Deep (also hash file contents, slower)</FluentMenuItem>
-                </FluentMenu>
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.DocumentSearch())"
+                              @onclick="@(() => Verify(true))" Disabled="@_verifying"
+                              Title="Also hash file contents (SHA-256, slower) for a deeper verification">Deep verify</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())" @onclick="RestoreInExplorer"
                               Title="Open the explorer at this run's source and target site, library and folder">Return to session</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
@@ -220,18 +219,23 @@ else
     private string? _exportedPath;
     private bool _metaOpen;   // Details section starts collapsed.
 
-    private bool _verifyOpen;
     private bool _verifying;
 
-    // Compare source vs target and write a client-ready verification report to Downloads.
+    // Compare source vs target and write a client-ready verification report to Downloads. The
+    // compare pages every item (and, for deep, hashes files), so it runs on a background thread
+    // to keep the UI responsive, with a heads-up toast since large libraries take a while.
     private async Task Verify(bool deep)
     {
-        _verifyOpen = false;
         if (_run is null || _verifying) return;
+        var run = _run;
         _verifying = true;
+        Toasts.ShowInfo(deep
+            ? "Deep verification started (hashing file contents). This can take a while for large libraries…"
+            : "Verification started. This can take a while for large libraries…");
+        StateHasChanged();
         try
         {
-            var (report, path) = await Migrations.VerifyRunAsync(_run, deep);
+            var (report, path) = await Task.Run(() => Migrations.VerifyRunAsync(run, deep));
             _exportedPath = path;   // reuse the "saved to…" modal with an Open button
             if (report.IsClean) Toasts.ShowSuccess($"Verified: {report.Verdict}.");
             else Toasts.ShowWarning($"{report.Mismatches.Count} difference(s) found. See the report.");
@@ -243,6 +247,7 @@ else
         finally
         {
             _verifying = false;
+            StateHasChanged();
         }
     }
 

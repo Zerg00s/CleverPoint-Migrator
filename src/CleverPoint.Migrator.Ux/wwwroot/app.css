@@ -76,22 +76,66 @@ h1, h2, h3, h4, h5, h6, p {
 .tp-throttle-sm { padding: 1px 7px; font-size: 11px; }
 @media (prefers-color-scheme: dark) { .tp-throttle { color: #ffcf70; } }
 /* Identity mapping screen. */
-.map-pick { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-.map-grid { display: grid; grid-template-columns: 1fr 1.3fr 1fr; gap: 14px; margin-top: 14px; align-items: start; }
+.map-pick { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+.map-pick-field { display: flex; flex-direction: column; gap: 6px; min-width: 260px; }
+.map-pick-field .field-label { margin: 0; }
+.map-pick-arrow { color: var(--cp-accent); margin-bottom: 6px; flex: 0 0 auto; }
+/* Native connection picker (reliable OS dropdown; FluentSelect kept clipping/emptying). */
+.cp-native-select { width: 100%; min-width: 260px; height: 32px; padding: 4px 30px 4px 11px; border-radius: 6px;
+    font: inherit; font-size: 13px; cursor: pointer; appearance: none; -webkit-appearance: none;
+    color: var(--neutral-foreground-rest, #e0e0e0);
+    background-color: var(--neutral-fill-input-rest, #1f1f1f);
+    border: 1px solid var(--neutral-stroke-strong-rest, #575757);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%23888' d='M2 4l4 4 4-4z'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center; }
+.cp-native-select:hover { border-color: var(--cp-accent); }
+.cp-native-select:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
+/* Identity mapping: 3 panes - source list | pre-populated mapping | target directory. */
+.map3 { display: grid; grid-template-columns: 260px minmax(0,1fr) 300px; gap: 14px; margin-top: 14px; align-items: start; }
 .map-pane { display: flex; flex-direction: column; }
 .map-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-.map-people { height: calc(100vh - 320px); min-height: 240px; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
-.principal { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px solid var(--neutral-stroke-rest, #e6e8eb); border-radius: 8px; cursor: grab; background: var(--neutral-layer-1, #fff); }
+.map-people { height: calc(100vh - 330px); min-height: 240px; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; margin-top: 8px; }
+.map-rows { height: calc(100vh - 400px); min-height: 200px; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; margin-top: 8px; }
+
+/* A person/group chip (source list + target directory). */
+.principal { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px solid var(--neutral-stroke-rest, #e6e8eb); border-radius: 8px; cursor: pointer; background: var(--neutral-layer-1, #fff); }
 .principal:hover { border-color: var(--cp-accent); background: color-mix(in srgb, var(--cp-accent) 6%, transparent); }
-.principal.grp { border-left: 3px solid var(--cp-accent); }
+.principal.sel { border-color: var(--cp-accent); background: color-mix(in srgb, var(--cp-accent) 12%, transparent); box-shadow: inset 3px 0 0 var(--cp-accent); }
 .principal .p-text { display: flex; flex-direction: column; min-width: 0; }
 .p-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .p-sub { font-size: 11px; color: var(--neutral-foreground-hint, #888); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.map-rows { height: calc(100vh - 430px); min-height: 160px; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
-.map-row { display: flex; align-items: center; gap: 8px; }
-.slot { flex: 1 1 0; min-width: 0; min-height: 42px; display: flex; flex-direction: column; justify-content: center; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--neutral-stroke-rest, #e6e8eb); background: var(--neutral-layer-1, #fff); }
-.slot.empty { border-style: dashed; background: transparent; }
+.unmatched-dot { flex: 0 0 auto; margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: #e0a020; }
+
+/* One mapping row: source card | arrow | target card. */
+.map-row { display: grid; grid-template-columns: minmax(0,1fr) 20px minmax(0,1fr); align-items: center; gap: 10px; padding: 2px; border-radius: 8px; cursor: pointer; }
+.map-row.sel { background: color-mix(in srgb, var(--cp-accent) 7%, transparent); }
+.row-arrow { color: var(--neutral-foreground-hint, #888); justify-self: center; }
+.ident-card { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 46px; padding: 6px 10px; border-radius: 8px;
+    border: 1px solid var(--neutral-stroke-rest, #e6e8eb); background: var(--neutral-layer-1, #fff); }
+.ident-card .p-text { display: flex; flex-direction: column; min-width: 0; }
+.ident-card.empty.dashed { border-style: dashed; border-color: color-mix(in srgb, #e0a020 60%, transparent); background: color-mix(in srgb, #e0a020 6%, transparent); }
+.match-badge { flex: 0 0 auto; margin-left: auto; font-size: 10px; padding: 1px 7px; border-radius: 999px; letter-spacing: .03em;
+    background: color-mix(in srgb, var(--cp-accent) 18%, transparent); color: var(--cp-accent); }
+.slot-clear { flex: 0 0 auto; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; color: var(--neutral-foreground-hint, #999); }
+.slot-clear:hover { color: var(--cp-danger, #d13438); }
 .slot-hint { font-size: 12px; color: var(--neutral-foreground-hint, #999); }
+.dir-search { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; }
+
+/* Principal-kind accents: user / SharePoint group / M365 group / security group. */
+.principal.pk-sp, .ident-card.pk-sp { border-left: 3px solid #2aa198; }
+.principal.pk-m365, .ident-card.pk-m365 { border-left: 3px solid #8764b8; }
+.principal.pk-sec, .ident-card.pk-sec { border-left: 3px solid #c08a20; }
+.pk-sp svg { color: #2aa198; }
+.pk-m365 svg { color: #8764b8; }
+.pk-sec svg { color: #c08a20; }
+/* Group-type text chip (SharePoint / Microsoft 365 / Security). */
+.kind-badge { flex: 0 0 auto; margin-left: auto; font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.kind-badge.pk-sp { background: color-mix(in srgb, #2aa198 20%, transparent); color: #2aa198; }
+.kind-badge.pk-m365 { background: color-mix(in srgb, #8764b8 24%, transparent); color: #8764b8; }
+.kind-badge.pk-sec { background: color-mix(in srgb, #c08a20 24%, transparent); color: #c08a20; }
+.principal .kind-badge + .unmatched-dot { margin-left: 8px; }
+
 .orphan-box { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--neutral-stroke-rest, #e6e8eb); }
 .orphan-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 /* "Update available" card on Settings > About. */
@@ -248,6 +292,13 @@ html, body {
 .footer-group { display: flex; align-items: center; gap: 7px; }
 .footer-center { opacity: .7; }
 .footer-sep { opacity: .4; }
+/* Footer page-zoom controls. */
+.footer-zoom { gap: 2px; }
+.footer-zoom-btn { cursor: pointer; width: 20px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 4px; font-size: 15px; line-height: 1; user-select: none; }
+.footer-zoom-btn:hover { background: color-mix(in srgb, var(--cp-accent) 22%, transparent); }
+.footer-zoom-pct { cursor: pointer; min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; user-select: none; }
+.footer-zoom-pct:hover { text-decoration: underline; }
 .footer-dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa; display: inline-block; }
 .footer-dot.online { background: var(--cp-ok); box-shadow: 0 0 0 3px rgba(30,126,52,.15); }
 .footer-dot.busy { background: var(--cp-warn); box-shadow: 0 0 0 3px rgba(184,134,11,.18); animation: pulse 1s ease-in-out infinite; }

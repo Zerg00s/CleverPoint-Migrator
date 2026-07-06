@@ -88,8 +88,8 @@ public class UxMigrationService
         report.ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
             ? $"{v.Major}.{v.Minor}.{v.Build}" : "";
 
-        var path = LogExporter.DownloadsPath($"Verification - {run.SourceList} to {run.TargetList}", "html");
-        report.ExportHtml(path);
+        var path = LogExporter.DownloadsPath($"Verification - {run.SourceList} to {run.TargetList}", "csv");
+        report.ExportCsv(path);
         return (report, path);
     }
 

@@ -161,6 +161,24 @@ public class FileCopier
         var degree = options.CopyPermissions ? 1 : Math.Max(1, options.ParallelFileTransfers);
         if (degree > 1 && _source != null && _target != null && files.Count > 1)
         {
+            // A filtered selection's parent folders aren't in the scan (folder items are skipped),
+            // so each file creates its chain on demand. Under parallelism that races several
+            // workers to create the SAME folder ("... already exists"). Pre-create the distinct
+            // chains sequentially here so the workers only ever find them already present.
+            if (options.SelectedPaths.Count > 0 || options.NamePatterns.Count > 0)
+            {
+                var parents = files
+                    .Select(i => ((string)i["FileRef"])[(sourceRoot.Length + 1)..])
+                    .Where(rel => rel.Contains('/'))
+                    .Select(rel => rel[..rel.LastIndexOf('/')])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(rel => rel.Length);
+                foreach (var rel in parents)
+                {
+                    try { await EnsureFolderAsync(targetWeb, targetRoot, rel); }
+                    catch (Exception ex) { result.Add("Folder", rel, $"{targetRoot}/{rel}", ItemCopyStatus.Failed, ex.Message); }
+                }
+            }
             await CopyFilesParallelAsync(files, sourceRoot, targetRoot, copyFields, options, result, degree);
         }
         else
@@ -634,11 +652,24 @@ public class FileCopier
 
                 if (!exists)
                 {
-                    var parent = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(current));
-                    // Path-safe create (AddUsingPath), so folder names containing % or # are
-                    // taken literally instead of being decoded/mangled by the legacy Add().
-                    parent.Folders.AddUsingPath(ResourcePath.FromDecodedUrl(next), new FolderCollectionAddParameters());
-                    await _targetCtx.ExecuteQueryAsync();
+                    try
+                    {
+                        var parent = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(current));
+                        // Path-safe create (AddUsingPath), so folder names containing % or # are
+                        // taken literally instead of being decoded/mangled by the legacy Add().
+                        parent.Folders.AddUsingPath(ResourcePath.FromDecodedUrl(next), new FolderCollectionAddParameters());
+                        await _targetCtx.ExecuteQueryAsync();
+                    }
+                    catch (ServerException)
+                    {
+                        // A concurrent transfer worker may have created this folder between our
+                        // existence probe and our create ("... already exists"). Only swallow the
+                        // error if the folder is genuinely there now; otherwise it is real.
+                        var check = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(next));
+                        _targetCtx.Load(check, f => f.Exists);
+                        await _targetCtx.ExecuteQueryAsync();
+                        if (!check.Exists) throw;
+                    }
                 }
                 _ensuredFolders.Add(next);
             }

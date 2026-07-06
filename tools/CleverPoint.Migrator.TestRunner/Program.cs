@@ -107,6 +107,7 @@ public static class Program
             ["taxprobe"] = Scenarios.TaxonomyProbe.RunAsync,
             ["taxcopy"] = Scenarios.TaxonomyCopyTest.RunAsync,
             ["parallel"] = Scenarios.ParallelCopyTest.RunAsync,
+            ["pf-race"] = Scenarios.ParallelFolderRaceTest.RunAsync,
             ["update-version"] = Scenarios.UpdateVersionTest.RunAsync,
         };
 

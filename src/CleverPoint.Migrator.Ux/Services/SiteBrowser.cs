@@ -1,5 +1,7 @@
 using System.Text.Json;
 using CleverPoint.Migrator.Core.Csom;
+using Microsoft.SharePoint.Client;
+using File = System.IO.File;   // the CSOM namespace also defines File; the cache uses System.IO.File
 
 namespace CleverPoint.Migrator.Ux.Services;
 
@@ -17,8 +19,23 @@ public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary,
     public string SubWebUrl { get; set; } = "";
 }
 public record SpWebInfo(string Title, string Url);
+
+/// <summary>What sort of principal this is, so the mapper can show each kind distinctly.</summary>
+public enum PrincipalKind { User, SharePointGroup, M365Group, SecurityGroup }
+
 /// <summary>A site user or group for the identity mapper (login is the mapping key).</summary>
-public record SpPrincipal(string Login, string Title, string Email, bool IsGroup);
+public record SpPrincipal(string Login, string Title, string Email, bool IsGroup, PrincipalKind Kind = PrincipalKind.User)
+{
+    /// <summary>Classify from the CSOM PrincipalType (1=User, 4=SecurityGroup, 8=SharePointGroup)
+    /// and the login claim (M365 groups use the federated-directory claim provider).</summary>
+    public static PrincipalKind Classify(int principalType, string login, bool fromSiteGroups)
+    {
+        if (fromSiteGroups || principalType == 8) return PrincipalKind.SharePointGroup;
+        if (principalType is 1 or 0) return PrincipalKind.User;
+        return login.Contains("federateddirectoryclaimprovider", StringComparison.OrdinalIgnoreCase)
+            ? PrincipalKind.M365Group : PrincipalKind.SecurityGroup;
+    }
+}
 public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,
     string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "")
 {
@@ -94,7 +111,7 @@ public class SiteBrowser
                 byLogin[login] = new SpPrincipal(login,
                     e.GetProperty("Title").GetString() ?? login,
                     e.TryGetProperty("Email", out var em) ? em.GetString() ?? "" : "",
-                    IsGroup: pt != 1);
+                    IsGroup: pt != 1, Kind: SpPrincipal.Classify(pt, login, fromSiteGroups: false));
             }
         }
         using (var doc = await conn.Rest.GetJsonAsync(
@@ -104,12 +121,95 @@ public class SiteBrowser
             {
                 var login = e.GetProperty("LoginName").GetString() ?? "";
                 if (login.Length == 0 || byLogin.ContainsKey(login)) continue;
-                byLogin[login] = new SpPrincipal(login, e.GetProperty("Title").GetString() ?? login, "", IsGroup: true);
+                byLogin[login] = new SpPrincipal(login, e.GetProperty("Title").GetString() ?? login, "", IsGroup: true, Kind: PrincipalKind.SharePointGroup);
             }
         }
         var list = byLogin.Values.OrderBy(p => p.IsGroup).ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase).ToList();
         WriteCache(cacheKey, list);
         return list;
+    }
+
+    /// <summary>
+    /// Resolves an identity by email/UPN/login on the target via EnsureUser, so the mapper can
+    /// pick ANY Entra ID user or group (not just those already listed as site users). Tries the
+    /// bare value first, then the canonical membership claim form. THROWS with the server's
+    /// message if nothing resolves, so the caller can tell the user why.
+    /// </summary>
+    public async Task<SpPrincipal> EnsureTargetPrincipalAsync(SpConnection conn, string loginOrEmail)
+    {
+        using var ctx = conn.CreateContext();
+        Exception? last = null;
+        foreach (var candidate in EnsureCandidates(loginOrEmail))
+        {
+            try
+            {
+                var u = ctx.Web.EnsureUser(candidate);
+                ctx.Load(u, x => x.LoginName, x => x.Title, x => x.Email, x => x.PrincipalType);
+                await ctx.ExecuteWithRetryAsync();
+                var isGroup = u.PrincipalType != Microsoft.SharePoint.Client.Utilities.PrincipalType.User;
+                return new SpPrincipal(u.LoginName, string.IsNullOrEmpty(u.Title) ? loginOrEmail : u.Title, u.Email ?? "",
+                    isGroup, SpPrincipal.Classify((int)u.PrincipalType, u.LoginName, false));
+            }
+            catch (Exception ex) { last = ex; }
+        }
+        throw last ?? new InvalidOperationException($"'{loginOrEmail}' could not be resolved on the target.");
+    }
+
+    // EnsureUser sometimes rejects a bare UPN but accepts the claims form (and vice versa), so try both.
+    private static IEnumerable<string> EnsureCandidates(string s)
+    {
+        yield return s;
+        if (s.Contains('@') && !s.StartsWith("i:0#", StringComparison.OrdinalIgnoreCase))
+            yield return $"i:0#.f|membership|{s}";
+    }
+
+    /// <summary>
+    /// Searches the target's DIRECTORY (Entra ID) for users/groups matching a query, via the same
+    /// People Picker service SharePoint's own people fields use - so it finds identities that are
+    /// NOT yet site users. Returns candidates (each Login is the claim to EnsureUser on pick).
+    /// </summary>
+    public async Task<List<SpPrincipal>> SearchDirectoryAsync(SpConnection conn, string query, int max = 20)
+    {
+        var results = new List<SpPrincipal>();
+        var body = new
+        {
+            queryParams = new
+            {
+                AllowEmailAddresses = true,
+                AllowMultipleEntities = false,
+                AllUrlZones = false,
+                MaximumEntitySuggestions = max,
+                PrincipalSource = 15,   // UserInfoList | Windows | MembershipProvider | RoleProvider
+                PrincipalType = 15,     // User | DistributionList | SecurityGroup | SharePointGroup
+                QueryString = query,
+            },
+        };
+        var response = await conn.Rest.PostAsync(
+            $"{conn.SiteUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.ClientPeoplePickerSearchUser", body);
+
+        // The service returns the results as a JSON-ENCODED STRING inside "value" (double encoded).
+        using var outer = JsonDocument.Parse(response);
+        var payload = outer.RootElement.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString() ?? "[]"
+            : response;
+        using var arr = JsonDocument.Parse(payload);
+        if (arr.RootElement.ValueKind != JsonValueKind.Array) return results;
+
+        foreach (var e in arr.RootElement.EnumerateArray())
+        {
+            var key = e.TryGetProperty("Key", out var k) ? k.GetString() ?? "" : "";
+            if (key.Length == 0) continue;
+            var display = e.TryGetProperty("DisplayText", out var d) ? d.GetString() ?? key : key;
+            var entityType = e.TryGetProperty("EntityType", out var et) ? et.GetString() ?? "" : "";
+            var email = "";
+            if (e.TryGetProperty("EntityData", out var ed) && ed.ValueKind == JsonValueKind.Object
+                && ed.TryGetProperty("Email", out var em) && em.ValueKind == JsonValueKind.String)
+                email = em.GetString() ?? "";
+            var isGroup = entityType is "SecGroup" or "SPGroup" or "FormsRole";
+            var kind = isGroup ? SpPrincipal.Classify(4, key, false) : PrincipalKind.User;
+            results.Add(new SpPrincipal(key, display, email, isGroup, kind));
+        }
+        return results;
     }
 
     public async Task<List<SpWebInfo>> GetSubwebsAsync(SpConnection conn, bool useCache = true)

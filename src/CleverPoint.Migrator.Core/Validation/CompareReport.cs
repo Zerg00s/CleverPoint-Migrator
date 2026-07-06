@@ -39,6 +39,9 @@ public class CompareReport
     public string? PreparedBy { get; set; }
     public string ToolVersion { get; set; } = "";
 
+    /// <summary>Per-item source-vs-target rows (the columnar CSV export).</summary>
+    public List<CopyVerifier.VerificationRow> ItemRows { get; } = new();
+
     // Disclose HOW thorough the check was, so a clean metadata compare is not read as a
     // byte-for-byte verification (a truncated blob with matching metadata would pass).
     public string Verdict
@@ -82,7 +85,7 @@ public class CompareReport
         var verifier = new CopyVerifier(sourceCtx, targetCtx) { ItemMap = itemMap };
         report.Mismatches.AddRange(await verifier.VerifyAsync(sourceList, targetList, compareFields,
             compareFileContent: compareContent, compareUsers: compareUsers,
-            contentSampleEvery: contentSampleEvery, stats: stats));
+            contentSampleEvery: contentSampleEvery, stats: stats, itemRows: report.ItemRows));
         report.ItemsPaired = stats.ItemsPaired;
         report.FilesHashVerified = stats.FilesHashChecked;
         report.BytesHashVerified = stats.BytesHashChecked;
@@ -120,14 +123,51 @@ public class CompareReport
         return $"{FilesHashVerified:N0} of {SourceFiles:N0} files (every file), {FormatBytes(BytesHashVerified)} hashed";
     }
 
+    // Full URL from a site + a server-relative path.
+    private static string Full(string? site, string serverRel)
+    {
+        if (string.IsNullOrEmpty(serverRel)) return "";
+        if (string.IsNullOrEmpty(site)) return serverRel;
+        try { return new Uri(site).GetLeftPart(UriPartial.Authority) + serverRel; } catch { return serverRel; }
+    }
+
+    /// <summary>
+    /// Per-item comparison table: one row per item, headers on line 1, no preamble. Columns cover
+    /// status, type, paths/URLs, IDs, file sizes, created/modified, author, version, and what differs.
+    /// </summary>
     public void ExportCsv(string path)
     {
-        var sb = new StringBuilder("Detail\n");
-        foreach (var m in Mismatches)
+        // Neutralize spreadsheet formula injection (leading = + - @ / tab / CR), then quote.
+        static string Cell(string? s)
         {
-            // Neutralize spreadsheet formula injection (leading = + - @ / tab / CR).
-            var v = m.Length > 0 && m[0] is '=' or '+' or '-' or '@' or '\t' or '\r' ? "'" + m : m;
-            sb.AppendLine("\"" + v.Replace("\"", "\"\"") + "\"");
+            s ??= "";
+            var v = s.Length > 0 && s[0] is '=' or '+' or '-' or '@' or '\t' or '\r' ? "'" + s : s;
+            return "\"" + v.Replace("\"", "\"\"") + "\"";
+        }
+
+        var headers = new[]
+        {
+            "Status", "Type", "Path", "File name", "Source library", "Target library",
+            "Source URL", "Target URL", "Source ID", "Target ID",
+            "Source size (bytes)", "Target size (bytes)",
+            "Source created (UTC)", "Target created (UTC)", "Source modified (UTC)", "Target modified (UTC)",
+            "Source author", "Target author", "Source version", "Target version", "Differences",
+        };
+
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Join(",", headers.Select(Cell)));
+        foreach (var r in ItemRows)
+        {
+            var cells = new[]
+            {
+                r.Status, r.ItemType, r.RelPath, r.FileName, SourceList, TargetList,
+                Full(SourceSiteUrl, r.SourceRef), Full(TargetSiteUrl, r.TargetRef),
+                r.SourceId > 0 ? r.SourceId.ToString() : "", r.TargetId > 0 ? r.TargetId.ToString() : "",
+                r.SourceSize > 0 ? r.SourceSize.ToString() : "", r.TargetSize > 0 ? r.TargetSize.ToString() : "",
+                r.SourceCreated, r.TargetCreated, r.SourceModified, r.TargetModified,
+                r.SourceAuthor, r.TargetAuthor, r.SourceVersion, r.TargetVersion, r.Notes,
+            };
+            sb.AppendLine(string.Join(",", cells.Select(Cell)));
         }
         System.IO.File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
     }

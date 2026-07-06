@@ -24,4 +24,9 @@
     -->
     <SuppressIces>ICE38;ICE43;ICE57;ICE64;ICE91</SuppressIces>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Standard WiX install-wizard dialogs (welcome + license + progress + completion). -->
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
 </Project>

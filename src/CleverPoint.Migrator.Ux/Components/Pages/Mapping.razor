@@ -10,28 +10,30 @@
 
 <div class="page-head">
     <h1 style="margin:0;">Identity mapping</h1>
-    <p class="hint" style="margin:4px 0 0;">
-        Map source users and groups to their target equivalents. Drag a person or group from the
-        left onto a mapping row, then drag the matching target onto the same row. Unmapped users
-        fall back to the account you choose below (including the System Account). Saved per
-        source&rarr;target tenant pair and reused by every copy between them.
-    </p>
 </div>
 
-<FluentCard>
+<FluentCard Style="overflow:visible;">
     <div class="map-pick">
-        <div>
-            <span class="field-label">Source connection</span>
-            <FluentSelect TOption="SavedConnection" Items="@Settings.Connections" @bind-SelectedOption="_sourceConn"
-                          OptionText="@(c => c.Name)" OptionValue="@(c => c.SiteUrl)" @bind-SelectedOption:after="OnPairChanged"
-                          Placeholder="Pick the source…" Style="min-width:280px;" />
+        <div class="map-pick-field">
+            <label class="field-label">Source connection</label>
+            <select class="cp-native-select" @onchange="OnSourceSelected">
+                <option value="" selected="@(_sourceConn is null)">Pick the source…</option>
+                @foreach (var c in Settings.Connections)
+                {
+                    <option value="@c.SiteUrl" selected="@(_sourceConn?.SiteUrl == c.SiteUrl)">@c.Name</option>
+                }
+            </select>
         </div>
-        <FluentIcon Value="@(new Icons.Regular.Size24.ArrowRight())" Style="margin-top:22px;" />
-        <div>
-            <span class="field-label">Target connection</span>
-            <FluentSelect TOption="SavedConnection" Items="@Settings.Connections" @bind-SelectedOption="_targetConn"
-                          OptionText="@(c => c.Name)" OptionValue="@(c => c.SiteUrl)" @bind-SelectedOption:after="OnPairChanged"
-                          Placeholder="Pick the target…" Style="min-width:280px;" />
+        <FluentIcon class="map-pick-arrow" Value="@(new Icons.Regular.Size24.ArrowRight())" />
+        <div class="map-pick-field">
+            <label class="field-label">Target connection</label>
+            <select class="cp-native-select" @onchange="OnTargetSelected">
+                <option value="" selected="@(_targetConn is null)">Pick the target…</option>
+                @foreach (var c in Settings.Connections)
+                {
+                    <option value="@c.SiteUrl" selected="@(_targetConn?.SiteUrl == c.SiteUrl)">@c.Name</option>
+                }
+            </select>
         </div>
         <FluentSpacer />
         <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Save())"
@@ -49,77 +51,67 @@
 
 @if (_ready)
 {
-    <div class="map-grid">
-        <!-- Source people/groups -->
+    <div class="map3">
+        <!-- LEFT: source identities -->
         <FluentCard class="map-pane">
             <div class="map-pane-head">
-                <span class="section-title" style="margin:0;">Source</span>
-                <FluentSearch @bind-Value="_sourceFilter" @bind-Value:after="StateHasChanged" Immediate="true" ImmediateDelay="150" Placeholder="Search source…" />
+                <span class="section-title" style="margin:0;">Source · @_matchRows.Count</span>
             </div>
+            <FluentSearch @bind-Value="_srcFilter" @bind-Value:after="ApplyFilters" Immediate="true" ImmediateDelay="150" Placeholder="Search source…" Style="width:100%;" />
             <div class="cp-scroll map-people">
-                @foreach (var p in Filter(_sourcePrincipals, _sourceFilter))
+                @foreach (var row in _sourceView)
                 {
-                    <div class="principal @(p.IsGroup ? "grp" : "")" draggable="true"
-                         @ondragstart="@(() => _drag = (p, true))" @ondragend="@(() => _drag = null)"
-                         @onclick="@(() => AddRowFromSource(p))" title="Drag onto a mapping row, or click to add a row">
-                        <FluentIcon Value="@(p.IsGroup ? (Icon)new Icons.Regular.Size20.People() : new Icons.Regular.Size20.Person())" />
-                        <div class="p-text"><span class="p-name">@p.Title</span><span class="p-sub">@Sub(p)</span></div>
+                    <div class="principal @KindClass(row.Source) @(row == _selected ? "sel" : "")"
+                         @onclick="@(() => _selected = row)" title="Click to select, then click a target on the right">
+                        <FluentIcon Value="@KindIcon(row.Source)" />
+                        <div class="p-text"><span class="p-name">@row.Source.Title</span><span class="p-sub">@Sub(row.Source)</span></div>
+                        @if (KindLabel(row.Source) is { } lbl) { <span class="kind-badge @KindClass(row.Source)">@lbl</span> }
+                        @if (row.Target is null) { <span class="unmatched-dot" title="No target yet"></span> }
                     </div>
-                }
-                @if (!Filter(_sourcePrincipals, _sourceFilter).Any())
-                {
-                    <div class="hint" style="padding:14px;">No matches.</div>
                 }
             </div>
         </FluentCard>
 
-        <!-- Mapping rows -->
+        <!-- MIDDLE: pre-populated mapping (source -> target) -->
         <FluentCard class="map-pane">
             <div class="map-pane-head">
-                <span class="section-title" style="margin:0;">Mapping · @_rows.Count(r => r.Complete) of @_rows.Count complete</span>
+                <span class="section-title" style="margin:0;">@_matchRows.Count(r => r.Target is not null) of @_matchRows.Count matched</span>
                 <div class="btn-row">
-                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Add())" OnClick="@(() => _rows.Add(new Row()))" Title="Add an empty row">Row</FluentButton>
-                    <FluentButton Id="csvBtn" Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowSwap())" OnClick="@(() => _csvOpen = !_csvOpen)">CSV</FluentButton>
-                    <FluentMenu Anchor="csvBtn" @bind-Open="_csvOpen">
-                        <FluentMenuItem OnClick="ExportCsv">Export mapping (.csv)</FluentMenuItem>
-                        <FluentMenuItem OnClick="@(() => _importOpen = true)">Import mapping (.csv)…</FluentMenuItem>
-                    </FluentMenu>
+                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowDownload())" OnClick="ExportCsv" Title="Export the mapping as CSV">Export</FluentButton>
+                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowUpload())" OnClick="@(() => _importOpen = true)" Title="Import a mapping CSV">Import</FluentButton>
                 </div>
             </div>
-
             <div class="cp-scroll map-rows">
-                @foreach (var row in _rows)
+                @foreach (var row in _sourceView)
                 {
-                    <div class="map-row">
-                        <div class="slot @(row.SourceLogin is null ? "empty" : "")"
-                             @ondragover:preventDefault="true" @ondrop="@(() => DropSource(row))">
-                            @if (row.SourceLogin is null)
+                    <div class="map-row @(row == _selected ? "sel" : "")" @onclick="@(() => _selected = row)">
+                        <div class="ident-card @KindClass(row.Source)">
+                            <FluentIcon Value="@KindIcon(row.Source)" />
+                            <div class="p-text"><span class="p-name">@row.Source.Title</span><span class="p-sub">@Sub(row.Source)</span></div>
+                            @if (KindLabel(row.Source) is { } lbl) { <span class="kind-badge @KindClass(row.Source)">@lbl</span> }
+                        </div>
+                        <FluentIcon class="row-arrow" Value="@(new Icons.Regular.Size20.ArrowRight())" />
+                        <div class="ident-card drop @(row.Target is null ? "empty dashed" : KindClass(row.Target))"
+                             @ondragover="DragOver" @ondragover:preventDefault="true" @ondrop="@(() => DropOnRow(row))" @ondrop:preventDefault="true">
+                            @if (row.Target is null)
                             {
-                                <span class="slot-hint">Drop a source</span>
+                                <span class="slot-hint">Click a target →, or drag one here</span>
                             }
                             else
                             {
-                                <span class="p-name">@row.SourceLabel</span><span class="p-sub">@row.SourceLogin</span>
+                                <FluentIcon Value="@KindIcon(row.Target)" />
+                                <div class="p-text"><span class="p-name">@row.Target.Title</span><span class="p-sub">@Sub(row.Target)</span></div>
+                                @if (KindLabel(row.Target) is { } tlbl) { <span class="kind-badge @KindClass(row.Target)">@tlbl</span> }
+                                @if (row.Auto) { <span class="match-badge">auto</span> }
+                                <span class="slot-clear" role="button" title="Clear match"
+                                      @onclick:stopPropagation="true" @onclick="@(() => { row.Target = null; row.Auto = false; })">&times;</span>
                             }
                         </div>
-                        <FluentIcon Value="@(new Icons.Regular.Size20.ArrowRight())" />
-                        <div class="slot @(row.TargetLogin is null ? "empty" : "")"
-                             @ondragover:preventDefault="true" @ondrop="@(() => DropTarget(row))">
-                            @if (row.TargetLogin is null)
-                            {
-                                <span class="slot-hint">Drop a target</span>
-                            }
-                            else
-                            {
-                                <span class="p-name">@row.TargetLabel</span><span class="p-sub">@row.TargetLogin</span>
-                            }
-                        </div>
-                        <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Delete())" Title="Remove row" OnClick="@(() => _rows.Remove(row))" />
                     </div>
                 }
-                @if (_rows.Count == 0)
+                @if (_sourceView.Count == 0)
                 {
-                    <div class="hint" style="padding:14px;">No mappings yet. Drag a source person onto here, or click one on the left.</div>
+                    <div class="hint" style="padding:14px;">No source identities match the filter.</div>
                 }
             </div>
 
@@ -127,22 +119,21 @@
             <div class="orphan-box">
                 <div class="orphan-title">
                     <FluentIcon Value="@(new Icons.Regular.Size20.PersonQuestionMark())" />
-                    <span>Unresolved (orphaned) users go to</span>
+                    <span>Unresolved (orphaned) users fall back to</span>
                 </div>
-                <div class="map-row">
-                    <div class="slot @(_orphanLogin is null ? "empty" : "")"
-                         @ondragover:preventDefault="true" @ondrop="DropOrphan">
+                <div class="map-row" style="grid-template-columns:1fr auto auto; align-items:center; margin-top:6px;">
+                    <div class="ident-card drop @(_orphanLogin is null ? "empty dashed" : "")"
+                         @ondragover="DragOver" @ondragover:preventDefault="true" @ondrop="DropOrphan" @ondrop:preventDefault="true">
                         @if (_orphanLogin is null)
                         {
-                            <span class="slot-hint">Drop a target account or group</span>
+                            <span class="slot-hint">Drag a target here, or use System Account</span>
                         }
                         else
                         {
-                            <span class="p-name">@_orphanLabel</span><span class="p-sub">@_orphanLogin</span>
+                            <div class="p-text"><span class="p-name">@_orphanLabel</span><span class="p-sub">@_orphanLogin</span></div>
                         }
                     </div>
-                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Shield())"
-                                  OnClick="UseSystemAccount" Title="Use the built-in System Account">System Account</FluentButton>
+                    <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Shield())" OnClick="UseSystemAccount" Title="Use the built-in System Account">System Account</FluentButton>
                     @if (_orphanLogin is not null)
                     {
                         <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Clear" OnClick="@(() => { _orphanLogin = null; _orphanLabel = null; })" />
@@ -151,25 +142,34 @@
             </div>
         </FluentCard>
 
-        <!-- Target people/groups -->
+        <!-- RIGHT: target directory (search existing + ensure from Entra) -->
         <FluentCard class="map-pane">
             <div class="map-pane-head">
                 <span class="section-title" style="margin:0;">Target</span>
-                <FluentSearch @bind-Value="_targetFilter" @bind-Value:after="StateHasChanged" Immediate="true" ImmediateDelay="150" Placeholder="Search target…" />
+            </div>
+            <div class="dir-search">
+                <FluentSearch @bind-Value="_targetFilter" @bind-Value:after="OnTargetSearch" Immediate="true" ImmediateDelay="150"
+                              Placeholder="Search people, or type an email…" Style="width:100%;" />
+                @if (_searchingDir)
+                {
+                    <FluentProgressRing Style="width:20px;height:20px;" />
+                }
             </div>
             <div class="cp-scroll map-people">
-                @foreach (var p in Filter(_targetPrincipals, _targetFilter))
+                @foreach (var p in _targetView)
                 {
-                    <div class="principal @(p.IsGroup ? "grp" : "")" draggable="true"
-                         @ondragstart="@(() => _drag = (p, false))" @ondragend="@(() => _drag = null)"
-                         @onclick="@(() => AssignTarget(p))" title="Drag onto a mapping row's target slot, or click to fill the next open row">
-                        <FluentIcon Value="@(p.IsGroup ? (Icon)new Icons.Regular.Size20.People() : new Icons.Regular.Size20.Person())" />
+                    <div class="principal @KindClass(p)" draggable="true"
+                         @ondragstart="@(() => _drag = p)" @ondragend="@(() => _drag = null)"
+                         @onclick="@(() => AssignToSelected(p))"
+                         title="Click to assign to the selected source, or drag onto a row">
+                        <FluentIcon Value="@KindIcon(p)" />
                         <div class="p-text"><span class="p-name">@p.Title</span><span class="p-sub">@Sub(p)</span></div>
+                        @if (KindLabel(p) is { } lbl) { <span class="kind-badge @KindClass(p)">@lbl</span> }
                     </div>
                 }
-                @if (!Filter(_targetPrincipals, _targetFilter).Any())
+                @if (_targetView.Count == 0)
                 {
-                    <div class="hint" style="padding:14px;">No matches.</div>
+                    <div class="hint" style="padding:14px;">No matches yet. Keep typing a name or email — the directory (Entra ID) is searched automatically.</div>
                 }
             </div>
         </FluentCard>
@@ -186,7 +186,7 @@
                 <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _importOpen = false)" />
             </div>
             <div class="cp-modal-body">
-                <span class="hint">Pick a CSV with columns Type,Source,Target (User or Group rows). Its rows are merged into the current mapping.</span>
+                <span class="hint">Pick a CSV with columns Type,Source,Target (User or Group rows). Matching source rows are filled in.</span>
                 <div style="margin-top:12px;"><InputFile OnChange="ImportCsv" accept=".csv" /></div>
             </div>
         </div>
@@ -196,37 +196,90 @@
 @code {
     private SavedConnection? _sourceConn;
     private SavedConnection? _targetConn;
-    private List<SpPrincipal> _sourcePrincipals = new();
     private List<SpPrincipal> _targetPrincipals = new();
-    private string _sourceFilter = "";
+    private string _srcFilter = "";
     private string _targetFilter = "";
-    private bool _loading, _ready, _csvOpen, _importOpen;
+    private bool _loading, _ready, _importOpen, _searchingDir;
     private string? _loadError;
+    private CancellationTokenSource? _dirCts;   // debounce for the directory (Entra) search
 
-    // Drag payload: the principal and whether it came from the source (true) or target (false) side.
-    private (SpPrincipal P, bool FromSource)? _drag;
-
+    private SpPrincipal? _drag;                 // identity being dragged from the target directory
+    private MatchRow? _selected;                // source row selected for click-to-assign
     private string? _orphanLogin, _orphanLabel;
 
-    private sealed class Row
+    private sealed class MatchRow
     {
-        public string? SourceLogin, SourceLabel, TargetLogin, TargetLabel;
-        public bool IsGroup;
-        public bool Complete => SourceLogin is not null && TargetLogin is not null;
+        public SpPrincipal Source = null!;
+        public SpPrincipal? Target;
+        public bool Auto;   // target came from auto-matching (vs a manual pick / saved mapping)
     }
-    private readonly List<Row> _rows = new();
+    private readonly List<MatchRow> _matchRows = new();
 
-    private static IEnumerable<SpPrincipal> Filter(List<SpPrincipal> src, string q) =>
-        string.IsNullOrWhiteSpace(q) ? src
-            : src.Where(p => p.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
-                          || p.Email.Contains(q, StringComparison.OrdinalIgnoreCase)
-                          || p.Login.Contains(q, StringComparison.OrdinalIgnoreCase));
+    // Materialized filtered views the UI binds to (recomputed by ApplyFilters, like the other
+    // screens' search - filtering inline in the render did not refresh reliably).
+    private List<MatchRow> _sourceView = new();
+    private List<SpPrincipal> _targetView = new();
 
     private static string Sub(SpPrincipal p) => p.Email.Length > 0 ? p.Email : p.Login;
+    private static bool Matches(SpPrincipal p, string q) =>
+        p.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.Email.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.Login.Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    private void ApplyFilters()
+    {
+        _sourceView = string.IsNullOrWhiteSpace(_srcFilter)
+            ? _matchRows.ToList()
+            : _matchRows.Where(r => Matches(r.Source, _srcFilter)).ToList();
+        _targetView = string.IsNullOrWhiteSpace(_targetFilter)
+            ? _targetPrincipals.ToList()
+            : _targetPrincipals.Where(p => Matches(p, _targetFilter)).ToList();
+    }
+
+    // Users key by email when present (matches the engine CSV format); groups key by login.
+    private static string KeyOf(SpPrincipal p) => p.IsGroup ? p.Login : (p.Email.Length > 0 ? p.Email : p.Login);
+
+    private static Icon KindIcon(SpPrincipal p) => p.Kind switch
+    {
+        PrincipalKind.SharePointGroup => new Icons.Regular.Size20.People(),
+        PrincipalKind.M365Group => new Icons.Regular.Size20.PeopleTeam(),
+        PrincipalKind.SecurityGroup => new Icons.Regular.Size20.Shield(),
+        _ => new Icons.Regular.Size20.Person(),
+    };
+    private static string KindClass(SpPrincipal p) => p.Kind switch
+    {
+        PrincipalKind.SharePointGroup => "pk-sp",
+        PrincipalKind.M365Group => "pk-m365",
+        PrincipalKind.SecurityGroup => "pk-sec",
+        _ => "pk-user",
+    };
+    // Short type label shown as a chip on groups (users get none).
+    private static string? KindLabel(SpPrincipal p) => p.Kind switch
+    {
+        PrincipalKind.SharePointGroup => "SharePoint",
+        PrincipalKind.M365Group => "Microsoft 365",
+        PrincipalKind.SecurityGroup => "Security",
+        _ => null,
+    };
+
+    protected override void OnInitialized() => Settings.EnsureLoaded();
+
+    private async Task OnSourceSelected(ChangeEventArgs e)
+    {
+        _sourceConn = Settings.Connections.FirstOrDefault(c => c.SiteUrl == e.Value?.ToString());
+        await OnPairChanged();
+    }
+
+    private async Task OnTargetSelected(ChangeEventArgs e)
+    {
+        _targetConn = Settings.Connections.FirstOrDefault(c => c.SiteUrl == e.Value?.ToString());
+        await OnPairChanged();
+    }
 
     private async Task OnPairChanged()
     {
-        _ready = false; _loadError = null; _rows.Clear(); _orphanLogin = null; _orphanLabel = null;
+        _ready = false; _loadError = null; _matchRows.Clear(); _selected = null;
+        _orphanLogin = null; _orphanLabel = null; _drag = null;
         if (_sourceConn is null || _targetConn is null) return;
         if (string.Equals(_sourceConn.SiteUrl, _targetConn.SiteUrl, StringComparison.OrdinalIgnoreCase))
         {
@@ -243,15 +296,14 @@
             }
             var s = UxConnectionResolver.Resolve(_sourceConn, _sourceConn.SiteUrl, SignIn);
             var t = UxConnectionResolver.Resolve(_targetConn, _targetConn.SiteUrl, SignIn);
-            _sourcePrincipals = await Browser.GetPrincipalsAsync(s);
+            var sourcePrincipals = await Browser.GetPrincipalsAsync(s);
             _targetPrincipals = await Browser.GetPrincipalsAsync(t);
 
-            // Rehydrate any saved mapping for this pair into editable rows.
             var saved = Store.Load(_sourceConn.SiteUrl, _targetConn.SiteUrl);
-            foreach (var kv in saved.Users) _rows.Add(MakeRow(kv.Key, kv.Value, isGroup: false));
-            foreach (var kv in saved.Groups) _rows.Add(MakeRow(kv.Key, kv.Value, isGroup: true));
             _orphanLogin = saved.OrphanFallbackLogin;
             _orphanLabel = saved.OrphanFallbackLabel ?? saved.OrphanFallbackLogin;
+            BuildMatchRows(sourcePrincipals, saved);
+            ApplyFilters();
             _ready = true;
         }
         catch (Exception ex)
@@ -264,57 +316,62 @@
         }
     }
 
-    private Row MakeRow(string sourceLogin, string targetLogin, bool isGroup) => new()
+    // One row per source identity; a saved mapping wins, otherwise auto-match against the target.
+    private void BuildMatchRows(List<SpPrincipal> sources, IdentityMapping saved)
     {
-        SourceLogin = sourceLogin,
-        SourceLabel = _sourcePrincipals.FirstOrDefault(p => p.Login.Equals(sourceLogin, StringComparison.OrdinalIgnoreCase))?.Title
-                      ?? LabelFromEmailKey(sourceLogin, _sourcePrincipals) ?? sourceLogin,
-        TargetLogin = targetLogin,
-        TargetLabel = _targetPrincipals.FirstOrDefault(p => p.Login.Equals(targetLogin, StringComparison.OrdinalIgnoreCase))?.Title ?? targetLogin,
-        IsGroup = isGroup,
-    };
-
-    // The engine CSV keys users by email when present, so map that back to a display name.
-    private static string? LabelFromEmailKey(string key, List<SpPrincipal> pool) =>
-        pool.FirstOrDefault(p => p.Email.Equals(key, StringComparison.OrdinalIgnoreCase))?.Title;
-
-    private void AddRowFromSource(SpPrincipal p)
-    {
-        var key = p.IsGroup ? p.Login : (p.Email.Length > 0 ? p.Email : p.Login);
-        // Reuse a row already targeting this source instead of duplicating.
-        var existing = _rows.FirstOrDefault(r => string.Equals(r.SourceLogin, key, StringComparison.OrdinalIgnoreCase));
-        if (existing is null)
-            _rows.Add(new Row { SourceLogin = key, SourceLabel = p.Title, IsGroup = p.IsGroup });
+        _matchRows.Clear();
+        foreach (var src in sources.OrderBy(p => p.IsGroup).ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase))
+        {
+            var savedDict = src.IsGroup ? saved.Groups : saved.Users;
+            if (savedDict.TryGetValue(KeyOf(src), out var savedLogin))
+            {
+                var tp = _targetPrincipals.FirstOrDefault(t => t.Login.Equals(savedLogin, StringComparison.OrdinalIgnoreCase))
+                         ?? new SpPrincipal(savedLogin, savedLogin, "", src.IsGroup);
+                _matchRows.Add(new MatchRow { Source = src, Target = tp, Auto = false });
+            }
+            else
+            {
+                var auto = AutoMatch(src);
+                _matchRows.Add(new MatchRow { Source = src, Target = auto, Auto = auto is not null });
+            }
+        }
     }
 
-    private void AssignTarget(SpPrincipal p)
+    private SpPrincipal? AutoMatch(SpPrincipal src)
     {
-        var row = _rows.FirstOrDefault(r => r.SourceLogin is not null && r.TargetLogin is null);
-        if (row is null) { Toasts.ShowInfo("Add a source first, then click a target to fill it."); return; }
-        row.TargetLogin = p.Login; row.TargetLabel = p.Title;
+        if (src.IsGroup)
+            return _targetPrincipals.FirstOrDefault(t => t.IsGroup && t.Title.Length > 0 && t.Title.Equals(src.Title, StringComparison.OrdinalIgnoreCase));
+        if (src.Email.Length > 0)
+        {
+            var byEmail = _targetPrincipals.FirstOrDefault(t => !t.IsGroup && t.Email.Equals(src.Email, StringComparison.OrdinalIgnoreCase));
+            if (byEmail is not null) return byEmail;
+        }
+        var byLogin = _targetPrincipals.FirstOrDefault(t => t.Login.Equals(src.Login, StringComparison.OrdinalIgnoreCase));
+        if (byLogin is not null) return byLogin;
+        return _targetPrincipals.FirstOrDefault(t => !t.IsGroup && t.Title.Length > 0 && t.Title.Equals(src.Title, StringComparison.OrdinalIgnoreCase));
     }
 
-    private void DropSource(Row row)
+    // A dragover handler must exist for Blazor to wire the listener so :preventDefault runs and
+    // the drop is allowed (this is what the working copy screen does). Body can be empty.
+    private void DragOver() { }
+
+    // Click a target -> assign to the selected source row (reliable alternative to drag).
+    private void AssignToSelected(SpPrincipal target)
     {
-        if (_drag is not { FromSource: true } d) return;
-        var p = d.P;
-        row.SourceLogin = p.IsGroup ? p.Login : (p.Email.Length > 0 ? p.Email : p.Login);
-        row.SourceLabel = p.Title; row.IsGroup = p.IsGroup;
-        _drag = null;
+        if (_selected is null) { Toasts.ShowInfo("Select a source identity first (click one), then click a target."); return; }
+        _selected.Target = target; _selected.Auto = false;
     }
 
-    private void DropTarget(Row row)
+    private void DropOnRow(MatchRow row)
     {
-        if (_drag is not { FromSource: false } d) return;
-        row.TargetLogin = d.P.Login; row.TargetLabel = d.P.Title;
-        _drag = null;
+        if (_drag is null) return;
+        row.Target = _drag; row.Auto = false; _selected = row; _drag = null;
     }
 
     private void DropOrphan()
     {
-        if (_drag is not { FromSource: false } d) return;
-        _orphanLogin = d.P.Login; _orphanLabel = d.P.Title;
-        _drag = null;
+        if (_drag is null) return;
+        _orphanLogin = _drag.Login; _orphanLabel = _drag.Title; _drag = null;
     }
 
     private void UseSystemAccount()
@@ -323,31 +380,74 @@
         _orphanLabel = UxMappingStore.SystemAccountLabel;
     }
 
+    // Target search: filter site users immediately, then (debounced) also search the target's
+    // DIRECTORY (Entra ID) via the People Picker so identities that aren't site users yet appear
+    // automatically - no button click needed.
+    private async Task OnTargetSearch()
+    {
+        ApplyFilters();                 // instant local filter
+        _dirCts?.Cancel();
+        var q = _targetFilter.Trim();
+        if (q.Length < 3 || _targetConn is null) return;
+
+        var cts = new CancellationTokenSource();
+        _dirCts = cts;
+        try
+        {
+            await Task.Delay(450, cts.Token);   // debounce keystrokes
+            _searchingDir = true; StateHasChanged();
+            var t = UxConnectionResolver.Resolve(_targetConn, _targetConn.SiteUrl, SignIn);
+            var found = await Browser.SearchDirectoryAsync(t, q);
+            if (cts.IsCancellationRequested) return;
+
+            var added = false;
+            foreach (var p in found)
+                if (!_targetPrincipals.Any(x => x.Login.Equals(p.Login, StringComparison.OrdinalIgnoreCase)))
+                { _targetPrincipals.Add(p); added = true; }
+            if (added) ApplyFilters();
+        }
+        catch (OperationCanceledException) { /* superseded by a newer keystroke */ }
+        catch { /* directory search is best-effort */ }
+        finally
+        {
+            if (_dirCts == cts) { _searchingDir = false; StateHasChanged(); }
+        }
+    }
+
+    private IdentityMapping BuildMapping()
+    {
+        var mapping = new IdentityMapping { OrphanFallbackLogin = _orphanLogin, OrphanFallbackLabel = _orphanLabel };
+        foreach (var row in _matchRows.Where(r => r.Target is not null))
+        {
+            // Skip redundant same-person auto-matches (the engine resolves those itself); keep real
+            // cross-tenant remaps, group mappings, and manual picks.
+            if (row.Auto && !row.Source.IsGroup && row.Source.Email.Length > 0
+                && row.Source.Email.Equals(row.Target!.Email, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var key = KeyOf(row.Source);
+            if (row.Source.IsGroup) mapping.Groups[key] = row.Target!.Login;
+            else mapping.Users[key] = row.Target!.Login;
+        }
+        return mapping;
+    }
+
     private void Save()
     {
         if (_sourceConn is null || _targetConn is null) return;
-        var mapping = new IdentityMapping { OrphanFallbackLogin = _orphanLogin, OrphanFallbackLabel = _orphanLabel };
-        foreach (var r in _rows.Where(r => r.Complete))
-        {
-            if (r.IsGroup) mapping.Groups[r.SourceLogin!] = r.TargetLogin!;
-            else mapping.Users[r.SourceLogin!] = r.TargetLogin!;
-        }
+        var mapping = BuildMapping();
         Store.Save(_sourceConn.SiteUrl, _targetConn.SiteUrl, mapping);
-        var incomplete = _rows.Count(r => !r.Complete);
-        Toasts.ShowSuccess($"Mapping saved: {mapping.Users.Count} users, {mapping.Groups.Count} groups"
-            + (incomplete > 0 ? $" ({incomplete} incomplete row(s) skipped)." : "."));
+        var unmatched = _matchRows.Count(r => r.Target is null);
+        Toasts.ShowSuccess($"Mapping saved: {mapping.Users.Count} user(s), {mapping.Groups.Count} group(s)"
+            + (unmatched > 0 ? $"; {unmatched} still unmatched." : "."));
     }
 
     private void ExportCsv()
     {
-        _csvOpen = false;
         if (_sourceConn is null || _targetConn is null) return;
-        var mapping = new IdentityMapping();
-        foreach (var r in _rows.Where(r => r.Complete))
-            (r.IsGroup ? mapping.Groups : mapping.Users)[r.SourceLogin!] = r.TargetLogin!;
         var path = LogExporter.DownloadsPath($"Identity mapping - {new Uri(_sourceConn.SiteUrl).Host} to {new Uri(_targetConn.SiteUrl).Host}", "csv");
-        Store.ExportCsv(mapping, path);
-        Toasts.ShowSuccess($"Exported to {path}");
+        Store.ExportCsv(BuildMapping(), path);
+        global::CleverPoint.Migrator.Ux.Services.Browser.Open(path);   // open the CSV (Excel)
+        Toasts.ShowSuccess($"Exported and opened: {path}");
     }
 
     private async Task ImportCsv(InputFileChangeEventArgs e)
@@ -360,12 +460,20 @@
             var imported = new IdentityMapping();
             Store.ImportCsv(imported, tmp);
             File.Delete(tmp);
-            foreach (var kv in imported.Users) if (!_rows.Any(r => string.Equals(r.SourceLogin, kv.Key, StringComparison.OrdinalIgnoreCase)))
-                _rows.Add(MakeRow(kv.Key, kv.Value, isGroup: false));
-            foreach (var kv in imported.Groups) if (!_rows.Any(r => string.Equals(r.SourceLogin, kv.Key, StringComparison.OrdinalIgnoreCase)))
-                _rows.Add(MakeRow(kv.Key, kv.Value, isGroup: true));
+
+            var applied = 0;
+            foreach (var row in _matchRows)
+            {
+                var dict = row.Source.IsGroup ? imported.Groups : imported.Users;
+                if (dict.TryGetValue(KeyOf(row.Source), out var login))
+                {
+                    row.Target = _targetPrincipals.FirstOrDefault(t => t.Login.Equals(login, StringComparison.OrdinalIgnoreCase))
+                                 ?? new SpPrincipal(login, login, "", row.Source.IsGroup);
+                    row.Auto = false; applied++;
+                }
+            }
             _importOpen = false;
-            Toasts.ShowSuccess($"Imported {imported.Users.Count + imported.Groups.Count} mapping(s).");
+            Toasts.ShowSuccess($"Applied {applied} mapping(s) from the CSV.");
         }
         catch (Exception ex)
         {
