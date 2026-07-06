@@ -3,6 +3,7 @@
 @using CleverPoint.Migrator.Ux.Services
 @inject MigrationRunner Runner
 @inject HistoryService History
+@inject UxMigrationService Migrations
 @inject ExplorerState Explorer
 @inject PendingMigration Pending
 @inject NavigationManager Nav
@@ -147,6 +148,12 @@
                           @onclick="@(() => OpenCopyTask(_selected))" Title="Open this copy task's settings (the New Copy Task screen)">Copy task</FluentButton>
             <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())"
                           @onclick="@(() => OpenInExplorer(_selected))" Title="Open the explorer at this copy's source and target">Explorer</FluentButton>
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
+                          @onclick="@(() => Verify(_selected, false))" Disabled="@(_verifying || _selected.HistoryRunId == 0)"
+                          Title="Compare source and target and produce a CSV verification report">@(_verifying ? "Verifying…" : "Verify & report")</FluentButton>
+            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.DocumentSearch())"
+                          @onclick="@(() => Verify(_selected, true))" Disabled="@(_verifying || _selected.HistoryRunId == 0)"
+                          Title="Also hash file contents (SHA-256, slower)">Deep verify</FluentButton>
             <FluentButton Id="activityExportBtn" Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowDownload())"
                           @onclick="@(() => _exportOpen = !_exportOpen)" Disabled="@(_selected.Log.Count == 0)">Export</FluentButton>
             <FluentMenu Anchor="activityExportBtn" @bind-Open="_exportOpen">
@@ -332,6 +339,31 @@
     {
         if (_exportedPath is not null) Browser.Open(_exportedPath);
         _exportedPath = null;
+    }
+
+    // Compare source vs target for a finished copy task and write the CSV verification report,
+    // then surface it via the "saved to…" modal. Runs on a background thread (paging every item,
+    // and hashing for deep) so the live-log UI stays responsive.
+    private bool _verifying;
+    private async Task Verify(CopyTask? t, bool deep)
+    {
+        if (t is null || _verifying) return;
+        var run = t.HistoryRunId > 0 ? History.GetRun(t.HistoryRunId) : null;
+        if (run is null) { Toasts.ShowWarning("This task has no completed run to verify yet."); return; }
+        _verifying = true;
+        Toasts.ShowInfo(deep
+            ? "Deep verification started (hashing file contents). This can take a while for large libraries…"
+            : "Verification started. This can take a while for large libraries…");
+        StateHasChanged();
+        try
+        {
+            var (report, path) = await Task.Run(() => Migrations.VerifyRunAsync(run, deep));
+            _exportedPath = path;
+            if (report.IsClean) Toasts.ShowSuccess($"Verified: {report.Verdict}.");
+            else Toasts.ShowWarning($"{report.Mismatches.Count} difference(s) found. See the report.");
+        }
+        catch (Exception ex) { Toasts.ShowError($"Verification could not run: {ex.Message}"); }
+        finally { _verifying = false; StateHasChanged(); }
     }
 
     // Local time, e.g. "5/31/2026 7:59:49 PM".

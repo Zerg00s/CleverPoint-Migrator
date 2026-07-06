@@ -66,6 +66,18 @@ public class CopyVerifier
     private static string TypeOf(ListItem i) => i.FileSystemObjectType == FileSystemObjectType.Folder ? "Folder"
         : (i.FieldValues.ContainsKey("File_x0020_Size") && Size(i) >= 0 && !string.IsNullOrEmpty(Str(i, "FileLeafRef")) && Str(i, "FileLeafRef").Contains('.') ? "File" : "Item");
 
+    // A non-null string means the file's bytes did not land intact (the reason is shown in the report).
+    // Folders and list items have size 0 on both sides, so they never trip these checks.
+    private const long CorruptSizeFloorBytes = 500 * 1024;   // only judge sizeable files
+    private static string? CorruptionReason(long srcSize, long tgtSize, bool contentHashDiffers)
+    {
+        if (contentHashDiffers) return "file content hash differs from source";
+        if (srcSize > 0 && tgtSize == 0) return "target file is 0 bytes";
+        if (srcSize > CorruptSizeFloorBytes && Math.Abs(srcSize - tgtSize) > srcSize * 0.90)
+            return $"file size off by >90% (source={srcSize:N0} B, target={tgtSize:N0} B)";
+        return null;
+    }
+
     public async Task<List<string>> VerifyAsync(List sourceList, List targetList,
         IEnumerable<string> compareFields, bool compareFileContent = false,
         Dictionary<string, string>? knownSourceHashes = null, bool compareUsers = true,
@@ -129,7 +141,14 @@ public class CopyVerifier
             {
                 mismatches.Add($"MISSING on target: {rel}");
                 if (stats != null) stats.Missing++;
-                if (row != null) { row.Status = "Missing on target"; itemRows!.Add(row); }
+                if (row != null)
+                {
+                    // No target item exists, so fill in the EXPECTED target URL (where it should be)
+                    // so every row still carries a full target URL.
+                    row.TargetRef = $"{targetRoot}/{rel}";
+                    row.Status = "Missing or Failed to Migrate";
+                    itemRows!.Add(row);
+                }
                 continue;
             }
             if (stats != null) stats.ItemsPaired++;
@@ -167,9 +186,28 @@ public class CopyVerifier
                 row.TargetRef = Str(tgt, "FileRef"); row.TargetId = tgt.Id; row.TargetSize = Size(tgt);
                 row.TargetCreated = When(tgt, "Created"); row.TargetModified = When(tgt, "Modified");
                 row.TargetAuthor = Who(tgt, "Author"); row.TargetVersion = Str(tgt, "_UIVersionString");
-                var diffs = mismatches.GetRange(before, mismatches.Count - before);
-                row.Status = diffs.Count == 0 ? "Matched" : "Differs";
-                row.Notes = string.Join(" | ", diffs.Select(d => d.StartsWith(rel + ":") ? d[(rel.Length + 1)..].Trim() : d));
+                // Author/Editor/Created/Modified each have their own side-by-side columns, so they
+                // don't belong in the Differences note and must NOT flag the row as "Differs"
+                // (they change by design on a cross-tenant copy). Only real data discrepancies
+                // (content hash, custom field values) count.
+                var diffs = mismatches.GetRange(before, mismatches.Count - before)
+                    .Select(d => d.StartsWith(rel + ":") ? d[(rel.Length + 1)..].Trim() : d.Trim())
+                    .Where(d => !d.StartsWith("Author ") && !d.StartsWith("Editor ")
+                             && !d.StartsWith("Created ") && !d.StartsWith("Modified "))
+                    .ToList();
+
+                // A file is "Corrupted" when its bytes clearly did not land intact: 0 bytes on the
+                // target (source wasn't), a large file (>500 KB) whose size is off by more than 90%,
+                // or a content-hash mismatch. Metadata-only differences are still a good migration.
+                var corruptReason = CorruptionReason(row.SourceSize, row.TargetSize,
+                    diffs.Any(d => d.StartsWith("CONTENT HASH")));
+                if (corruptReason != null)
+                {
+                    row.Status = "Corrupted";
+                    diffs.Insert(0, corruptReason);
+                }
+                else row.Status = "Migrated";
+                row.Notes = string.Join(" | ", diffs);
                 itemRows!.Add(row);
             }
         }
@@ -186,6 +224,8 @@ public class CopyVerifier
                 itemRows.Add(new VerificationRow
                 {
                     RelPath = extra, ItemType = TypeOf(t), FileName = Str(t, "FileLeafRef"),
+                    // No source item, so record where it WOULD live on the source for a full source URL.
+                    SourceRef = $"{sourceRoot}/{extra}",
                     TargetRef = Str(t, "FileRef"), TargetId = t.Id, TargetSize = Size(t),
                     TargetCreated = When(t, "Created"), TargetModified = When(t, "Modified"),
                     TargetAuthor = Who(t, "Author"), TargetVersion = Str(t, "_UIVersionString"),

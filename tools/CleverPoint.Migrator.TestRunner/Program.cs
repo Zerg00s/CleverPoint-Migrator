@@ -95,6 +95,7 @@ public static class Program
             ["api-job-fail"] = Scenarios.ApiJobFailTest.RunAsync,
             ["api-emit-logic"] = Scenarios.ApiEmitLogicTest.RunAsync,
             ["date-folder"] = Scenarios.DateFolderTest.RunAsync,
+            ["folder-restamp"] = Scenarios.FolderRestampTest.RunAsync,
             ["content-meta-warn"] = Scenarios.ContentMetaWarnTest.RunAsync,
             ["batch-partial"] = Scenarios.BatchPartialTest.RunAsync,
             ["folder-field"] = Scenarios.FolderFieldTest.RunAsync,

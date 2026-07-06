@@ -12,6 +12,27 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Pin the working directory to the EXE's folder. Photino resolves wwwroot relative to the
+        // current directory, so launching from a Start-menu search / App Paths / any spot that
+        // starts the exe with a different CWD than the .lnk (which sets it to the install folder)
+        // would leave wwwroot unfound and the app would exit silently at startup.
+        try { Directory.SetCurrentDirectory(AppContext.BaseDirectory); } catch { /* best effort */ }
+
+        try
+        {
+            Run(args);
+        }
+        catch (Exception ex)
+        {
+            // A crash before the main window exists has no dialog to show it - log it so a silent
+            // startup failure is diagnosable via Settings > Troubleshoot > Open Logs.
+            AppLog.Error("startup", ex);
+            Environment.Exit(1);
+        }
+    }
+
+    private static void Run(string[] args)
+    {
         // Only one instance per user session. A second one collides with the first
         // over the WebView2 user-data folder (browser sign-in then crashes natively)
         // and over the shared history db / settings / sign-in cache.

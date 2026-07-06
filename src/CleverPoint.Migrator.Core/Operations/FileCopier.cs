@@ -104,6 +104,10 @@ public class FileCopier
         // marking nested section groups would fracture a cohesive notebook.
         var notebookRoots = BuildNotebookRoots(allItems, sourceRoot);
 
+        // Folders whose dates were set, so they can be re-stamped once all their contents are in
+        // (adding files/subfolders re-stamps a folder's Modified to "now", clobbering its date).
+        var restampFolders = new List<(ListItem Source, string FileRef, string TargetPath)>();
+
         // Folders first, sequentially: parent ordering, folder metadata, OneNote marking.
         foreach (var sourceItem in ordered.Where(i => i.FileSystemObjectType == FileSystemObjectType.Folder))
         {
@@ -116,7 +120,10 @@ public class FileCopier
                 await EnsureFolderAsync(targetWeb, targetRoot, relativePath);
                 var folderItem = await GetItemByPathAsync(_targetCtx, targetList, targetPath, true);
                 if (options.PreserveAuthorsAndDates && folderItem != null)
+                {
                     await _itemCopier.ApplyFolderMetadataAsync(sourceItem, folderItem, copyFields, result, fileRef);
+                    restampFolders.Add((sourceItem, fileRef, targetPath));
+                }
                 var isNotebook = folderItem != null && notebookRoots.Contains(relativePath);
                 if (isNotebook)
                     await MarkOneNoteNotebookAsync(folderItem!, result, targetPath);
@@ -188,6 +195,29 @@ public class FileCopier
                 _itemCopier.CancellationToken.ThrowIfCancellationRequested();
                 var fileRef = (string)sourceItem["FileRef"];
                 await CopyFileEntryAsync(sourceItem, fileRef, fileRef[(sourceRoot.Length + 1)..], targetRoot, copyFields, options, result);
+            }
+        }
+
+        // Final pass: re-apply each folder's Created/Modified now that all its files and subfolders
+        // are in place. Writing content into a folder re-stamps the folder's Modified to the copy
+        // time, so the date set during the folder pass above was overwritten. A metadata-only folder
+        // update does not touch its parent, so re-stamping deepest-first is safe and sufficient.
+        if (options.PreserveAuthorsAndDates && restampFolders.Count > 0)
+        {
+            foreach (var f in restampFolders.OrderByDescending(x => x.TargetPath.Count(c => c == '/')))
+            {
+                _itemCopier.CancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var folderItem = await GetItemByPathAsync(_targetCtx, targetList, f.TargetPath, true);
+                    if (folderItem != null)
+                        await _itemCopier.ApplyFolderMetadataAsync(f.Source, folderItem, copyFields, result, f.FileRef);
+                }
+                catch (Exception ex)
+                {
+                    result.Add("Folder", f.FileRef, f.TargetPath, ItemCopyStatus.Warning,
+                        "could not restore folder dates after its contents were copied: " + ex.Message);
+                }
             }
         }
     }
