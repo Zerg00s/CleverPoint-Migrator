@@ -119,7 +119,11 @@ public static class DeltaResumeTests
 
         var updated = result2.Records.Count(r => r.ItemType == "Item" && r.Status == ItemCopyStatus.Copied && r.Message == "updated (delta)");
         var added = result2.Records.Count(r => r.ItemType == "Item" && r.Status == ItemCopyStatus.Copied && r.Message == null);
-        var skipped = result2.Records.Count(r => r.Status == ItemCopyStatus.Skipped && (r.Message?.StartsWith("delta:") ?? false));
+        // Unchanged items are skipped by the modified-since date filter. (The message is
+        // "filtered out by date ..."; this assertion previously looked for a "delta:" prefix
+        // that the engine never emits, so it always read 0 — a stale test, not a real skip gap.)
+        var skipped = result2.Records.Count(r => r.Status == ItemCopyStatus.Skipped
+            && (r.Message?.Contains("filtered out by date") ?? false));
         Console.WriteLine($"  delta: {updated} updated, {added} added, {skipped} skipped-unchanged");
         Program.Check("delta: 3 items updated in place", updated == 3, $"{updated}");
         Program.Check("delta: 2 new items added", added == 2, $"{added}");

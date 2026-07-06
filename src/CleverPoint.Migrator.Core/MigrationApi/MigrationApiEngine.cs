@@ -56,7 +56,7 @@ public class MigrationApiEngine
 
         targetCtx.Load(targetCtx.Web, w => w.Id, w => w.ServerRelativeUrl, w => w.Url);
         targetCtx.Load(targetList, l => l.Id, l => l.RootFolder.UniqueId, l => l.RootFolder.ServerRelativeUrl);
-        await targetCtx.ExecuteQueryAsync();
+        await targetCtx.ExecuteWithRetryAsync();
 
         OnProgress?.Invoke("reading the source library… (this can take a while for very large libraries)");
         var itemCopier = new ItemCopier(sourceCtx, targetCtx, users);
@@ -98,12 +98,15 @@ public class MigrationApiEngine
         // Hybrid routing: the Migration API caps files at 15 GB and our
         // package path holds one file in RAM, so oversized files go through
         // the classic streaming chunked-upload path after the jobs finish.
+        // Returns -1 when the size is unknown/unparseable. Such files take the SAFE
+        // streaming path: a missing or mis-declared File_x0020_Size must never route a
+        // giant file through the in-RAM package path (OOM / >2 GB array / 5 GiB PutBlob).
         long DeclaredSize(ListItem i) =>
-            long.TryParse(i.FieldValues.GetValueOrDefault("File_x0020_Size")?.ToString(), out var s) ? s : 0;
+            long.TryParse(i.FieldValues.GetValueOrDefault("File_x0020_Size")?.ToString(), out var s) ? s : -1;
         var fileItems = allItems.Where(i => i.FileSystemObjectType == FileSystemObjectType.File
-            && DeclaredSize(i) < options.LargeFileThresholdBytes).ToList();
+            && DeclaredSize(i) >= 0 && DeclaredSize(i) < options.LargeFileThresholdBytes).ToList();
         var largeItems = allItems.Where(i => i.FileSystemObjectType == FileSystemObjectType.File
-            && DeclaredSize(i) >= options.LargeFileThresholdBytes).ToList();
+            && (DeclaredSize(i) < 0 || DeclaredSize(i) >= options.LargeFileThresholdBytes)).ToList();
 
         var folderMeta = new List<PackageFolder>();
         foreach (var item in folderItems)
@@ -120,6 +123,10 @@ public class MigrationApiEngine
         }
         var allFolderPaths = folderMeta.Select(f => f.LibraryRelativePath)
             .Concat(fileItems.Select(i => ParentDir(((string)i["FileRef"])[(sourceRoot.Length + 1)..])).Where(d => d.Length > 0))
+            // Include the parents of the large (hybrid) files too, or a filtered/delta run
+            // whose only content under a folder is a big file leaves that folder undefined,
+            // and the hybrid upload then has no parent to land in.
+            .Concat(largeItems.Select(i => ParentDir(((string)i["FileRef"])[(sourceRoot.Length + 1)..])).Where(d => d.Length > 0))
             .SelectMany(ExpandChain).Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(d => d.Count(c => c == '/')).ToList();
         foreach (var path in allFolderPaths)
@@ -127,7 +134,7 @@ public class MigrationApiEngine
 
         // ---- Provision the shared queue once ----
         var queue = targetCtx.Site.ProvisionMigrationQueue();
-        await targetCtx.ExecuteQueryAsync();
+        await targetCtx.ExecuteWithRetryAsync();
         var queueUri = queue.Value.JobQueueUri;
 
         MigrationPackageBuilder NewBuilder() => new()
@@ -150,12 +157,13 @@ public class MigrationApiEngine
         // the jobs finish (minus any file the job reported as failed).
         var jobEmits = new Dictionary<Guid, List<(string Type, string Source, string Target)>>();
         var failedRelPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);  // rel path -> reason
+        var failedJobs = new HashSet<Guid>();  // jobs that ended in a fatal error or timed out
 
         async Task<Guid> SubmitChunkAsync(MigrationPackageBuilder builder, List<ListItem> chunkFiles, int chunkNo)
         {
             // Fresh containers per job (Manifest.xml must sit at container root).
             var containers = targetCtx.Site.ProvisionMigrationContainers();
-            await targetCtx.ExecuteQueryAsync();
+            await targetCtx.ExecuteWithRetryAsync();
             var key = containers.Value.EncryptionKey;
 
             // Stream the chunk's files one at a time.
@@ -172,7 +180,7 @@ public class MigrationApiEngine
 
                 var file = sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(fileRef));
                 var stream = file.OpenBinaryStream();
-                await sourceCtx.ExecuteQueryAsync();
+                await sourceCtx.ExecuteWithRetryAsync();
                 byte[] cipher;
                 string iv;
                 long size;
@@ -214,7 +222,7 @@ public class MigrationApiEngine
             var jobId = targetCtx.Site.CreateMigrationJobEncrypted(
                 targetCtx.Web.Id, containers.Value.DataContainerUri, containers.Value.MetadataContainerUri,
                 queueUri, new EncryptionOption { AES256CBCKey = key });
-            await targetCtx.ExecuteQueryAsync();
+            await targetCtx.ExecuteWithRetryAsync();
             pendingJobs[jobId.Value] = key;
 
             // Remember this job's items so they can be logged as copied once it ends.
@@ -245,7 +253,19 @@ public class MigrationApiEngine
         while (fileQueue.Count > 0 && firstBuilder.FoldersToDefine.Count + firstChunkFiles.Count < maxItems)
             firstChunkFiles.Add(fileQueue.Dequeue());
         var firstJob = await SubmitChunkAsync(firstBuilder, firstChunkFiles, chunkNo++);
-        await WaitForJobsAsync(targetCtx, queueUri, new[] { firstJob }, pendingJobs, result, failedRelPaths);
+        await WaitForJobsAsync(targetCtx, queueUri, new[] { firstJob }, pendingJobs, result, failedRelPaths, failedJobs);
+
+        // The first chunk defines every target folder. If it failed fatally, those folders
+        // do not exist, so every later chunk would import into missing parents. Stop now
+        // rather than pay to upload the whole library into a cascade of failures.
+        if (failedJobs.Contains(firstJob))
+        {
+            OnProgress?.Invoke("first chunk (folder definitions) failed; aborting the remaining chunks");
+            result.Add("List", sourceListTitle, options.TargetListTitle, ItemCopyStatus.Failed,
+                "the folder-defining first chunk failed; remaining content was not attempted");
+            result.FinishedUtc = DateTime.UtcNow;
+            return result;
+        }
 
         // ---- Remaining chunks: upload + submit pipelined, wait at the end ----
         var laterJobs = new List<Guid>();
@@ -258,19 +278,20 @@ public class MigrationApiEngine
             laterJobs.Add(await SubmitChunkAsync(builder, chunkFiles, chunkNo++));
         }
         if (laterJobs.Count > 0)
-            await WaitForJobsAsync(targetCtx, queueUri, laterJobs, pendingJobs, result, failedRelPaths);
+            await WaitForJobsAsync(targetCtx, queueUri, laterJobs, pendingJobs, result, failedRelPaths, failedJobs);
 
         OnProgress?.Invoke($"all jobs done: {chunkNo - 1} chunk(s), {fileItems.Count} files, {totalBytes / 1024.0 / 1024.0:F1} MB transferred");
 
         // Log an explicit status for every packaged folder and file: Copied, or Failed
-        // (with the reason) when the job reported that specific file as failed.
-        foreach (var emits in jobEmits.Values)
+        // when the job reported that specific file as failed OR the whole job ended in a
+        // fatal error / timeout (in which case nothing in the job is confirmed imported,
+        // so it must NOT be logged Copied — that would poison resume and delta baselines).
+        foreach (var (jobId, emits) in jobEmits)
             foreach (var (type, src, tgt) in emits)
             {
-                if (type == "File" && failedRelPaths.TryGetValue(src[(sourceRoot.Length + 1)..], out var reason))
-                    result.Add("File", src, tgt, ItemCopyStatus.Failed, reason);
-                else
-                    result.Add(type, src, tgt, ItemCopyStatus.Copied);
+                var rel = src.Length > sourceRoot.Length + 1 ? src[(sourceRoot.Length + 1)..] : src;
+                var status = DecideEmitStatus(type, rel, jobId, failedJobs, failedRelPaths, out var reason);
+                result.Add(type, src, tgt, status, reason);
             }
 
         // Hybrid tail: oversized files via streaming chunked upload.
@@ -300,19 +321,79 @@ public class MigrationApiEngine
         return result;
     }
 
+    /// <summary>
+    /// Emit status for one packaged item. It is Copied only when nothing marked it as
+    /// failed: a per-file failure (failedRelPaths, files only) or a job that ended in a
+    /// fatal error / timeout (failedJobs) both mean the item was NOT confirmed imported.
+    /// Pure so it can be unit-tested without a tenant.
+    /// </summary>
+    public static ItemCopyStatus DecideEmitStatus(string type, string relPath, Guid jobId,
+        IReadOnlySet<Guid> failedJobs, IReadOnlyDictionary<string, string> failedRelPaths, out string? reason)
+    {
+        if (type == "File" && TryMatchFailure(relPath, failedRelPaths, out var perFile))
+        {
+            reason = perFile;
+            return ItemCopyStatus.Failed;
+        }
+        if (failedJobs.Contains(jobId))
+        {
+            reason = "the migration job did not complete (fatal error or timeout); item not confirmed imported";
+            return ItemCopyStatus.Failed;
+        }
+        reason = null;
+        return ItemCopyStatus.Copied;
+    }
+
+    /// <summary>
+    /// Matches a packaged file's library-relative path against a per-file failure key.
+    /// SPO names the file in its error message inconsistently (leaf name, library-relative
+    /// path, or web-relative URL), so an exact-key lookup silently missed real failures and
+    /// let a failed file be logged Copied. This matches by exact path, either-direction path
+    /// suffix, or leaf name.
+    /// </summary>
+    public static bool TryMatchFailure(string relPath, IReadOnlyDictionary<string, string> failedRelPaths, out string reason)
+    {
+        reason = "";
+        if (failedRelPaths.Count == 0) return false;
+        if (failedRelPaths.TryGetValue(relPath, out var exact)) { reason = exact; return true; }
+
+        var leaf = relPath.Contains('/') ? relPath[(relPath.LastIndexOf('/') + 1)..] : relPath;
+        foreach (var (rawKey, msg) in failedRelPaths)
+        {
+            var key = rawKey.Replace('\\', '/').Trim('/');
+            var keyLeaf = key.Contains('/') ? key[(key.LastIndexOf('/') + 1)..] : key;
+            if (key.Equals(relPath, StringComparison.OrdinalIgnoreCase)
+                || key.EndsWith("/" + relPath, StringComparison.OrdinalIgnoreCase)
+                || relPath.EndsWith("/" + key, StringComparison.OrdinalIgnoreCase)
+                || keyLeaf.Equals(leaf, StringComparison.OrdinalIgnoreCase))
+            {
+                reason = msg;
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>Polls the shared queue (and job status as fallback) until every given job ends.</summary>
     private async Task WaitForJobsAsync(ClientContext targetCtx, string queueUri,
-        IEnumerable<Guid> jobIds, Dictionary<Guid, byte[]> keys, CopyResult result, Dictionary<string, string> failedRelPaths)
+        IEnumerable<Guid> jobIds, Dictionary<Guid, byte[]> keys, CopyResult result,
+        Dictionary<string, string> failedRelPaths, HashSet<Guid> failedJobs)
     {
         var waiting = new HashSet<Guid>(jobIds);
-        var deadline = DateTime.UtcNow.AddMinutes(40);
-        while (waiting.Count > 0 && DateTime.UtcNow < deadline)
+        // Idle timeout, not absolute: give up only after this long with NO progress, so a
+        // large migration whose jobs legitimately take hours is not cut off at 40 min (which
+        // would falsely fail every unfinished job and, per C4, mis-report their items).
+        var maxIdle = TimeSpan.FromMinutes(40);
+        var lastActivity = DateTime.UtcNow;
+        while (waiting.Count > 0 && DateTime.UtcNow - lastActivity < maxIdle)
         {
             await Task.Delay(TimeSpan.FromSeconds(8));
-            foreach (var (text, _, _) in await _azure.GetQueueMessagesAsync(queueUri))
+            foreach (var (text, msgId, popReceipt) in await _azure.GetQueueMessagesAsync(queueUri))
             {
+                lastActivity = DateTime.UtcNow;   // any message counts as progress
                 var json = DecryptQueueMessage(text, keys);
-                if (json == null) continue;
+                if (json == null) continue;       // not ours / corrupt: leave it to expire
+                var handled = false;
                 try
                 {
                     using var doc = JsonDocument.Parse(json);
@@ -331,28 +412,43 @@ public class MigrationApiEngine
                             failedRelPaths[mt.Groups[1].Value.Trim()] = message!;
                         else
                             result.Add("Job", jobId.ToString(), "", evt == "JobWarning" ? ItemCopyStatus.Warning : ItemCopyStatus.Failed, message);
+                        // A fatal error aborts the whole job: none of its items are confirmed
+                        // imported, so mark the job failed and fail its items in the emit loop.
+                        if (evt == "JobFatalError" && jobId != Guid.Empty)
+                            failedJobs.Add(jobId);
                     }
                     if (evt == "JobEnd")
                     {
                         waiting.Remove(jobId);
                         OnProgress?.Invoke($"job {jobId} ended ({waiting.Count} still running)");
                     }
+                    handled = true;
                 }
-                catch { /* non-JSON payload */ }
+                catch { /* non-JSON payload: leave the message alone */ }
+                // Delete a message we recorded so it is not re-read into duplicate rows, and
+                // so a JobError is captured before the job-status fallback can drop the job.
+                if (handled)
+                    try { await _azure.DeleteQueueMessageAsync(queueUri, msgId, popReceipt); } catch { /* best-effort */ }
             }
 
             // Fallback: a job whose end event we missed.
             foreach (var jobId in waiting.ToList())
             {
                 var state = targetCtx.Site.GetMigrationJobStatus(jobId);
-                await targetCtx.ExecuteQueryAsync();
+                await targetCtx.ExecuteWithRetryAsync();
                 if (state.Value == MigrationJobState.None)
+                {
                     waiting.Remove(jobId);
+                    lastActivity = DateTime.UtcNow;   // a job finishing is progress
+                }
             }
         }
 
         foreach (var jobId in waiting)
+        {
+            failedJobs.Add(jobId);   // items in a timed-out job are not confirmed imported
             result.Add("Job", jobId.ToString(), "", ItemCopyStatus.Failed, "timed out waiting for the migration job");
+        }
     }
 
     private static string? DecryptQueueMessage(string text, Dictionary<Guid, byte[]> keys)

@@ -105,6 +105,18 @@ public class PermissionCopier
             await _targetCtx.ExecuteQueryAsync();
             applied++;
         }
+
+        if (applied == 0)
+        {
+            // Inheritance was broken but nothing could be applied, so the item would be
+            // accessible to no one but admins. Restore inheritance and warn instead of
+            // silently reporting a green "0 role assignment(s)" copy.
+            targetItem.ResetRoleInheritance();
+            await _targetCtx.ExecuteQueryAsync();
+            result.Add("Permission", sourceRef, "", ItemCopyStatus.Warning,
+                "no source principals could be mapped to the target; left inheriting parent permissions");
+            return;
+        }
         result.Add("Permission", sourceRef, "", ItemCopyStatus.Copied, $"{applied} role assignment(s)");
     }
 

@@ -34,7 +34,7 @@ public static class UxConnectionResolver
                 TenantId = c.TenantId,
                 AppId = c.AppId,
                 CertPfxPath = c.CertPfxPath,
-                CertPassword = c.CertPasswordProtected,
+                CertPassword = UxSecret.Unprotect(c.CertPasswordProtected),
             });
             TokenCache[key] = provider;
         }
@@ -109,7 +109,7 @@ public static class UxConnectionResolver
         try
         {
             if (!File.Exists(c.CertPfxPath)) return;
-            using var cert = new X509Certificate2(c.CertPfxPath, c.CertPasswordProtected, X509KeyStorageFlags.EphemeralKeySet);
+            using var cert = new X509Certificate2(c.CertPfxPath, UxSecret.Unprotect(c.CertPasswordProtected), X509KeyStorageFlags.EphemeralKeySet);
             c.CertExpiresUtc = cert.NotAfter.ToUniversalTime();
         }
         catch { /* expiry display is best-effort */ }

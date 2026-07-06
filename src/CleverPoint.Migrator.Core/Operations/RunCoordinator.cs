@@ -56,8 +56,15 @@ public static class RunCoordinator
                 .Where(r => r.Status == ItemCopyStatus.Failed && r.SourcePath.Length > 0)
                 .Select(r => r.SourcePath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-            var corruptPaths = healing.RepairCorruptFiles
-                ? await FindCorruptFilesAsync(source, target, sourceListTitle, options.TargetListTitle, healing, onProgress)
+            // Only files THIS run actually copied are eligible for corrupt-repair, so we
+            // never delete a pre-existing target file we did not migrate (and never touch
+            // files the user's filters excluded, since those were never copied).
+            var migratedSourceRefs = overall.Records
+                .Where(r => r.ItemType == "File" && r.Status == ItemCopyStatus.Copied && r.SourcePath.Length > 0)
+                .Select(r => r.SourcePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var corruptPaths = healing.RepairCorruptFiles && migratedSourceRefs.Count > 0
+                ? await FindCorruptFilesAsync(source, target, sourceListTitle, options.TargetListTitle, healing, migratedSourceRefs, onProgress)
                 : new List<(string SourceRef, string TargetRef)>();
 
             if (failedPaths.Count == 0 && corruptPaths.Count == 0)
@@ -89,9 +96,11 @@ public static class RunCoordinator
                 }
             }
 
-            // Targeted re-run: skip every healthy source path.
+            // Targeted re-run: skip every healthy source path. When AutoRetry is off, failed
+            // items are NOT re-copied (only corrupt-file repair runs), matching the option.
             var needsCopy = new HashSet<string>(
-                failedPaths.Concat(corruptPaths.Select(c => c.SourceRef)), StringComparer.OrdinalIgnoreCase);
+                (healing.AutoRetry ? failedPaths : Enumerable.Empty<string>())
+                    .Concat(corruptPaths.Select(c => c.SourceRef)), StringComparer.OrdinalIgnoreCase);
             var skipHealthy = await AllSourcePathsAsync(source, sourceListTitle, options);
             skipHealthy.RemoveWhere(p => needsCopy.Contains(p));
 
@@ -116,7 +125,7 @@ public static class RunCoordinator
     /// <summary>Target files that are missing, 0-byte, or far smaller than their source.</summary>
     public static async Task<List<(string SourceRef, string TargetRef)>> FindCorruptFilesAsync(
         SpConnection source, SpConnection target, string sourceListTitle, string targetListTitle,
-        HealingOptions healing, Action<string>? onProgress = null)
+        HealingOptions healing, IReadOnlySet<string> migratedSourceRefs, Action<string>? onProgress = null)
     {
         using var sourceCtx = source.CreateContext();
         using var targetCtx = target.CreateContext();
@@ -126,6 +135,9 @@ public static class RunCoordinator
         var corrupt = new List<(string, string)>();
         foreach (var (rel, (sourceRef, sourceSize)) in sourceSizes)
         {
+            // Skip anything we did not migrate this run: a pre-existing target file that
+            // merely shares a path must never be deleted.
+            if (!migratedSourceRefs.Contains(sourceRef)) continue;
             if (!targetSizes.TryGetValue(rel, out var t))
                 continue;   // missing entirely = a Failed record, handled by retry
             if (sourceSize > 0 && (t.Size == 0 || t.Size < sourceSize * healing.MinSizeRatio))
@@ -171,18 +183,16 @@ public static class RunCoordinator
         return new HashSet<string>(sizes.Values.Select(v => v.Item1), StringComparer.OrdinalIgnoreCase);
     }
 
-    private static CopyOptions CloneForRetry(CopyOptions options) => new()
+    // A full clone with only the healing-specific overrides. Cloning (rather than copying
+    // a handful of fields) keeps TargetSubfolderRelative, FieldMap, MergeSchema, MaxVersions,
+    // UpsertItemMap, SourceFolderServerRelativeUrl and the rest intact, so a healed item lands
+    // in the same place, with the same schema and version fidelity, as the original run.
+    private static CopyOptions CloneForRetry(CopyOptions options)
     {
-        TargetListTitle = options.TargetListTitle,
-        TargetListUrl = options.TargetListUrl,
-        CopyViews = false,
-        CopyListSettings = false,
-        PreserveAuthorsAndDates = options.PreserveAuthorsAndDates,
-        CopyPermissions = options.CopyPermissions,
-        CopyAttachments = options.CopyAttachments,
-        UnresolvedUserFallback = options.UnresolvedUserFallback,
-        LargeFileThresholdBytes = options.LargeFileThresholdBytes,
-        UploadSliceBytes = options.UploadSliceBytes,
-        RecordSkippedItems = false,
-    };
+        var retry = options.Clone();
+        retry.CopyViews = false;          // the first pass already created views
+        retry.CopyListSettings = false;   // and list settings
+        retry.RecordSkippedItems = false; // healing skips the healthy majority; don't log them
+        return retry;
+    }
 }

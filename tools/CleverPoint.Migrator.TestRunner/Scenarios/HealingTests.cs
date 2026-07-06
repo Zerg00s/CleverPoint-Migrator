@@ -44,8 +44,12 @@ public static class HealingTests
 
         // ---- Healing pass on the EXISTING migration (no fresh full copy):
         //      it must find the truncated file and fix exactly that. ----
+        // Pass the migration's result (first) so healing knows which files WE migrated and
+        // only ever repairs those - it must never delete pre-existing target files it didn't
+        // create (review finding H1). This is the realistic call; RunWithHealingAsync does the
+        // same internally.
         var healing = new HealingOptions { AutoRetry = true, MaxRetries = 5, RepairCorruptFiles = true };
-        var healed = await RunCoordinator.HealAsync(site, site, TestAssets.SourceLibTitle, options, healing, null,
+        var healed = await RunCoordinator.HealAsync(site, site, TestAssets.SourceLibTitle, options, healing, first,
             msg => Console.WriteLine($"  [heal] {msg}"));
 
         var repaired = healed.Records.Count(r => r.ItemType == "File" && r.Status == ItemCopyStatus.Copied

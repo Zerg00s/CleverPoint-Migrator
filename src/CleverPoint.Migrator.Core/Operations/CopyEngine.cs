@@ -82,7 +82,7 @@ public static class CopyEngine
 
         if (sourceList.BaseType == BaseType.DocumentLibrary)
         {
-            var copier = new FileCopier(sourceCtx, targetCtx, users, source.Rest, target.Rest)
+            var copier = new FileCopier(sourceCtx, targetCtx, users, source.Rest, target.Rest, source, target)
             {
                 LookupMaps = lookupMaps,
                 CancellationToken = cancellationToken,
@@ -102,6 +102,7 @@ public static class CopyEngine
                 DeltaSkipLog = result,
                 ContentTypeMap = schema.ContentTypeMap,
                 FieldNameMap = options.FieldMap.Count > 0 ? options.FieldMap : null,
+                TermMap = options.TermMap,
             };
             if (options.CopyPermissions)
             {
@@ -129,7 +130,10 @@ public static class CopyEngine
             .Select(p => p.Split('/')[^1])
             .Where(n => n.EndsWith(".aspx", StringComparison.OrdinalIgnoreCase));
         var set = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
-        return set.Count > 0 ? set : null;
+        // A selection that contains no .aspx (e.g. only a folder was picked) means "these
+        // specific pages" = none. Return the empty set, NOT null, so we do not fall back to
+        // copying every page in the library.
+        return set;
     }
 
     /// <summary>

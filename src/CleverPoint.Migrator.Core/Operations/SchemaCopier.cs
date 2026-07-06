@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using CleverPoint.Migrator.Core.Model;
 using Microsoft.SharePoint.Client;
+using Microsoft.SharePoint.Client.Taxonomy;
 
 namespace CleverPoint.Migrator.Core.Operations;
 
@@ -154,8 +155,11 @@ public partial class SchemaCopier
 
             if (SkippedFieldTypes.Contains(field.TypeAsString))
             {
-                result.Add("Field", field.InternalName, "", ItemCopyStatus.Warning,
-                    $"field type {field.TypeAsString} is out of scope (not copied)");
+                // Managed metadata: create the column on the target and bind it to the same
+                // term set. Same-tenant copies share the term store, so the binding (SspId +
+                // TermSetId) carries over and stored term GUIDs stay valid.
+                await CreateTaxonomyFieldAsync(field, targetList, result);
+                targetFieldNames.Add(field.InternalName);
                 continue;
             }
 
@@ -208,6 +212,42 @@ public partial class SchemaCopier
             await AttachContentTypesAsync(sourceList, targetList, result);
 
         return targetList;
+    }
+
+    /// <summary>
+    /// Creates a managed-metadata (taxonomy) column on the target list and binds it to the
+    /// source column's term set. A bare TaxonomyFieldType field is added (SharePoint auto-creates
+    /// the companion hidden note field), then SspId/TermSetId/AnchorId are copied so the column
+    /// points at the same term set. Same tenant = same GUIDs, so the binding is valid as-is.
+    /// </summary>
+    private async Task CreateTaxonomyFieldAsync(Field sourceField, List targetList, CopyResult result)
+    {
+        try
+        {
+            var srcTax = _sourceCtx.CastTo<TaxonomyField>(sourceField);
+            _sourceCtx.Load(srcTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId,
+                f => f.AllowMultipleValues, f => f.Title, f => f.InternalName, f => f.TypeAsString);
+            await _sourceCtx.ExecuteQueryAsync();
+
+            var xml = $"<Field Type='{srcTax.TypeAsString}' DisplayName='{System.Security.SecurityElement.Escape(srcTax.Title)}' "
+                    + $"Name='{srcTax.InternalName}' StaticName='{srcTax.InternalName}' "
+                    + $"{(srcTax.AllowMultipleValues ? "Mult='TRUE' " : "")}/>";
+            var created = targetList.Fields.AddFieldAsXml(xml, true, AddFieldOptions.AddFieldInternalNameHint);
+            var tgtTax = _targetCtx.CastTo<TaxonomyField>(created);
+            tgtTax.SspId = srcTax.SspId;
+            tgtTax.TermSetId = srcTax.TermSetId;
+            tgtTax.AnchorId = srcTax.AnchorId;
+            tgtTax.AllowMultipleValues = srcTax.AllowMultipleValues;
+            tgtTax.Update();
+            await _targetCtx.ExecuteQueryAsync();
+            result.Add("Field", sourceField.InternalName, sourceField.InternalName, ItemCopyStatus.Copied,
+                $"managed metadata bound to term set {srcTax.TermSetId}");
+        }
+        catch (Exception ex)
+        {
+            result.Add("Field", sourceField.InternalName, "", ItemCopyStatus.Warning,
+                $"managed metadata column could not be created: {ex.Message}");
+        }
     }
 
     /// <summary>Source list CT string id -> target list CT string id (same Name). Drives per-item CT assignment.</summary>

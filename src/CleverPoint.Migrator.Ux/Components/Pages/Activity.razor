@@ -4,6 +4,7 @@
 @inject MigrationRunner Runner
 @inject HistoryService History
 @inject ExplorerState Explorer
+@inject PendingMigration Pending
 @inject NavigationManager Nav
 @inject IToastService Toasts
 @implements IDisposable
@@ -98,6 +99,10 @@
                     <div class="task-stat">
                         @if (t.State == CopyTaskState.Running)
                         {
+                            @if (t.IsThrottling)
+                            {
+                                <span class="tp-throttle tp-throttle-sm" title="SharePoint is throttling; backing off and retrying.">throttling…</span>
+                            }
                             <span class="hint">@(t.Total > 0 ? $"{t.Percent}%" : $"{t.LogCount} processed")</span>
                         }
                         else if (t.State == CopyTaskState.Queued)
@@ -155,8 +160,28 @@
                 <div class="task-prog-bar"><span style="width:@(_selected.Percent)%"></span></div>
                 <span class="task-prog-pct">@_selected.Percent% · @_selected.Processed / @_selected.Total copied</span>
             </div>
+            <div class="throughput-row">
+                <span class="tp-metric">@ThroughputLine(_selected)</span>
+                @if (_selected.IsThrottling)
+                {
+                    <span class="tp-throttle" title="SharePoint is throttling requests (429/503). The copy backs off and retries automatically.">
+                        <FluentIcon Value="@(new Icons.Regular.Size16.Timer())" Color="Color.Custom" CustomColor="#8a5a00" />
+                        SharePoint is throttling, backing off@(_selected.ThrottleWaitSeconds > 0 ? $" {_selected.ThrottleWaitSeconds}s" : "")…
+                    </span>
+                }
+                else if (_selected.ThrottleHits > 0)
+                {
+                    <span class="tp-sep">·</span>
+                    <span class="hint">@_selected.ThrottleHits throttle@(_selected.ThrottleHits == 1 ? "" : "s") so far</span>
+                }
+            </div>
         }
-        @{ var rows = _selected.Log.AsEnumerable().Reverse().ToList(); }
+        @{
+            // Snapshot under the same lock the worker uses to Add/RemoveRange, or a mid-run
+            // trim (RemoveRange shifting the backing array) throws inside the renderer.
+            List<Core.Model.ItemCopyRecord> rows;
+            lock (_selected.Log) { rows = _selected.Log.AsEnumerable().Reverse().ToList(); }
+        }
         <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px; margin-top:12px;">
             @if (rows.Count == 0)
             {
@@ -251,6 +276,16 @@
     private int _selectedId;
     private CopyTask? _selected => _tasks.FirstOrDefault(t => t.Id == _selectedId);
 
+    // Live "5.0 items/s · 10.0 MB/s · ETA 30s" line for the running task's detail panel.
+    private static string ThroughputLine(CopyTask t)
+    {
+        var r = t.Rate();
+        var parts = new List<string> { $"{r.ItemsPerSecond:0.0} items/s" };
+        if (r.BytesPerSecond > 0) parts.Add(Core.Model.Throughput.FormatRate(r.BytesPerSecond));
+        if (r.Eta is { } eta) parts.Add($"ETA {Core.Model.Throughput.FormatEta(eta)}");
+        return string.Join(" · ", parts);
+    }
+
     protected override void OnInitialized()
     {
         Runner.Changed += OnChanged;
@@ -304,12 +339,25 @@
         ? "" : utc.ToLocalTime().ToString("M/d/yyyy h:mm:ss tt", System.Globalization.CultureInfo.InvariantCulture);
 
     // Re-open the wizard (New Copy Task) for this task, prefilled from its settings.
+    // Restore the FULL original scope through Pending (selection, target subfolder,
+    // content-only), not a lossy 4-field query, so a scoped copy (e.g. a few files dropped
+    // into a target subfolder) is not silently re-run as a whole-list copy into the root.
     private void OpenCopyTask(CopyTask? t)
     {
         if (t is null) return;
-        var q = $"?src={Uri.EscapeDataString(t.SourceSite)}&tgt={Uri.EscapeDataString(t.TargetSite)}"
-              + $"&lists={Uri.EscapeDataString(t.SourceList)}&tlist={Uri.EscapeDataString(t.Options.TargetListTitle ?? "")}";
-        Nav.NavigateTo("/wizard" + q);
+        Pending.Reset(t.SourceSite, t.TargetSite);
+        Pending.TargetListTitle = string.IsNullOrEmpty(t.Options.TargetListTitle) ? null : t.Options.TargetListTitle;
+        Pending.TargetListUrl = t.Options.TargetListUrl;
+        Pending.TargetSubfolderRelative = t.Options.TargetSubfolderRelative;
+        Pending.ContentOnly = !t.Options.MergeSchema;
+        Pending.Jobs.Add(new PendingJob
+        {
+            SourceListTitle = t.SourceList,
+            IsLibrary = t.SourceIsLibrary,
+            SelectedPaths = t.Options.SelectedPaths?.ToList() ?? new(),
+            SelectedItemIds = t.Options.ItemIds?.ToList() ?? new(),
+        });
+        Nav.NavigateTo("/wizard");
     }
 
     // Re-open the explorer positioned at this task's source and target.

@@ -35,6 +35,8 @@ internal class Program
         builder.Services.AddSingleton<DragState>();
         builder.Services.AddSingleton<ExplorerState>();
         builder.Services.AddSingleton<MigrationRunner>();
+        builder.Services.AddSingleton<UxMappingStore>();
+        builder.Services.AddSingleton<UpdateService>();
 
         builder.RootComponents.Add<App>("#app");
 
@@ -90,7 +92,9 @@ internal class Program
                     ? "A migration is still running. Close the app and stop it? Everything copied so far stays in place."
                     : $"{active} migrations are still running or queued. Close the app and stop them? Everything copied so far stays in place.",
                 PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Warning);
-            return result != PhotinoDialogResult.Yes; // cancel close unless Yes
+            if (result != PhotinoDialogResult.Yes) return true;   // No: keep the app open
+            runner?.CancelAll();   // Yes: signal every worker to stop before the process exits
+            return false;          // allow the close
         };
 
         app.Run();

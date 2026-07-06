@@ -51,6 +51,10 @@ public class CopyResult
     /// <summary>Raised for every record (live progress, history persistence, fault injection in tests).</summary>
     public event Action<ItemCopyRecord>? RecordAdded;
 
+    // Parallel file transfer (opt-in) calls Add from several worker threads, so the Records list
+    // and the event are guarded. Uncontended (the sequential path) this lock is essentially free.
+    private readonly object _addLock = new();
+
     public ItemCopyRecord Add(string itemType, string sourcePath, string targetPath, ItemCopyStatus status, string? message = null)
     {
         var rec = new ItemCopyRecord
@@ -58,8 +62,13 @@ public class CopyResult
             ItemType = itemType, SourcePath = sourcePath, TargetPath = targetPath,
             Status = status, Message = message, TimestampUtc = DateTime.UtcNow,
         };
-        Records.Add(rec);
-        RecordAdded?.Invoke(rec);
+        lock (_addLock)
+        {
+            Records.Add(rec);
+            // Inside the lock so downstream side effects (SQLite history write, live counters)
+            // are serialized when several transfer workers report at once.
+            RecordAdded?.Invoke(rec);
+        }
         return rec;
     }
 

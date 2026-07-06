@@ -123,15 +123,19 @@
         </div>
         <div class="field">
             <span class="field-label">Engine</span>
-            <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;" Disabled="_running">
+            <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;" Disabled="_running || !string.IsNullOrEmpty(_targetSubfolder)">
                 <FluentOption Value="Classic">Classic copy (recommended for most migrations)</FluentOption>
                 <FluentOption Value="MigrationApi">Migration API (best for very large libraries)</FluentOption>
             </FluentSelect>
+            @if (!string.IsNullOrEmpty(_targetSubfolder))
+            {
+                <span class="hint">Copying into a target folder uses the Classic engine (the Migration API ignores subfolders).</span>
+            }
         </div>
         <div class="field">
             <span class="field-label">File versions to copy</span>
             <FluentNumberField @bind-Value="_maxVersions" Min="1" Max="2000" Style="width:140px;" Disabled="_running" />
-            <span class="hint">1 = latest only. Up to 2000.</span>
+            <span class="hint">1 = latest only. Set 2000 to copy the full version history (SharePoint keeps up to 500 by default).</span>
         </div>
         <div class="field">
             <span class="field-label">If the item already exists on the target</span>
@@ -324,6 +328,9 @@
         }
         Settings.EnsureLoaded();
         _engine = Settings.DefaultEngine == "MigrationApi" ? "MigrationApi" : "Classic";
+        // The Migration API engine ignores a target subfolder, so a folder-targeted copy must
+        // use the Classic engine (which honors it); otherwise files would land in the list root.
+        if (!string.IsNullOrEmpty(_targetSubfolder)) _engine = "Classic";
         _maxVersions = Math.Clamp(Settings.DefaultMaxVersions, 1, 2000);
     }
 
@@ -475,6 +482,9 @@
                 CopyAttachments = _attachments,
                 CopyPermissions = _permissions,
                 CopyContent = !structureOnly,
+                // Transfer files concurrently within a library copy (Settings default; the
+                // engine caps it and forces sequential when permissions are being copied).
+                ParallelFileTransfers = Settings.DefaultParallelFileTransfers,
                 MergeSchema = !contentOnly,
                 CopyViews = !contentOnly,
                 CopyListSettings = !contentOnly,
@@ -497,7 +507,16 @@
                     : null,
             };
 
-            Runner.Enqueue(name, _src, _tgt, job.SourceListTitle, options, _engine);
+            // Resume: skip the paths the interrupted run already finished, so only the
+            // remainder is copied. Partly-written files aren't in the copied set, so they
+            // fall through to a normal (overwrite) re-copy.
+            if (Pending.ResumeFromRunId is { } resumeId)
+            {
+                var done = History.GetCopiedSourcePaths(resumeId);
+                if (done.Count > 0) options.ResumeSkipPaths = done;
+            }
+
+            Runner.Enqueue(name, _src, _tgt, job.SourceListTitle, options, _engine, job.IsLibrary);
             queued++;
         }
 

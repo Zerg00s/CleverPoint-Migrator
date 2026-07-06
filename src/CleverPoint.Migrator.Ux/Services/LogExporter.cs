@@ -28,6 +28,21 @@ public static class LogExporter
         return path;
     }
 
+    /// <summary>A unique path in Downloads for an arbitrary extension (e.g. the verification report HTML).</summary>
+    public static string DownloadsPath(string baseName, string ext)
+    {
+        var dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var downloads = Path.Combine(dir, "Downloads");
+        if (!Directory.Exists(downloads)) downloads = Path.GetTempPath();
+        var safe = string.Concat(baseName.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or ' ' ? c : '_')).Trim();
+        if (safe.Length > 80) safe = safe[..80];
+        var path = Path.Combine(downloads, $"{safe}.{ext}");
+        var n = 1;
+        while (File.Exists(path))
+            path = Path.Combine(downloads, $"{safe} ({n++}).{ext}");
+        return path;
+    }
+
     public static void Write(Format format, string path, IReadOnlyList<string> headers, IEnumerable<string[]> rows)
     {
         if (format == Format.Csv) WriteCsv(path, headers, rows);

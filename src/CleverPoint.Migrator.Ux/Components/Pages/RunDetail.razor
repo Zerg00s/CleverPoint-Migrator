@@ -3,6 +3,8 @@
 @using CleverPoint.Migrator.Ux.Services
 @inject HistoryService History
 @inject ExplorerState Explorer
+@inject PendingMigration Pending
+@inject UxMigrationService Migrations
 @inject NavigationManager Nav
 @inject IToastService Toasts
 
@@ -54,7 +56,25 @@ else
     <FluentCard>
         <div class="run-head" style="justify-content:flex-end;">
             <div class="btn-row">
-                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
+                @if (_run.Status == "Interrupted")
+                {
+                    <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Play())" @onclick="Resume"
+                                  Title="Continue this interrupted run, skipping the items it already copied">Resume</FluentButton>
+                    <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
+                }
+                else
+                {
+                    <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
+                }
+                <FluentButton Id="verifyBtn" Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
+                              @onclick="@(() => _verifyOpen = !_verifyOpen)" Disabled="@_verifying"
+                              Title="Compare source and target and produce a client-ready verification report">
+                    @(_verifying ? "Verifying…" : "Verify & report")
+                </FluentButton>
+                <FluentMenu Anchor="verifyBtn" @bind-Open="_verifyOpen">
+                    <FluentMenuItem OnClick="@(() => Verify(false))">Quick (counts + metadata)</FluentMenuItem>
+                    <FluentMenuItem OnClick="@(() => Verify(true))">Deep (also hash file contents, slower)</FluentMenuItem>
+                </FluentMenu>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())" @onclick="RestoreInExplorer"
                               Title="Open the explorer at this run's source and target site, library and folder">Return to session</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
@@ -175,7 +195,7 @@ else
                 <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _exportedPath = null)" />
             </div>
             <div class="cp-modal-body">
-                <span class="hint">The log was saved to:</span>
+                <span class="hint">Saved to:</span>
                 <span class="v" style="word-break:break-all; user-select:text;">@_exportedPath</span>
             </div>
             <div class="cp-modal-foot">
@@ -199,6 +219,32 @@ else
     private bool _exportOpen;
     private string? _exportedPath;
     private bool _metaOpen;   // Details section starts collapsed.
+
+    private bool _verifyOpen;
+    private bool _verifying;
+
+    // Compare source vs target and write a client-ready verification report to Downloads.
+    private async Task Verify(bool deep)
+    {
+        _verifyOpen = false;
+        if (_run is null || _verifying) return;
+        _verifying = true;
+        try
+        {
+            var (report, path) = await Migrations.VerifyRunAsync(_run, deep);
+            _exportedPath = path;   // reuse the "saved to…" modal with an Open button
+            if (report.IsClean) Toasts.ShowSuccess($"Verified: {report.Verdict}.");
+            else Toasts.ShowWarning($"{report.Mismatches.Count} difference(s) found. See the report.");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Verification could not run: {ex.Message}");
+        }
+        finally
+        {
+            _verifying = false;
+        }
+    }
 
     // Export the full run log (not just the filtered view) to CSV or XLSX in Downloads,
     // then offer to open it. The chosen format comes from the Export menu.
@@ -325,13 +371,39 @@ else
         Nav.NavigateTo("/explore?restore=1");
     }
 
-    private void RunAgain()
+    private void RunAgain() => RestoreScopeAndGoToWizard(resume: false);
+
+    // Resume continues an interrupted run: same scope as "Run again", but the wizard also
+    // loads this run's already-copied paths into ResumeSkipPaths so only the remainder copies.
+    private void Resume() => RestoreScopeAndGoToWizard(resume: true);
+
+    private void RestoreScopeAndGoToWizard(bool resume)
     {
         if (_run is null) return;
-        var q = $"?src={Uri.EscapeDataString(_run.SourceUrl)}&tgt={Uri.EscapeDataString(_run.TargetUrl)}"
-              + $"&lists={Uri.EscapeDataString(_run.SourceList)}"
-              + $"&tlist={Uri.EscapeDataString(_run.TargetList)}";
-        Nav.NavigateTo("/wizard" + q);
+        RunScope? scope = null;
+        if (!string.IsNullOrWhiteSpace(_run.ScopeJson))
+            try { scope = System.Text.Json.JsonSerializer.Deserialize<RunScope>(_run.ScopeJson!); } catch { }
+
+        // Restore the full original scope through Pending so a scoped copy is not re-run as a
+        // whole-list copy. Older runs predate IsLibrary/ContentOnly in the scope, so derive
+        // sensible fallbacks from the selection.
+        var paths = scope?.SelectedPaths ?? new();
+        var ids = scope?.ItemIds ?? new();
+        Pending.Reset(_run.SourceUrl, _run.TargetUrl);
+        Pending.TargetListTitle = string.IsNullOrEmpty(_run.TargetList) ? null : _run.TargetList;
+        Pending.TargetListUrl = scope?.TargetListUrl;
+        Pending.TargetSubfolderRelative = scope?.TargetSubfolder;
+        Pending.ContentOnly = scope?.ContentOnly
+            ?? (!string.IsNullOrEmpty(scope?.TargetSubfolder) || paths.Count > 0 || ids.Count > 0);
+        if (resume) Pending.ResumeFromRunId = _run.Id;
+        Pending.Jobs.Add(new PendingJob
+        {
+            SourceListTitle = _run.SourceList,
+            IsLibrary = scope?.IsLibrary ?? paths.Count > 0,
+            SelectedPaths = paths,
+            SelectedItemIds = ids,
+        });
+        Nav.NavigateTo("/wizard");
     }
 
     private static string Duration(Core.History.MigrationRun r)

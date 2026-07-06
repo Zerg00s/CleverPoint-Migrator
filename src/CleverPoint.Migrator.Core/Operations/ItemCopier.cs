@@ -1,5 +1,7 @@
+using CleverPoint.Migrator.Core.Csom;
 using CleverPoint.Migrator.Core.Model;
 using Microsoft.SharePoint.Client;
+using Microsoft.SharePoint.Client.Taxonomy;
 
 namespace CleverPoint.Migrator.Core.Operations;
 
@@ -60,6 +62,15 @@ public class ItemCopier
     /// <summary>Max server-stamped Modified seen by the last LoadAllItemsAsync scan (delta baseline source).</summary>
     public DateTime? LastScanMaxModifiedUtc { get; private set; }
 
+    // Partial-batch reconciliation state (set at the start of CopyAsync).
+    private List? _batchTargetList;
+    private int _addBaselineId;
+
+    // Target multi-value taxonomy fields, loaded ONCE up front (a mid-batch ExecuteQuery would
+    // prematurely flush queued AddItems). Multi values need SetFieldValueByValueCollection, which
+    // requires the field object; single values assign directly and don't need this.
+    private readonly Dictionary<string, TaxonomyField> _targetTaxFields = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Source list CT string id -> target list CT string id (per-item content type assignment).</summary>
     public Dictionary<string, string> ContentTypeMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -92,15 +103,47 @@ public class ItemCopier
         var targetFieldTypes = targetList.Fields.AsEnumerable()
             .Where(f => !f.Hidden && !f.ReadOnlyField)
             .ToDictionary(f => f.InternalName, f => f.TypeAsString, StringComparer.OrdinalIgnoreCase);
+
+        // Source data columns that would copy, except the target list has no such column, so
+        // their values are silently dropped in a content-only copy (MergeSchema=false). The
+        // caller surfaces this as a warning so metadata loss is not invisible.
+        DroppedTargetMissingFields = sourceList.Fields.AsEnumerable()
+            .Where(f => !f.Hidden && !f.ReadOnlyField
+                && !NeverCopyFields.Contains(f.InternalName)
+                && f.TypeAsString is not ("TaxonomyFieldType" or "TaxonomyFieldTypeMulti" or "Computed" or "Lookup" or "LookupMulti")
+                && !targetFieldTypes.ContainsKey(FieldNameMap?.GetValueOrDefault(f.InternalName) ?? f.InternalName))
+            .Select(f => f.InternalName)
+            .ToList();
+
         return sourceList.Fields.AsEnumerable()
             .Where(f => !f.Hidden && !f.ReadOnlyField
                 && !NeverCopyFields.Contains(f.InternalName)
                 && targetFieldTypes.ContainsKey(FieldNameMap?.GetValueOrDefault(f.InternalName) ?? f.InternalName)
-                && f.TypeAsString is not ("TaxonomyFieldType" or "TaxonomyFieldTypeMulti" or "Computed")
+                // Taxonomy fields copy now (the schema copier binds the target column to the
+                // same term set); their values are applied specially in ApplyFieldValuesAsync.
+                && f.TypeAsString is not "Computed"
                 // Lookups copy only when the schema copier wired them up.
                 && (f.TypeAsString is not ("Lookup" or "LookupMulti") || LookupMaps.ContainsKey(f.InternalName)))
             .Select(f => (f.InternalName, f.TypeAsString))
             .ToList();
+    }
+
+    /// <summary>Source columns absent on the target from the last GetCopyFieldsAsync (metadata dropped in a content-only copy).</summary>
+    public List<string> DroppedTargetMissingFields { get; private set; } = new();
+
+    /// <summary>
+    /// Records one Warning when a content-only copy (MergeSchema=false) will drop values for
+    /// source columns the target list does not have. With MergeSchema=true the schema copier
+    /// creates those columns first, so nothing is dropped and this stays silent.
+    /// </summary>
+    public void WarnDroppedFields(CopyOptions options, CopyResult result)
+    {
+        if (options.MergeSchema || DroppedTargetMissingFields.Count == 0) return;
+        var names = string.Join(", ", DroppedTargetMissingFields.Take(12));
+        if (DroppedTargetMissingFields.Count > 12) names += $", +{DroppedTargetMissingFields.Count - 12} more";
+        result.Add("List", options.TargetListTitle, options.TargetListTitle, ItemCopyStatus.Warning,
+            $"content-only copy: {DroppedTargetMissingFields.Count} source column(s) not on the target were skipped ({names}). " +
+            "Add them to the target or copy with schema to keep their values.");
     }
 
     public async Task CopyAsync(List sourceList, List targetList, CopyOptions options, CopyResult result)
@@ -108,9 +151,17 @@ public class ItemCopier
         // Fields we will copy: writable on BOTH sides, not in the never list,
         // and not a skipped type. Title is writable and included.
         var copyFields = await GetCopyFieldsAsync(sourceList, targetList);
+        WarnDroppedFields(options, result);
+        await PrimeTargetTaxonomyFieldsAsync(targetList, copyFields);
 
         var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
         var targetRoot = targetList.RootFolder.ServerRelativeUrl;
+
+        // Partial-batch reconciliation baseline: items WE add get Ids above this. We are the
+        // only writer, so on a batch failure we re-read items above it to learn which adds
+        // actually committed (CSOM does not populate the client objects on a failed batch).
+        _batchTargetList = targetList;
+        _addBaselineId = await MaxItemIdAsync(targetList);
 
         // Page through all source items, folders included.
         var allItems = await LoadAllItemsAsync(sourceList, options);
@@ -127,7 +178,7 @@ public class ItemCopier
             .ThenBy(i => ((string)i["FileRef"]).Count(c => c == '/'))
             .ToList();
 
-        var batch = new List<(ListItem TargetItem, string SourceRef, ListItem SourceItem, bool IsUpdate)>();
+        var batch = new List<(ListItem TargetItem, string SourceRef, ListItem SourceItem, bool IsUpdate, string TargetPath)>();
         foreach (var sourceItem in ordered)
         {
             CancellationToken.ThrowIfCancellationRequested();
@@ -165,6 +216,10 @@ public class ItemCopier
                     }
                     if (options.ExistingMode == Model.ExistingItemMode.CopyIfNewer)
                     {
+                        // Commit any queued batch writes FIRST. This read shares _targetCtx,
+                        // and executing it while a batch is pending would flush those writes
+                        // early, outside FlushBatchAsync, mis-attributing their Copied/Failed.
+                        await FlushBatchAsync(batch, options, result);
                         _targetCtx.Load(targetItem, i => i["Modified"]);
                         await _targetCtx.ExecuteQueryAsync();
                         var sMod = sourceItem["Modified"] is DateTime sd ? sd : DateTime.MaxValue;
@@ -191,21 +246,21 @@ public class ItemCopier
                     await ApplyAuthorsAndDatesAsync(sourceItem, targetItem);
                 targetItem.UpdateOverwriteVersion();
                 _targetCtx.Load(targetItem, i => i.Id);
-                batch.Add((targetItem, fileRef, sourceItem, isUpdate));
+                batch.Add((targetItem, fileRef, sourceItem, isUpdate, targetPath));
 
                 if (batch.Count >= options.BatchSize)
-                    await FlushBatchAsync(batch, targetPath, options, result);
+                    await FlushBatchAsync(batch, options, result);
             }
             catch (Exception ex)
             {
                 result.Add("Item", fileRef, targetPath, ItemCopyStatus.Failed, ex.Message);
             }
         }
-        await FlushBatchAsync(batch, targetRoot, options, result);
+        await FlushBatchAsync(batch, options, result);
     }
 
-    private async Task FlushBatchAsync(List<(ListItem TargetItem, string SourceRef, ListItem SourceItem, bool IsUpdate)> batch,
-        string targetPath, CopyOptions options, CopyResult result)
+    private async Task FlushBatchAsync(List<(ListItem TargetItem, string SourceRef, ListItem SourceItem, bool IsUpdate, string TargetPath)> batch,
+        CopyOptions options, CopyResult result)
     {
         if (batch.Count == 0) return;
         List<(ListItem Target, ListItem Source, string SourceRef)>? attachmentWork = null;
@@ -213,9 +268,9 @@ public class ItemCopier
         try
         {
             await _targetCtx.ExecuteQueryAsync();
-            foreach (var (targetItem, sourceRef, sourceItem, isUpdate) in batch)
+            foreach (var (targetItem, sourceRef, sourceItem, isUpdate, itemTargetPath) in batch)
             {
-                result.Add("Item", sourceRef, targetPath, ItemCopyStatus.Copied, isUpdate ? "updated (delta)" : null);
+                result.Add("Item", sourceRef, itemTargetPath, ItemCopyStatus.Copied, isUpdate ? "updated (delta)" : null);
                 result.ItemMappings.Add((sourceItem.Id, targetItem.Id));
                 if (options.CopyAttachments
                     && sourceItem.FieldValues.GetValueOrDefault("Attachments") is bool b && b)
@@ -232,9 +287,7 @@ public class ItemCopier
         }
         catch (Exception ex)
         {
-            // The batch failed as a unit; record each item and continue.
-            foreach (var (_, sourceRef, _, _) in batch)
-                result.Add("Item", sourceRef, targetPath, ItemCopyStatus.Failed, ex.Message);
+            await ReconcileFailedBatchAsync(batch, ex, result);
         }
         batch.Clear();
 
@@ -254,6 +307,86 @@ public class ItemCopier
                     result.Add("Permission", sourceRef, "", ItemCopyStatus.Warning, $"permission copy failed: {ex.Message}");
                 }
             }
+    }
+
+    private async Task<bool> FolderExistsAsync(string serverRelUrl)
+    {
+        try
+        {
+            var folder = _targetCtx.Web.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelUrl));
+            _targetCtx.Load(folder, f => f.Exists);
+            await _targetCtx.ExecuteQueryAsync();
+            return folder.Exists;
+        }
+        catch { return false; }
+    }
+
+    private async Task<int> MaxItemIdAsync(List list)
+    {
+        try
+        {
+            var q = new CamlQuery { ViewXml = "<View><Query><OrderBy><FieldRef Name='ID' Ascending='FALSE'/></OrderBy></Query><RowLimit>1</RowLimit></View>" };
+            var top = list.GetItems(q);
+            _targetCtx.Load(top, t => t.Include(i => i.Id));
+            await _targetCtx.ExecuteQueryAsync();
+            return top.AsEnumerable().Select(i => i.Id).DefaultIfEmpty(0).Max();
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>
+    /// A batch ExecuteQuery stops at the first server error, so items queued before it
+    /// committed while CSOM left every client object un-populated. Since we are the only
+    /// writer and new items get monotonically increasing Ids, re-read the items above the
+    /// pre-copy baseline and correlate the committed ADDS to this batch by order (recording
+    /// them Copied with their id map). Updates (upserts) are recorded Failed: retrying an
+    /// update is idempotent, so no duplicate results. On any reconciliation error, fall back
+    /// to the old "record all Failed" behavior.
+    /// </summary>
+    private async Task ReconcileFailedBatchAsync(
+        List<(ListItem TargetItem, string SourceRef, ListItem SourceItem, bool IsUpdate, string TargetPath)> batch,
+        Exception ex, CopyResult result)
+    {
+        var addEntries = batch.Where(b => !b.IsUpdate).ToList();
+        try
+        {
+            List<int> ourAddIds = new();
+            if (_batchTargetList != null && addEntries.Count > 0)
+            {
+                var q = new CamlQuery
+                {
+                    ViewXml = $"<View><Query><Where><Gt><FieldRef Name='ID'/><Value Type='Counter'>{_addBaselineId}</Value></Gt></Where>" +
+                              "<OrderBy><FieldRef Name='ID' Ascending='TRUE'/></OrderBy></Query></View>"
+                };
+                var created = _batchTargetList.GetItems(q);
+                _targetCtx.Load(created, c => c.Include(i => i.Id));
+                await _targetCtx.ExecuteQueryAsync();
+                ourAddIds = created.AsEnumerable().Select(i => i.Id).OrderBy(x => x).ToList();
+            }
+            // Adds already recorded Copied by earlier batches (updates carry the "updated (delta)" note).
+            var priorAdds = result.Records.Count(r => r.ItemType == "Item" && r.Status == ItemCopyStatus.Copied && r.Message != "updated (delta)");
+            var committedNow = Math.Max(0, ourAddIds.Count - priorAdds);
+
+            for (var i = 0; i < addEntries.Count; i++)
+            {
+                var e = addEntries[i];
+                if (i < committedNow)
+                {
+                    result.Add("Item", e.SourceRef, e.TargetPath, ItemCopyStatus.Copied, null);
+                    result.ItemMappings.Add((e.SourceItem.Id, ourAddIds[priorAdds + i]));
+                }
+                else
+                    result.Add("Item", e.SourceRef, e.TargetPath, ItemCopyStatus.Failed, ex.Message);
+            }
+            foreach (var e in batch.Where(b => b.IsUpdate))
+                result.Add("Item", e.SourceRef, e.TargetPath, ItemCopyStatus.Failed, ex.Message);
+        }
+        catch
+        {
+            // Reconciliation itself failed: fall back to recording the whole batch Failed.
+            foreach (var e in batch)
+                result.Add("Item", e.SourceRef, e.TargetPath, ItemCopyStatus.Failed, ex.Message);
+        }
     }
 
     /// <summary>
@@ -332,6 +465,12 @@ public class ItemCopier
     /// <summary>Loads all items (RecursiveAll) with paging and optional filters.</summary>
     public async Task<List<ListItem>> LoadAllItemsAsync(List sourceList, CopyOptions options)
     {
+        // Fast path: an explicit file/folder selection is fetched DIRECTLY by path instead of
+        // paging the whole library. On a 150K-item source this turns a multi-minute scan for
+        // "copy 3 files" into a few round trips.
+        if (options.SelectedPaths.Count > 0 && options.ItemIds.Count == 0)
+            return await LoadSelectedItemsAsync(sourceList, options);
+
         var items = new List<ListItem>();
         var query = new CamlQuery
         {
@@ -349,6 +488,7 @@ public class ItemCopier
 
         do
         {
+            CancellationToken.ThrowIfCancellationRequested();   // cancellable during a long scan
             var page = sourceList.GetItems(query);
             // FieldValues loads by default; it cannot appear in an Include().
             _sourceCtx.Load(page);
@@ -359,8 +499,6 @@ public class ItemCopier
             foreach (var item in page)
             {
                 var itemModified = ReadUtc(item["Modified"]);
-                if (LastScanMaxModifiedUtc == null || itemModified > LastScanMaxModifiedUtc)
-                    LastScanMaxModifiedUtc = itemModified;
 
                 if (nameRegexes != null)
                 {
@@ -396,7 +534,11 @@ public class ItemCopier
                     if (!match) continue;
                 }
 
-                if (options.ModifiedSinceUtc.HasValue || options.ModifiedBeforeUtc.HasValue)
+                // Date filter applies to FILES/items only. Folders must always pass so a
+                // matched file can land inside them; otherwise a file whose parent folder is
+                // older than the cutoff has nowhere to be created and fails.
+                if ((options.ModifiedSinceUtc.HasValue || options.ModifiedBeforeUtc.HasValue)
+                    && item.FileSystemObjectType != FileSystemObjectType.Folder)
                 {
                     // Filter on the chosen date field (Modified by default, or Created).
                     var date = options.DateField == Model.DateFilterField.Created ? ReadUtc(item["Created"]) : itemModified;
@@ -412,11 +554,105 @@ public class ItemCopier
                         continue;
                     }
                 }
+                // Advance the delta baseline only over items we actually INCLUDE. Computing
+                // it over every scanned item (before filters) let a filtered-out item's newer
+                // date raise the baseline, so the next whole-scope delta skipped items that
+                // were never copied.
+                if (LastScanMaxModifiedUtc == null || itemModified > LastScanMaxModifiedUtc)
+                    LastScanMaxModifiedUtc = itemModified;
                 items.Add(item);
             }
             query.ListItemCollectionPosition = page.ListItemCollectionPosition;
         } while (query.ListItemCollectionPosition != null);
 
+        return items;
+    }
+
+    /// <summary>
+    /// Loads exactly the picked files/folders by fetching each path directly. A picked file
+    /// yields just that item; a picked folder yields the folder plus its subtree (a scan
+    /// scoped to that folder, not the whole library). Parents of picked files are recreated
+    /// on demand by the copier, so they are not included here.
+    /// </summary>
+    private async Task<List<ListItem>> LoadSelectedItemsAsync(List sourceList, CopyOptions options)
+    {
+        var items = new List<ListItem>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var raw in options.SelectedPaths)
+        {
+            CancellationToken.ThrowIfCancellationRequested();
+            var path = raw.TrimEnd('/');
+
+            // Resolve the item (the file API returns a folder's item too, so branch on the
+            // ACTUAL type, not on which API resolved it).
+            var item = await LoadItemByPathAsync(path, asFolder: false)
+                    ?? await LoadItemByPathAsync(path, asFolder: true);
+            if (item == null) continue;   // path no longer exists on the source
+
+            AddUnique(items, seen, item);
+            if (item.FileSystemObjectType == FileSystemObjectType.Folder)
+                foreach (var child in await ScanFolderAsync(sourceList, path))
+                    AddUnique(items, seen, child);
+        }
+
+        // A date filter still applies to the picked set (name patterns don't combine with an
+        // explicit path selection). Folders always pass so their children can land.
+        if (options.ModifiedSinceUtc.HasValue || options.ModifiedBeforeUtc.HasValue)
+            items = items.Where(i =>
+            {
+                if (i.FileSystemObjectType == FileSystemObjectType.Folder) return true;
+                var date = options.DateField == Model.DateFilterField.Created ? ReadUtc(i["Created"]) : ReadUtc(i["Modified"]);
+                return !((options.ModifiedSinceUtc.HasValue && date < options.ModifiedSinceUtc.Value)
+                       || (options.ModifiedBeforeUtc.HasValue && date >= options.ModifiedBeforeUtc.Value));
+            }).ToList();
+
+        foreach (var it in items)
+        {
+            var m = ReadUtc(it["Modified"]);
+            if (LastScanMaxModifiedUtc == null || m > LastScanMaxModifiedUtc) LastScanMaxModifiedUtc = m;
+        }
+        return items;
+    }
+
+    private static void AddUnique(List<ListItem> items, HashSet<string> seen, ListItem item)
+    {
+        if (seen.Add((string)item["FileRef"])) items.Add(item);
+    }
+
+    private async Task<ListItem?> LoadItemByPathAsync(string serverRelPath, bool asFolder)
+    {
+        try
+        {
+            var item = asFolder
+                ? _sourceCtx.Web.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelPath)).ListItemAllFields
+                : _sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelPath)).ListItemAllFields;
+            _sourceCtx.Load(item);
+            _sourceCtx.Load(item, i => i.Id, i => i.FileSystemObjectType);
+            await _sourceCtx.ExecuteWithRetryAsync();
+            return item;
+        }
+        catch { return null; }   // wrong type (file vs folder) or gone: caller tries the other, or skips
+    }
+
+    private async Task<List<ListItem>> ScanFolderAsync(List sourceList, string folderServerRel)
+    {
+        var items = new List<ListItem>();
+        var query = new CamlQuery
+        {
+            ViewXml = "<View Scope='RecursiveAll'><RowLimit Paged='TRUE'>200</RowLimit></View>",
+            FolderServerRelativeUrl = folderServerRel,
+        };
+        do
+        {
+            CancellationToken.ThrowIfCancellationRequested();
+            var page = sourceList.GetItems(query);
+            _sourceCtx.Load(page);
+            _sourceCtx.Load(page, p => p.Include(i => i.Id, i => i.FileSystemObjectType), p => p.ListItemCollectionPosition);
+            await _sourceCtx.ExecuteWithRetryAsync();
+            items.AddRange(page.AsEnumerable());
+            query.ListItemCollectionPosition = page.ListItemCollectionPosition;
+        } while (query.ListItemCollectionPosition != null);
         return items;
     }
 
@@ -474,11 +710,91 @@ public class ItemCopier
                         if (mapped.Length > 0) targetItem[writeName] = mapped;
                     }
                     break;
+                case "TaxonomyFieldType":
+                    if (value is TaxonomyFieldValue tfv && !string.IsNullOrEmpty(tfv.TermGuid))
+                        targetItem[writeName] = new TaxonomyFieldValue
+                        {
+                            WssId = -1,   // let the target list resolve/create the hidden taxonomy entry
+                            Label = tfv.Label,
+                            TermGuid = MapTerm(tfv.TermGuid),
+                        };
+                    break;
+                case "TaxonomyFieldTypeMulti":
+                    // Multi values need SetFieldValueByValueCollection on the target field object
+                    // (a plain string/array assignment is rejected). The field was pre-loaded.
+                    var pairs = TaxonomyLabelGuidPairs(value);
+                    if (pairs != null && _targetTaxFields.TryGetValue(writeName, out var tf))
+                    {
+                        var coll = new TaxonomyFieldValueCollection(_targetCtx, null, tf);
+                        coll.PopulateFromLabelGuidPairs(pairs);
+                        tf.SetFieldValueByValueCollection(targetItem, coll);
+                    }
+                    else if (pairs != null)
+                    {
+                        result.Add("Item", sourceRef, "", ItemCopyStatus.Warning,
+                            $"managed metadata (multi) {name}: target column not available; value dropped");
+                    }
+                    break;
                 default:
                     targetItem[writeName] = value;
                     break;
             }
         }
+    }
+
+    /// <summary>Remap a term GUID through the optional cross-tenant TermMap (identity by default).</summary>
+    public Dictionary<Guid, Guid>? TermMap { get; set; }
+    private string MapTerm(string termGuid)
+    {
+        if (TermMap != null && Guid.TryParse(termGuid, out var g) && TermMap.TryGetValue(g, out var mapped))
+            return mapped.ToString();
+        return termGuid;
+    }
+
+    /// <summary>
+    /// Loads target multi-value taxonomy field objects once (SetFieldValueByValueCollection needs
+    /// the field, and it can't be loaded mid-batch without flushing queued AddItems).
+    /// </summary>
+    public async Task PrimeTargetTaxonomyFieldsAsync(List targetList, List<(string InternalName, string TypeAsString)> copyFields)
+    {
+        _targetTaxFields.Clear();
+        var multi = copyFields.Where(f => f.TypeAsString == "TaxonomyFieldTypeMulti").ToList();
+        if (multi.Count == 0) return;
+        foreach (var (name, _) in multi)
+        {
+            var write = FieldNameMap?.GetValueOrDefault(name) ?? name;
+            var tf = _targetCtx.CastTo<TaxonomyField>(targetList.Fields.GetByInternalNameOrTitle(write));
+            _targetCtx.Load(tf, f => f.InternalName);
+            _targetTaxFields[write] = tf;
+        }
+        try { await _targetCtx.ExecuteQueryAsync(); }
+        catch { _targetTaxFields.Clear(); }   // fields missing -> multi values warn, single still work
+    }
+
+    /// <summary>
+    /// "Label|Guid;Label|Guid" (PopulateFromLabelGuidPairs format) from whatever CSOM handed back
+    /// (a TaxonomyFieldValueCollection, a single value, or the raw note string), remapping GUIDs.
+    /// </summary>
+    private string? TaxonomyLabelGuidPairs(object value)
+    {
+        IEnumerable<(string Label, string Guid)>? terms = value switch
+        {
+            TaxonomyFieldValueCollection col => ((IEnumerable<TaxonomyFieldValue>)col).Select(v => (v.Label, v.TermGuid)).ToList(),
+            TaxonomyFieldValue single => new[] { (single.Label, single.TermGuid) },
+            _ => null,
+        };
+        if (terms == null)
+        {
+            // Fall back to parsing the note representation: "-1;#Label|Guid;#-1;#Label|Guid".
+            var raw = value.ToString() ?? "";
+            terms = raw.Split(";#", StringSplitOptions.RemoveEmptyEntries)
+                .Where(p => p.Contains('|'))
+                .Select(p => { var i = p.IndexOf('|'); return (Label: p[..i], Guid: p[(i + 1)..]); })
+                .ToList();
+        }
+        var mapped = terms.Where(t => !string.IsNullOrEmpty(t.Guid))
+            .Select(t => $"{t.Label}|{MapTerm(t.Guid)}").ToList();
+        return mapped.Count > 0 ? string.Join(";", mapped) : null;
     }
 
     /// <summary>Assigns the mapped content type (matched by name via SchemaCopier).</summary>
@@ -554,14 +870,21 @@ public class ItemCopier
             _targetCtx.Load(folderItem, i => i.Id);
             await _targetCtx.ExecuteQueryAsync();
         }
-        catch (ServerException ex) when (ex.Message.Contains("already exists"))
+        catch (ServerException)
         {
-            result.Add("Folder", sourceRef, $"{targetRoot}/{relativePath}", ItemCopyStatus.Skipped, "folder already exists");
-            return;
+            // Language-agnostic "already exists": re-check whether the folder is actually
+            // there rather than matching the server's message, which is localized (e.g.
+            // "existe deja" on a French web) and would otherwise be recorded as a failure.
+            if (await FolderExistsAsync($"{targetRoot}/{relativePath}"))
+            {
+                result.Add("Folder", sourceRef, $"{targetRoot}/{relativePath}", ItemCopyStatus.Skipped, "folder already exists");
+                return;
+            }
+            throw;
         }
 
         if (options.PreserveAuthorsAndDates)
-            await ApplyFolderMetadataAsync(sourceItem, folderItem, result, sourceRef);
+            await ApplyFolderMetadataAsync(sourceItem, folderItem, copyFields, result, sourceRef);
 
         result.Add("Folder", sourceRef, $"{targetRoot}/{relativePath}", ItemCopyStatus.Copied);
     }
@@ -579,13 +902,16 @@ public class ItemCopier
     /// closest equivalent of a source system account.
     /// Public so FileCopier reuses it.
     /// </summary>
-    public async Task ApplyFolderMetadataAsync(ListItem sourceItem, ListItem targetFolderItem, CopyResult result, string sourceRef)
+    public async Task ApplyFolderMetadataAsync(ListItem sourceItem, ListItem targetFolderItem,
+        List<(string InternalName, string TypeAsString)> copyFields, CopyResult result, string sourceRef)
     {
         var author = await ResolveRealUserAsync(sourceItem, "Author");
         var editor = await ResolveRealUserAsync(sourceItem, "Editor");
 
         try
         {
+            // Custom column values on the folder (e.g. Dept), not only authors/dates.
+            await ApplyFieldValuesAsync(sourceItem, targetFolderItem, copyFields, result, sourceRef);
             if (author != null) targetFolderItem["Author"] = new FieldUserValue { LookupId = author.Value.Id };
             if (editor != null) targetFolderItem["Editor"] = new FieldUserValue { LookupId = editor.Value.Id };
             targetFolderItem["Created"] = ToWriteDate(sourceItem["Created"]);

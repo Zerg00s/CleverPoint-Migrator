@@ -29,10 +29,26 @@ public class CopyVerifier
     /// </summary>
     public Dictionary<int, int>? ItemMap { get; set; }
 
+    /// <summary>
+    /// Measured evidence for the client-ready verification report: how many items were paired,
+    /// how many files were hash-checked and over how many bytes. Populated only when a caller
+    /// passes a VerificationStats to VerifyAsync (so existing callers are unaffected).
+    /// </summary>
+    public sealed class VerificationStats
+    {
+        public int SourceItems;
+        public int SourceFiles;
+        public int ItemsPaired;
+        public int FilesHashChecked;
+        public long BytesHashChecked;
+        public int Missing;
+        public int Extra;
+    }
+
     public async Task<List<string>> VerifyAsync(List sourceList, List targetList,
         IEnumerable<string> compareFields, bool compareFileContent = false,
         Dictionary<string, string>? knownSourceHashes = null, bool compareUsers = true,
-        int contentSampleEvery = 1)
+        int contentSampleEvery = 1, VerificationStats? stats = null)
     {
         var fileIndex = 0;
         var mismatches = new List<string>();
@@ -64,8 +80,18 @@ public class CopyVerifier
             return $"{parent}|item:{i.FieldValues.GetValueOrDefault("Title")}";
         }
 
-        var targetByPath = targetItems.ToDictionary(
-            i => KeyOf(i, targetRoot), i => i, StringComparer.OrdinalIgnoreCase);
+        // First-wins instead of ToDictionary: two items can share a pairing key (e.g. a
+        // plain list with two same-titled items and no id map), and ToDictionary would throw
+        // ArgumentException, crashing the whole Compare feature instead of reporting.
+        var targetByPath = new Dictionary<string, ListItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in targetItems)
+            targetByPath.TryAdd(KeyOf(i, targetRoot), i);
+
+        if (stats != null)
+        {
+            stats.SourceItems = sourceItems.Count;
+            stats.SourceFiles = sourceItems.Count(i => i.FileSystemObjectType == FileSystemObjectType.File);
+        }
 
         foreach (var src in sourceItems)
         {
@@ -73,8 +99,10 @@ public class CopyVerifier
             if (!targetByPath.TryGetValue(rel, out var tgt))
             {
                 mismatches.Add($"MISSING on target: {rel}");
+                if (stats != null) stats.Missing++;
                 continue;
             }
+            if (stats != null) stats.ItemsPaired++;
 
             foreach (var field in compareFields)
             {
@@ -95,9 +123,10 @@ public class CopyVerifier
             if (compareFileContent && src.FileSystemObjectType == FileSystemObjectType.File
                 && fileIndex++ % contentSampleEvery == 0)
             {
+                var (tgtHash, tgtBytes) = await HashWithSizeAsync(_targetCtx, (string)tgt["FileRef"]);
                 var srcHash = knownSourceHashes?.GetValueOrDefault((string)src["FileRef"])
-                    ?? await HashFileAsync(_sourceCtx, (string)src["FileRef"]);
-                var tgtHash = await HashFileAsync(_targetCtx, (string)tgt["FileRef"]);
+                    ?? (await HashWithSizeAsync(_sourceCtx, (string)src["FileRef"])).Hash;
+                if (stats != null) { stats.FilesHashChecked++; stats.BytesHashChecked += tgtBytes; }
                 if (srcHash != tgtHash)
                     mismatches.Add($"{rel}: CONTENT HASH differs (source={srcHash[..12]}..., target={tgtHash[..12]}...)");
             }
@@ -106,19 +135,26 @@ public class CopyVerifier
         // Anything extra on the target?
         var sourcePaths = new HashSet<string>(sourceItems.Select(i => KeyOf(i, sourceRoot)), StringComparer.OrdinalIgnoreCase);
         foreach (var extra in targetByPath.Keys.Where(p => !sourcePaths.Contains(p)))
+        {
             mismatches.Add($"EXTRA on target: {extra}");
+            if (stats != null) stats.Extra++;
+        }
 
         return mismatches;
     }
 
     public static async Task<string> HashFileAsync(ClientContext ctx, string serverRelativeUrl)
+        => (await HashWithSizeAsync(ctx, serverRelativeUrl)).Hash;
+
+    private static async Task<(string Hash, long Bytes)> HashWithSizeAsync(ClientContext ctx, string serverRelativeUrl)
     {
         var file = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativeUrl));
         var stream = file.OpenBinaryStream();
         await ctx.ExecuteQueryAsync();
         using var ms = new MemoryStream();
         await stream.Value.CopyToAsync(ms);
-        return Convert.ToHexString(SHA256.HashData(ms.ToArray()));
+        var bytes = ms.ToArray();
+        return (Convert.ToHexString(SHA256.HashData(bytes)), bytes.LongLength);
     }
 
     private static async Task<List<ListItem>> LoadAsync(ClientContext ctx, List list)

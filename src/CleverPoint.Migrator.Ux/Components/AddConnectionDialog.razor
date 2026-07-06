@@ -68,9 +68,19 @@
         }
         // Normalize the URL so "…/site" and "…/site/" are the same connection.
         _new.SiteUrl = _new.SiteUrl.Trim().TrimEnd('/');
+        // Validate: a full http(s) URL with a host. This rejects schemeless input (which
+        // would throw out of this handler) and non-http schemes like javascript:/file:
+        // (which would otherwise be saved and then match every site in the resolver).
+        if (!Uri.TryCreate(_new.SiteUrl, UriKind.Absolute, out var parsed)
+            || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrEmpty(parsed.Host))
+        {
+            Toasts.ShowWarning("Enter a full site URL, for example https://contoso.sharepoint.com/sites/Team.");
+            return;
+        }
         _new.AuthMode = _authMode;
-        _new.Name = new Uri(_new.SiteUrl).Host.Split('.')[0];
-        _new.CertPasswordProtected = _certPwd;
+        _new.Name = parsed.Host.Split('.')[0];
+        _new.CertPasswordProtected = UxSecret.Protect(_certPwd);   // DPAPI-protect before it touches disk
         Settings.EnsureLoaded();
 
         // Merge instead of duplicating: if this site already exists, update its

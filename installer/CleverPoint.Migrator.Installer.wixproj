@@ -1,0 +1,27 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <!--
+    Per-user MSI for CleverPoint Migrator. Harvests the published self-contained folder and
+    installs it under %LocalAppData% with NO admin/UAC prompt, so "Update now" (msiexec /i) can
+    run silently. Built by Sign-App.ps1 on Windows:
+
+      dotnet build installer\CleverPoint.Migrator.Installer.wixproj -c Release `
+        -p:ProductVersion=1.0.9 `
+        -p:PublishDir=<repo>\src\CleverPoint.Migrator.Ux\publish\windows
+
+    Requires the WiX 5 SDK (restored automatically as a NuGet SDK) and .NET.
+  -->
+  <PropertyGroup>
+    <ProductVersion Condition="'$(ProductVersion)'==''">1.0.0</ProductVersion>
+    <PublishDir Condition="'$(PublishDir)'==''">$(MSBuildThisFileDirectory)..\src\CleverPoint.Migrator.Ux\publish\windows</PublishDir>
+    <OutputName>CleverPoint.Migrator-$(ProductVersion)</OutputName>
+    <!-- Surface the version + harvest root to the .wxs as preprocessor variables. -->
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(PublishDir)</DefineConstants>
+    <!--
+      Suppress the ICE warnings that are EXPECTED for a deliberate per-user install: every file
+      lands in %LocalAppData% (a per-user directory), which ICE38/43/57/64/91 flag as "won't vary
+      by ALLUSERS / needs an HKCU keypath". That is exactly the intended per-user behavior, so
+      these are false positives here - suppressing keeps the build output readable.
+    -->
+    <SuppressIces>ICE38;ICE43;ICE57;ICE64;ICE91</SuppressIces>
+  </PropertyGroup>
+</Project>

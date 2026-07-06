@@ -13,6 +13,7 @@ public static class RequestThrottle
     private class HostState
     {
         public readonly SemaphoreSlim Gate = new(1, 1);
+        public readonly object PauseLock = new();
         public double MinIntervalMs;
         public DateTime NextAllowedUtc = DateTime.MinValue;
         public DateTime PausedUntilUtc = DateTime.MinValue;
@@ -55,6 +56,8 @@ public static class RequestThrottle
     {
         var state = Hosts.GetOrAdd(host, _ => new HostState());
         var until = DateTime.UtcNow + duration;
-        if (until > state.PausedUntilUtc) state.PausedUntilUtc = until;
+        // Atomic read-modify-write: two concurrent 429s must not lose the longer pause.
+        lock (state.PauseLock)
+            if (until > state.PausedUntilUtc) state.PausedUntilUtc = until;
     }
 }

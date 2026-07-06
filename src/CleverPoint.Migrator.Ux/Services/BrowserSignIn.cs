@@ -109,13 +109,14 @@ public class BrowserSignIn
 
     private static void Save()
     {
+        // Browser sign-in is Windows-only, so cookies are only ever captured on Windows.
+        // Never write the FedAuth/rtFa session to disk unencrypted on other platforms.
+        if (!OperatingSystem.IsWindows()) return;
         try
         {
             Directory.CreateDirectory(UxSettings.Folder);
             var json = JsonSerializer.Serialize(Sessions);
-            var bytes = OperatingSystem.IsWindows()
-                ? ProtectedData.Protect(Encoding.UTF8.GetBytes(json), null, DataProtectionScope.CurrentUser)
-                : Encoding.UTF8.GetBytes(json);
+            var bytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(json), null, DataProtectionScope.CurrentUser);
             File.WriteAllBytes(StorePath, bytes);
         }
         catch { /* best-effort persistence */ }

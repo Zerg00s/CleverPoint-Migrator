@@ -2,6 +2,7 @@
 @namespace CleverPoint.Migrator.Ux.Components.Pages
 @inject UxSettings Settings
 @inject IToastService Toasts
+@inject UpdateService Updates
 
 <div class="page-head">
     <h1>Settings</h1>
@@ -33,6 +34,12 @@
                 <span class="field-label">Default file versions to copy</span>
                 <FluentNumberField @bind-Value="Settings.DefaultMaxVersions" Min="1" Max="2000" Style="width:140px;" />
                 <span class="hint">1 = latest only. Up to 2000. New copy tasks start with this; you can change it per task.</span>
+            </div>
+            <div class="field" style="margin-bottom:18px;">
+                <span class="field-label">Parallel file transfers</span>
+                <FluentNumberField @bind-Value="Settings.DefaultParallelFileTransfers" Min="1" Max="16" Style="width:120px;" />
+                <span class="hint">Files copied at once within one library copy. 1 = sequential. Higher is faster on many
+                    small files; all transfers share one polite request budget, and it falls back to sequential when copying permissions.</span>
             </div>
             <FluentButton Appearance="Appearance.Accent" @onclick="SavePrefs">Save preferences</FluentButton>
         </div>
@@ -81,7 +88,38 @@
                               @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator"))">View on GitHub</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Bug())"
                               @onclick="@(() => Browser.Open("https://github.com/Zerg00s/CleverPoint-Migrator/issues"))">Report an issue</FluentButton>
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowSync())"
+                              @onclick="CheckUpdates" Disabled="_checking">@(_checking ? "Checking…" : "Check for updates")</FluentButton>
             </div>
+            @if (_update is { } u)
+            {
+                @if (u.Available)
+                {
+                    <div class="update-card">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <FluentIcon Value="@(new Icons.Regular.Size20.ArrowCircleUp())" Color="Color.Accent" />
+                            <strong>Update available: v@u.LatestVersion</strong>
+                            <span class="hint">(you have v@u.CurrentVersion)</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(u.Notes))
+                        {
+                            <pre class="update-notes">@Trim(u.Notes!)</pre>
+                        }
+                        <div class="btn-row" style="margin-top:10px;">
+                            <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowDownload())"
+                                          @onclick="@(() => Install(u))" Disabled="_installing">
+                                @(_installing ? "Downloading…" : "Update now")
+                            </FluentButton>
+                            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Open())"
+                                          @onclick="@(() => Browser.Open(u.ReleaseUrl ?? "https://github.com/Zerg00s/CleverPoint-Migrator/releases"))">Release notes</FluentButton>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <p class="hint" style="margin-top:10px;">You're on the latest version.</p>
+                }
+            }
             <p class="hint" style="margin-top:16px;">Version @AppVersion</p>
             <p class="hint" style="margin-top:4px;">
                 Settings stored at
@@ -127,4 +165,44 @@
         Settings.Save();
         Toasts.ShowSuccess("Preferences saved.");
     }
+
+    private UpdateInfo? _update;
+    private bool _checking, _installing;
+
+    private async Task CheckUpdates()
+    {
+        _checking = true;
+        try
+        {
+            _update = await Updates.CheckAsync();   // forced check; also resets the daily timer
+            if (_update is { Available: false }) Toasts.ShowInfo("You're on the latest version.");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not check for updates: {ex.Message}");
+        }
+        finally { _checking = false; }
+    }
+
+    private async Task Install(UpdateInfo u)
+    {
+        _installing = true;
+        try
+        {
+            if (await Updates.DownloadAndRunInstallerAsync(u))
+                Toasts.ShowInfo("The installer is launching. The app will close to finish updating.");
+            else
+                Browser.Open(u.ReleaseUrl ?? "https://github.com/Zerg00s/CleverPoint-Migrator/releases");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Update failed: {ex.Message}. Opening the release page instead.");
+            Browser.Open(u.ReleaseUrl ?? "https://github.com/Zerg00s/CleverPoint-Migrator/releases");
+        }
+        finally { _installing = false; }
+    }
+
+    // Keep the release-notes preview short.
+    private static string Trim(string notes) =>
+        notes.Length > 600 ? notes[..600].TrimEnd() + "…" : notes;
 }

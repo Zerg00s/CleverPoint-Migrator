@@ -1,3 +1,4 @@
+using CleverPoint.Migrator.Core.Csom;
 using Microsoft.SharePoint.Client;
 
 namespace CleverPoint.Migrator.Core.Operations;
@@ -28,6 +29,20 @@ public class UserResolver
         _targetCtx = targetCtx;
         _manualMap = manualMap ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         _fallbackLogin = fallbackLogin;
+    }
+
+    /// <summary>
+    /// A resolver for a parallel-transfer worker: its own source/target contexts, but SEEDED
+    /// with this (already primed + pre-resolved) resolver's maps so the hot path is all cache
+    /// hits and no worker performs concurrent EnsureUser on a shared context. Call only AFTER
+    /// PrimeSourceUsersAsync + PreResolveAsync on the parent, on a single thread.
+    /// </summary>
+    public UserResolver SnapshotFor(ClientContext workerSource, ClientContext workerTarget)
+    {
+        var clone = new UserResolver(workerSource, workerTarget, _manualMap, _fallbackLogin);
+        foreach (var kv in _sourceUsersById) clone._sourceUsersById[kv.Key] = kv.Value;
+        foreach (var kv in _targetIdByKey) clone._targetIdByKey[kv.Key] = kv.Value;
+        return clone;
     }
 
     /// <summary>Preloads all source site users in one round trip. Call once before copying.</summary>
@@ -124,13 +139,16 @@ public class UserResolver
             {
                 var ensured = _targetCtx.Web.EnsureUser(candidate);
                 _targetCtx.Load(ensured, x => x.Id);
-                await _targetCtx.ExecuteQueryAsync();
+                // Retry throttles here, so a transient 429/503 does not get mistaken for
+                // "user does not exist" and negative-cached for the rest of the run (which
+                // would rewrite authorship to the fallback account at scale).
+                await _targetCtx.ExecuteWithRetryAsync();
                 _targetIdByKey[candidate] = ensured.Id;
                 return ensured.Id;
             }
             catch
             {
-                _targetIdByKey[candidate] = -1;  // negative-cache the miss
+                _targetIdByKey[candidate] = -1;  // genuine miss (after throttle retries): negative-cache
             }
         }
 

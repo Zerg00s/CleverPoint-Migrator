@@ -56,6 +56,20 @@ public class HistoryService
         }
     }
 
+    /// <summary>Source paths already fully copied in a run - the skip set for a resume.</summary>
+    public HashSet<string> GetCopiedSourcePaths(long runId)
+    {
+        try
+        {
+            using var store = new HistoryStore(UxSettings.HistoryDbPath);
+            return store.GetCopiedSourcePaths(runId);
+        }
+        catch
+        {
+            return new(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
     public void RenameRun(long runId, string newName)
     {
         try

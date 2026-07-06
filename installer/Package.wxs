@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  CleverPoint Migrator - per-user installer.
+
+  The UpgradeCode below is the PRODUCT IDENTITY across all versions. It MUST NEVER CHANGE, or
+  upgrades stop working and users end up with two side-by-side installs. The ProductVersion and
+  the harvest folder come from the build (-p:ProductVersion / -p:PublishDir).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="CleverPoint Migrator"
+           Manufacturer="Denis Molodtsov"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="8F3A1C42-7B6E-4D19-9E2A-5C1D0F8B4A76"
+           Scope="perUser"
+           Compressed="yes">
+
+    <!-- Block downgrades; replace an older install in place. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of CleverPoint Migrator is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Per-user install root: %LocalAppData%\CleverPoint Migrator -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="CleverPoint Migrator" />
+    </StandardDirectory>
+
+    <!-- Start Menu folder for the app + uninstall entry point (ARP handles real removal). -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuDir" Name="CleverPoint Migrator" />
+    </StandardDirectory>
+
+    <!-- Harvest the entire published self-contained folder (exe, wwwroot, SignInHelper, DLLs). -->
+    <Files Directory="INSTALLFOLDER" Include="$(var.PublishDir)\**" />
+
+    <!-- Start Menu shortcut to the app. -->
+    <Component Directory="AppMenuDir" Guid="A1B2C3D4-1111-4222-8333-444455556666">
+      <Shortcut Id="AppShortcut"
+                Name="CleverPoint Migrator"
+                Description="SharePoint Online migration tool"
+                Target="[INSTALLFOLDER]CleverPoint.Migrator.Ux.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveAppMenuDir" Directory="AppMenuDir" On="uninstall" />
+      <!-- Per-user KeyPath so the component is valid without admin. -->
+      <RegistryValue Root="HKCU" Key="Software\CleverPoint Migrator"
+                     Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+  </Package>
+</Wix>

@@ -67,6 +67,36 @@ h1, h2, h3, h4, h5, h6, p {
 .task-prog-bar { flex: 1 1 auto; height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--cp-accent) 16%, transparent); }
 .task-prog-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--cp-accent); transition: width .3s ease; }
 .task-prog-pct { flex: 0 0 auto; font-size: 12px; color: var(--neutral-foreground-hint, #888); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Live throughput / ETA / throttle line under the detail progress bar. */
+.throughput-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--neutral-foreground-hint, #888); flex-wrap: wrap; }
+.throughput-row .tp-metric { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.throughput-row .tp-sep { opacity: .5; }
+.tp-throttle { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+    color: #8a5a00; background: color-mix(in srgb, #f0a500 22%, transparent); border: 1px solid color-mix(in srgb, #f0a500 45%, transparent); }
+.tp-throttle-sm { padding: 1px 7px; font-size: 11px; }
+@media (prefers-color-scheme: dark) { .tp-throttle { color: #ffcf70; } }
+/* Identity mapping screen. */
+.map-pick { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.map-grid { display: grid; grid-template-columns: 1fr 1.3fr 1fr; gap: 14px; margin-top: 14px; align-items: start; }
+.map-pane { display: flex; flex-direction: column; }
+.map-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.map-people { height: calc(100vh - 320px); min-height: 240px; display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
+.principal { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px solid var(--neutral-stroke-rest, #e6e8eb); border-radius: 8px; cursor: grab; background: var(--neutral-layer-1, #fff); }
+.principal:hover { border-color: var(--cp-accent); background: color-mix(in srgb, var(--cp-accent) 6%, transparent); }
+.principal.grp { border-left: 3px solid var(--cp-accent); }
+.principal .p-text { display: flex; flex-direction: column; min-width: 0; }
+.p-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-sub { font-size: 11px; color: var(--neutral-foreground-hint, #888); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-rows { height: calc(100vh - 430px); min-height: 160px; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+.map-row { display: flex; align-items: center; gap: 8px; }
+.slot { flex: 1 1 0; min-width: 0; min-height: 42px; display: flex; flex-direction: column; justify-content: center; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--neutral-stroke-rest, #e6e8eb); background: var(--neutral-layer-1, #fff); }
+.slot.empty { border-style: dashed; background: transparent; }
+.slot-hint { font-size: 12px; color: var(--neutral-foreground-hint, #999); }
+.orphan-box { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--neutral-stroke-rest, #e6e8eb); }
+.orphan-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+/* "Update available" card on Settings > About. */
+.update-card { margin-top: 14px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--cp-accent) 40%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--cp-accent) 7%, transparent); max-width: 640px; }
+.update-notes { margin: 10px 0 0; padding: 10px 12px; max-height: 180px; overflow: auto; white-space: pre-wrap; font-size: 12px; background: var(--neutral-layer-1, #fff); border: 1px solid var(--neutral-stroke-rest, #e6e8eb); border-radius: 8px; }
 /* Breadcrumb above a detail page title. */
 .page-crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0 0 6px 2px; }
 .page-crumbs .crumb-link { color: var(--cp-accent); cursor: pointer; }

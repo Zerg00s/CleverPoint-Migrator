@@ -6,6 +6,8 @@
 @inject UxSettings Settings
 @inject NavigationManager Nav
 @inject MigrationRunner Runner
+@inject UpdateService Updates
+@inject IToastService Toasts
 
 <FluentDesignTheme @bind-Mode="@_mode" StorageName="theme" />
 
@@ -59,6 +61,9 @@
             </NavLink>
             <NavLink class="nav-item" href="connections" ActiveClass="active" title="Connections">
                 <FluentIcon Value="@(new Icons.Regular.Size20.PlugConnected())" /> <span>Connections</span>
+            </NavLink>
+            <NavLink class="nav-item" href="mapping" ActiveClass="active" title="Identity mapping">
+                <FluentIcon Value="@(new Icons.Regular.Size20.PeopleSwap())" /> <span>Mapping</span>
             </NavLink>
             <NavLink class="nav-item" href="history" ActiveClass="active" title="Run History">
                 <FluentIcon Value="@(new Icons.Regular.Size20.History())" /> <span>Run History</span>
@@ -143,6 +148,20 @@
         Runner.Changed += OnStatusChanged;
         Nav.LocationChanged += OnLocationChanged;
         _currentPath = Nav.Uri;
+    }
+
+    // Once per launch (at most once per 24h) quietly check GitHub for a newer release and, if
+    // there is one, nudge the user toward Settings > About. Never blocks or errors the UI.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !Updates.IsAutoCheckDue()) return;
+        try
+        {
+            var info = await Updates.CheckAsync();
+            if (info.Available)
+                Toasts.ShowInfo($"Update available: v{info.LatestVersion}. Open Settings, About to update.");
+        }
+        catch { /* update check is best-effort */ }
     }
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)

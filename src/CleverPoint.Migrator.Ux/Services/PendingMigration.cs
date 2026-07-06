@@ -22,6 +22,11 @@ public class PendingMigration
     /// root). Empty = the list root. Set when dropping onto a target folder.</summary>
     public string? TargetSubfolderRelative { get; set; }
 
+    /// <summary>When set, this is a RESUME of an interrupted run: the wizard loads that
+    /// run's already-copied source paths into CopyOptions.ResumeSkipPaths so they are
+    /// skipped and only the unfinished remainder is copied.</summary>
+    public long? ResumeFromRunId { get; set; }
+
     public void Reset(string source, string target)
     {
         SourceSite = source;
@@ -31,6 +36,7 @@ public class PendingMigration
         TargetListUrl = null;
         ContentOnly = false;
         TargetSubfolderRelative = null;
+        ResumeFromRunId = null;
     }
 }
 

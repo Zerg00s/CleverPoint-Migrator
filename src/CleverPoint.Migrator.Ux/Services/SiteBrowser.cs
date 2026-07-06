@@ -17,6 +17,8 @@ public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary,
     public string SubWebUrl { get; set; } = "";
 }
 public record SpWebInfo(string Title, string Url);
+/// <summary>A site user or group for the identity mapper (login is the mapping key).</summary>
+public record SpPrincipal(string Login, string Title, string Email, bool IsGroup);
 public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,
     string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "")
 {
@@ -68,6 +70,46 @@ public class SiteBrowser
         lists = lists.OrderByDescending(l => l.IsLibrary).ThenBy(l => l.Title).ToList();
         WriteCache(cacheKey, lists);
         return lists;
+    }
+
+    /// <summary>
+    /// Site users + SharePoint groups for the identity mapper. Users keep their claims login
+    /// (the mapping key); groups are listed too so a source group can map to a target group.
+    /// Excludes the app principal and pure system rows from the pickable list.
+    /// </summary>
+    public async Task<List<SpPrincipal>> GetPrincipalsAsync(SpConnection conn, bool useCache = true)
+    {
+        var cacheKey = $"principals_{Sanitize(conn.SiteUrl)}";
+        if (useCache && TryReadCache<List<SpPrincipal>>(cacheKey, out var cached)) return cached!;
+
+        var byLogin = new Dictionary<string, SpPrincipal>(StringComparer.OrdinalIgnoreCase);
+        using (var doc = await conn.Rest.GetJsonAsync(
+            $"{conn.SiteUrl}/_api/web/siteusers?$select=LoginName,Title,Email,PrincipalType&$top=500"))
+        {
+            foreach (var e in doc.RootElement.GetProperty("value").EnumerateArray())
+            {
+                var login = e.GetProperty("LoginName").GetString() ?? "";
+                if (login.Length == 0 || login.Contains("app@sharepoint", StringComparison.OrdinalIgnoreCase)) continue;
+                var pt = e.TryGetProperty("PrincipalType", out var p) ? p.GetInt32() : 1;   // 1=User, 4/8=group
+                byLogin[login] = new SpPrincipal(login,
+                    e.GetProperty("Title").GetString() ?? login,
+                    e.TryGetProperty("Email", out var em) ? em.GetString() ?? "" : "",
+                    IsGroup: pt != 1);
+            }
+        }
+        using (var doc = await conn.Rest.GetJsonAsync(
+            $"{conn.SiteUrl}/_api/web/sitegroups?$select=LoginName,Title&$top=200"))
+        {
+            foreach (var e in doc.RootElement.GetProperty("value").EnumerateArray())
+            {
+                var login = e.GetProperty("LoginName").GetString() ?? "";
+                if (login.Length == 0 || byLogin.ContainsKey(login)) continue;
+                byLogin[login] = new SpPrincipal(login, e.GetProperty("Title").GetString() ?? login, "", IsGroup: true);
+            }
+        }
+        var list = byLogin.Values.OrderBy(p => p.IsGroup).ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase).ToList();
+        WriteCache(cacheKey, list);
+        return list;
     }
 
     public async Task<List<SpWebInfo>> GetSubwebsAsync(SpConnection conn, bool useCache = true)

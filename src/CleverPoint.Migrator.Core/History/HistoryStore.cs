@@ -42,6 +42,11 @@ public class HistoryStore : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(dbPath))!);
         _db = new SqliteConnection($"Data Source={dbPath}");
         _db.Open();
+        // Concurrent access: a migration writes run_items from a worker thread while the UI
+        // reads the history grid through a separate connection. WAL lets readers run
+        // alongside one writer, and busy_timeout waits briefly on a lock instead of throwing
+        // SQLITE_BUSY (which previously dropped log rows and poisoned resume).
+        Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
         Exec("""
             CREATE TABLE IF NOT EXISTS runs(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,7 +222,14 @@ public class HistoryStore : IDisposable
         cmd.CommandText = "SELECT item_type,source_path,target_path,status,message,size_bytes,duration_ms,item_url,ts FROM run_items WHERE run_id=$r";
         cmd.Parameters.AddWithValue("$r", runId);
         using var r = cmd.ExecuteReader();
-        static string Q(string? s) => "\"" + (s ?? "").Replace("\"", "\"\"") + "\"";
+        static string Q(string? s)
+        {
+            var v = s ?? "";
+            // Neutralize spreadsheet formula injection: a cell beginning with = + - @ (or a
+            // tab/CR) is executed by Excel. Prefix with an apostrophe so it stays text.
+            if (v.Length > 0 && v[0] is '=' or '+' or '-' or '@' or '\t' or '\r') v = "'" + v;
+            return "\"" + v.Replace("\"", "\"\"") + "\"";
+        }
         while (r.Read())
             sb.AppendLine(string.Join(',', Q(r.GetString(0)), Q(r.GetString(1)), Q(r.GetString(2)), Q(r.GetString(3)),
                 Q(r.IsDBNull(4) ? "" : r.GetString(4)), r.GetInt64(5), r.GetInt64(6), Q(r.IsDBNull(7) ? "" : r.GetString(7)),

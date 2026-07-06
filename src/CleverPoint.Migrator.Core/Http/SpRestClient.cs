@@ -49,12 +49,32 @@ public class SpRestClient
     public async Task<string> PostRawAsync(string url, string json, string contentType = "application/json;odata=verbose") =>
         await SendAsync(HttpMethod.Post, url, json, null, contentType);
 
+    private static bool IsThrottled(HttpStatusCode s) =>
+        s is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout;
+
+    // Honor Retry-After (or exponential backoff), and pause every concurrent run on this host.
+    private async Task ThrottleWaitAsync(HttpResponseMessage response, string url, int attempt)
+    {
+        var wait = (int)(response.Headers.RetryAfter?.Delta?.TotalSeconds ?? Math.Pow(2, attempt));
+        RequestThrottle.PauseHost(new Uri(url).Host, TimeSpan.FromSeconds(Math.Max(wait, 1)));
+        OnThrottle?.Invoke(url, wait, attempt);
+        await Task.Delay(TimeSpan.FromSeconds(Math.Max(wait, 1)));
+    }
+
     public async Task<byte[]> GetBytesAsync(string url)
     {
-        using var request = await BuildRequestAsync(HttpMethod.Get, url, null);
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        await EnsureSuccessAsync(response, url);
-        return await response.Content.ReadAsByteArrayAsync();
+        for (var attempt = 1; ; attempt++)
+        {
+            using var request = await BuildRequestAsync(HttpMethod.Get, url, null);
+            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            if (IsThrottled(response.StatusCode) && attempt <= _maxRetries)
+            {
+                await ThrottleWaitAsync(response, url, attempt);
+                continue;
+            }
+            await EnsureSuccessAsync(response, url);
+            return await response.Content.ReadAsByteArrayAsync();
+        }
     }
 
     /// <summary>
@@ -63,15 +83,25 @@ public class SpRestClient
     /// </summary>
     public async Task<Stream> GetStreamAsync(string url)
     {
-        var request = await BuildRequestAsync(HttpMethod.Get, url, null);
-        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        if (!response.IsSuccessStatusCode)
+        for (var attempt = 1; ; attempt++)
         {
-            var body = await response.Content.ReadAsStringAsync();
-            response.Dispose();
-            throw new SpRestException((int)response.StatusCode, url, body.Length > 1500 ? body[..1500] : body);
+            var request = await BuildRequestAsync(HttpMethod.Get, url, null);
+            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            if (IsThrottled(response.StatusCode) && attempt <= _maxRetries)
+            {
+                await ThrottleWaitAsync(response, url, attempt);
+                response.Dispose();
+                request.Dispose();
+                continue;
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                response.Dispose();
+                throw new SpRestException((int)response.StatusCode, url, body.Length > 1500 ? body[..1500] : body);
+            }
+            return await response.Content.ReadAsStreamAsync();
         }
-        return await response.Content.ReadAsStreamAsync();
     }
 
     /// <summary>POST with a binary body (upload-session slices), with throttle retry.</summary>

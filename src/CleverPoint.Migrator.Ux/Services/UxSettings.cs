@@ -39,6 +39,10 @@ public class UxSettings
     public int DefaultMaxVersions { get; set; } = 1;
     /// <summary>"Light" or "Dark"; persisted so the theme survives restarts even if WebView localStorage is wiped.</summary>
     public string Theme { get; set; } = "Light";
+    /// <summary>Files to transfer concurrently within one library copy (1 = sequential).</summary>
+    public int DefaultParallelFileTransfers { get; set; } = 4;
+    /// <summary>Last time the app checked GitHub for a newer release (drives the once-per-day auto check).</summary>
+    public DateTime? LastUpdateCheckUtc { get; set; }
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
@@ -87,7 +91,24 @@ public class UxSettings
                     SelfHealMaxAttempts = loaded.SelfHealMaxAttempts is >= 1 and <= 5 ? loaded.SelfHealMaxAttempts : 5;
                     DefaultEngine = string.IsNullOrWhiteSpace(loaded.DefaultEngine) ? "Classic" : loaded.DefaultEngine;
                     DefaultMaxVersions = loaded.DefaultMaxVersions <= 0 ? 1 : loaded.DefaultMaxVersions;
+                    DefaultParallelFileTransfers = loaded.DefaultParallelFileTransfers is >= 1 and <= 16 ? loaded.DefaultParallelFileTransfers : 4;
+                    LastUpdateCheckUtc = loaded.LastUpdateCheckUtc;
                     Theme = string.IsNullOrWhiteSpace(loaded.Theme) ? "Light" : loaded.Theme;
+
+                    // One-time upgrade: earlier builds stored the certificate password in
+                    // plaintext. Re-protect any legacy plaintext value so it is not left
+                    // readable in settings.json, then persist the upgrade.
+                    if (OperatingSystem.IsWindows())
+                    {
+                        var migrated = false;
+                        foreach (var c in Connections)
+                            if (!string.IsNullOrEmpty(c.CertPasswordProtected) && !UxSecret.IsProtected(c.CertPasswordProtected))
+                            {
+                                c.CertPasswordProtected = UxSecret.Protect(c.CertPasswordProtected);
+                                migrated = true;
+                            }
+                        if (migrated) Save();
+                    }
                 }
             }
         }

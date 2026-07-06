@@ -12,6 +12,7 @@ public class CopyTask
     public string SourceSite { get; init; } = "";
     public string TargetSite { get; init; } = "";
     public string SourceList { get; init; } = "";
+    public bool SourceIsLibrary { get; init; }   // preserved so "Copy task" re-runs with the right scope
     public string Engine { get; init; } = "Classic";
     public CopyOptions Options { get; init; } = new();
 
@@ -29,6 +30,25 @@ public class CopyTask
     public int Total { get; set; }
     public int Processed { get; set; }
     public int Percent => Total > 0 ? Math.Min(100, Processed * 100 / Total) : 0;
+
+    /// <summary>Bytes transferred so far (sum of copied content sizes) for the live MB/s read-out.</summary>
+    public long BytesProcessed { get; set; }
+
+    /// <summary>Set each time SharePoint throttles a request (429/503). The Activity view shows a
+    /// "throttling" chip while this is recent; ThrottleWaitSeconds is the last Retry-After wait.</summary>
+    public DateTime? LastThrottleUtc { get; set; }
+    public int ThrottleWaitSeconds { get; set; }
+    public int ThrottleHits { get; set; }
+    /// <summary>True when a throttle happened within the last few seconds (drives the live chip).</summary>
+    public bool IsThrottling => LastThrottleUtc is { } t && (DateTime.UtcNow - t).TotalSeconds < 8;
+
+    /// <summary>Live throughput (items/sec, bytes/sec, ETA) from processed/total over elapsed time.</summary>
+    public Throughput.Stats Rate()
+    {
+        var start = StartedUtc;
+        if (start is null || State != CopyTaskState.Running) return new Throughput.Stats(0, 0, null);
+        return Throughput.Estimate(Processed, Total, BytesProcessed, DateTime.UtcNow - start.Value);
+    }
 
     public string? Message { get; set; }
     public string? Phase { get; set; }   // live progress text (esp. for the Migration API engine)
@@ -77,7 +97,7 @@ public class MigrationRunner
     public int QueuedCount { get { lock (_gate) return _tasks.Count(t => t.State == CopyTaskState.Queued); } }
     public int ActiveCount { get { lock (_gate) return _tasks.Count(t => t.IsActive); } }
 
-    public CopyTask Enqueue(string name, string sourceSite, string targetSite, string sourceList, CopyOptions options, string engine)
+    public CopyTask Enqueue(string name, string sourceSite, string targetSite, string sourceList, CopyOptions options, string engine, bool sourceIsLibrary = false)
     {
         CopyTask task;
         lock (_gate)
@@ -85,7 +105,7 @@ public class MigrationRunner
             task = new CopyTask
             {
                 Id = ++_seq, Name = name, SourceSite = sourceSite, TargetSite = targetSite,
-                SourceList = sourceList, Options = options, Engine = engine, QueuedUtc = DateTime.UtcNow,
+                SourceList = sourceList, SourceIsLibrary = sourceIsLibrary, Options = options, Engine = engine, QueuedUtc = DateTime.UtcNow,
             };
             _tasks.Add(task);
         }
@@ -94,11 +114,29 @@ public class MigrationRunner
         return task;
     }
 
+    /// <summary>Signals every queued/running task to cancel (e.g. on app close).</summary>
+    public void CancelAll()
+    {
+        lock (_gate)
+            foreach (var t in _tasks)
+                if (t.IsActive) { try { t.Cts.Cancel(); } catch { } }
+    }
+
     public void Cancel(int id)
     {
         CopyTask? t;
         lock (_gate) t = _tasks.FirstOrDefault(x => x.Id == id);
-        t?.Cts.Cancel();
+        if (t is null) return;
+        t.Cts.Cancel();
+        // A task still Queued never started, so mark it Cancelled now instead of letting the
+        // pump start it (which would create a spurious history run just to stop it).
+        lock (_gate)
+            if (t.State == CopyTaskState.Queued)
+            {
+                t.State = CopyTaskState.Cancelled;
+                t.FinishedUtc = DateTime.UtcNow;
+            }
+        Raise(force: true);
     }
 
     /// <summary>Rename a task (in-memory display); returns its history run id (0 if none yet).</summary>
@@ -147,7 +185,15 @@ public class MigrationRunner
                 rec => AddRecord(t, rec), t.Cts.Token, t.Engine, t.Name,
                 onRunStarted: id => t.HistoryRunId = id,
                 onPhase: msg => { t.Phase = msg; Raise(force: true); },
-                onTotal: n => { if (n > t.Total) { t.Total = n; Raise(force: true); } });
+                onTotal: n => { if (n > t.Total) { t.Total = n; Raise(force: true); } },
+                onThrottle: wait =>
+                {
+                    t.LastThrottleUtc = DateTime.UtcNow;
+                    t.ThrottleWaitSeconds = wait;
+                    t.ThrottleHits++;
+                    Raise(force: true);
+                },
+                sourceIsLibrary: t.SourceIsLibrary);
             t.Copied = result.Copied; t.Skipped = result.Skipped;
             t.Warnings = result.Warnings; t.Failed = result.Failed;
             t.State = status switch
@@ -188,7 +234,11 @@ public class MigrationRunner
         t.LogCount++;
         // Count only content rows toward progress (skip schema/progress rows like
         // Field, View, List, Site column, Progress) so Processed lines up with Total.
-        if (rec.ItemType is "Item" or "File" or "Folder" or "OneNote") t.Processed++;
+        if (rec.ItemType is "Item" or "File" or "Folder" or "OneNote")
+        {
+            t.Processed++;
+            if (rec.SizeBytes > 0) t.BytesProcessed += rec.SizeBytes;
+        }
         Raise();
     }
 

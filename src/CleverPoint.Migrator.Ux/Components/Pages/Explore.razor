@@ -92,8 +92,10 @@
         {
             if (_target.IsInSubfolder)
                 return "You ticked a whole list or library, which is recreated at the target site. Open the target at its site (not inside a folder) - or open a single source list and copy its files into this folder instead.";
-            if (tickedCount >= 2 && _target.IsListOpen)
-                return "You picked several lists/libraries but the target is a single list. Open the target at its site so each one is created there.";
+            if (_target.IsListOpen)
+                return tickedCount >= 2
+                    ? "You picked several lists/libraries but the target is a single open list. Open the target at its site so each one is created there."
+                    : "You ticked a list/library, which is recreated at the target site (not into the open target list). Open the target at its site, or open a single source list to copy its content into this list.";
         }
         return null;
     }

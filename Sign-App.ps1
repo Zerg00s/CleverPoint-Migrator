@@ -164,6 +164,35 @@ if ($Release) {
     Compress-Archive -Path "$publishDir\*" -DestinationPath $zipPath
     Write-Host "Zip: $zipPath ($('{0:N1} MB' -f ((Get-Item $zipPath).Length / 1MB)))" -ForegroundColor Gray
 
+    # Build the per-user MSI installer (WiX 5) and sign it, so testers can install/update with a
+    # double-click. Non-fatal: if the WiX SDK is unavailable the release still ships the zip.
+    $msiPath = ""
+    $installerProj = "$projectDir\installer\CleverPoint.Migrator.Installer.wixproj"
+    if (Test-Path $installerProj) {
+        Write-Host "`nBuilding MSI installer (WiX 5)..." -ForegroundColor Cyan
+        dotnet build $installerProj -c Release -p:ProductVersion=$Version -p:PublishDir=$publishDir
+        if ($LASTEXITCODE -eq 0) {
+            $msi = Get-ChildItem "$projectDir\installer\bin" -Recurse -Filter "*.msi" -ErrorAction SilentlyContinue |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($msi) {
+                Write-Host "Signing MSI: $($msi.FullName)" -ForegroundColor Cyan
+                & $signTool.FullName sign /v /debug /fd SHA256 `
+                    /tr "http://timestamp.acs.microsoft.com" /td SHA256 `
+                    /dlib $dlib.FullName /dmdf $metadataJson $msi.FullName
+                if ($LASTEXITCODE -eq 0) {
+                    $msiPath = $msi.FullName
+                    Write-Host "MSI: $msiPath ($('{0:N1} MB' -f ($msi.Length / 1MB)))" -ForegroundColor Gray
+                } else {
+                    Write-Host "MSI signing failed; releasing without the MSI." -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "MSI not produced; releasing without the MSI." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "MSI build failed (is the WiX 5 SDK available?); releasing without the MSI." -ForegroundColor Yellow
+        }
+    }
+
     Write-Host "Creating GitHub release $tag ..." -ForegroundColor Cyan
 
     # Verify gh CLI is available
@@ -174,7 +203,10 @@ if ($Release) {
     # The git repository is this folder (not its parent).
     Push-Location $projectDir
     try {
-        $ghArgs = @("release", "create", $tag, $zipPath, "--title", "CleverPoint Migrator $tag", "--generate-notes")
+        # Attach the zip and, when it built, the MSI installer.
+        $ghArgs = @("release", "create", $tag, $zipPath)
+        if ($msiPath) { $ghArgs += $msiPath }
+        $ghArgs += @("--title", "CleverPoint Migrator $tag", "--generate-notes")
 
         if ($Draft) {
             $ghArgs += "--draft"

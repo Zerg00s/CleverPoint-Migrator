@@ -25,7 +25,7 @@ public static class SingleInstance
     {
         try
         {
-            _mutex = new Mutex(initiallyOwned: true, MutexName, out var isNew);
+            _mutex = new Mutex(initiallyOwned: true, MutexNameForUser(), out var isNew);
             if (isNew) return true;
         }
         catch
@@ -36,6 +36,24 @@ public static class SingleInstance
 
         if (OperatingSystem.IsWindows()) FocusExisting();
         return false;
+    }
+
+    // Per-USER, cross-session name. The WebView2 profile, settings and history are per-user,
+    // so a second SESSION of the same user (console + RDP, two desktops) must not open a second
+    // instance, which would crash browser sign-in on the shared WebView2 folder. Global\ spans
+    // sessions; appending the SID keeps different users independent.
+    private static string MutexNameForUser()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
+                if (!string.IsNullOrEmpty(sid)) return $"Global\\{MutexName}.{sid}";
+            }
+            catch { /* fall back to the plain per-session name */ }
+        }
+        return MutexName;
     }
 
     private static void FocusExisting()

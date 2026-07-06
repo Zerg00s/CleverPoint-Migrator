@@ -32,7 +32,11 @@ public static class AppLog
             lock (Gate)
             {
                 RollIfLarge();
-                File.AppendAllText(FilePath, line, Encoding.UTF8);
+                // FileShare.ReadWrite so a second process (or the sign-in helper) writing the
+                // same log does not make this append throw and lose the record.
+                using var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                using var sw = new StreamWriter(fs, Encoding.UTF8);
+                sw.Write(line);
             }
         }
         catch { /* logging must never throw */ }

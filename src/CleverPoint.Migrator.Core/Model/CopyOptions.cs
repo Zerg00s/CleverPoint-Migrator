@@ -44,8 +44,23 @@ public class CopyOptions
     /// <summary>Copy item/file/folder role assignments (permissions).</summary>
     public bool CopyPermissions { get; set; }
 
+    /// <summary>
+    /// How many files to transfer concurrently within one library copy. 1 = sequential (the
+    /// safe default). Higher values copy files in parallel through per-worker connections,
+    /// sharing the throttle budget. Forced to 1 when CopyPermissions is on (permission
+    /// application is stateful). Folders are always created sequentially first.
+    /// </summary>
+    public int ParallelFileTransfers { get; set; } = 1;
+
     /// <summary>Login/email used when a source user cannot be resolved on the target.</summary>
     public string? UnresolvedUserFallback { get; set; }
+
+    /// <summary>
+    /// Optional managed-metadata term remap: source term GUID -> target term GUID. Same-tenant
+    /// copies share a term store so the GUIDs are identical (leave null = identity). Cross-tenant
+    /// copies supply a map so taxonomy field values resolve to the equivalent target terms.
+    /// </summary>
+    public Dictionary<Guid, Guid>? TermMap { get; set; }
 
     /// <summary>Only copy items modified on/after this UTC time (delta and filter support).</summary>
     public DateTime? ModifiedSinceUtc { get; set; }
@@ -129,4 +144,44 @@ public class CopyOptions
 
     /// <summary>Items per CSOM batch (one ExecuteQuery round trip).</summary>
     public int BatchSize { get; set; } = 20;
+
+    /// <summary>
+    /// A full copy of these options. Used for healing/retry so nothing is silently
+    /// dropped (target subfolder, field map, schema mode, version depth, upsert map,
+    /// filters, etc.). Collections are copied so the clone can be mutated independently.
+    /// </summary>
+    public CopyOptions Clone() => new()
+    {
+        ExistingMode = ExistingMode,
+        DateField = DateField,
+        TargetListTitle = TargetListTitle,
+        TargetListUrl = TargetListUrl,
+        TargetSubfolderRelative = TargetSubfolderRelative,
+        CopyViews = CopyViews,
+        CopyListSettings = CopyListSettings,
+        MergeSchema = MergeSchema,
+        PreserveAuthorsAndDates = PreserveAuthorsAndDates,
+        CopyPermissions = CopyPermissions,
+        ParallelFileTransfers = ParallelFileTransfers,
+        UnresolvedUserFallback = UnresolvedUserFallback,
+        TermMap = TermMap == null ? null : new Dictionary<Guid, Guid>(TermMap),
+        ModifiedSinceUtc = ModifiedSinceUtc,
+        ModifiedBeforeUtc = ModifiedBeforeUtc,
+        SourceFolderServerRelativeUrl = SourceFolderServerRelativeUrl,
+        NamePatterns = new List<string>(NamePatterns),
+        ItemIds = new List<int>(ItemIds),
+        SelectedPaths = new List<string>(SelectedPaths),
+        FieldMap = new Dictionary<string, string>(FieldMap, StringComparer.OrdinalIgnoreCase),
+        PageSize = PageSize,
+        ApiMaxItemsPerPackage = ApiMaxItemsPerPackage,
+        LargeFileThresholdBytes = LargeFileThresholdBytes,
+        UploadSliceBytes = UploadSliceBytes,
+        ResumeSkipPaths = ResumeSkipPaths == null ? null : new HashSet<string>(ResumeSkipPaths, StringComparer.OrdinalIgnoreCase),
+        RecordSkippedItems = RecordSkippedItems,
+        UpsertItemMap = UpsertItemMap == null ? null : new Dictionary<int, int>(UpsertItemMap),
+        CopyAttachments = CopyAttachments,
+        CopyContent = CopyContent,
+        MaxVersions = MaxVersions,
+        BatchSize = BatchSize,
+    };
 }

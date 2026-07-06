@@ -26,6 +26,10 @@ public class RunScope
     public string? TargetSubfolder { get; set; }
     public List<string> SelectedPaths { get; set; } = new();
     public List<int> ItemIds { get; set; } = new();
+    // Added so "Run again" reconstructs the copy faithfully (older runs default these to
+    // false; RunDetail derives sensible fallbacks from the selection when absent).
+    public bool IsLibrary { get; set; }
+    public bool ContentOnly { get; set; }
 }
 
 public class PaneSnapshot

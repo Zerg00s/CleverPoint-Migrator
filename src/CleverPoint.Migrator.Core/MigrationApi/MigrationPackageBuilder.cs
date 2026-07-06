@@ -1,4 +1,5 @@
 using System.Security;
+using System.Globalization;
 using System.Text;
 
 namespace CleverPoint.Migrator.Core.MigrationApi;
@@ -107,8 +108,8 @@ public class MigrationPackageBuilder
             var serverRelUrl = $"{TargetWebUrl}/{webRelUrl}";
             var dirName = parent.Length == 0 ? $"{webDir}/{ListUrlLeaf}" : $"{webDir}/{ListUrlLeaf}/{parent}";
             var meta = folderMeta.GetValueOrDefault(dir);
-            var created = (meta?.CreatedUtc ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss");
-            var modified = (meta?.ModifiedUtc ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss");
+            var created = (meta?.CreatedUtc ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+            var modified = (meta?.ModifiedUtc ?? DateTime.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
             var author = meta is { AuthorMapId: >= 0 } ? $" Author=\"{meta.AuthorMapId}\"" : "";
             var editor = meta is { EditorMapId: >= 0 } ? $" ModifiedBy=\"{meta.EditorMapId}\"" : "";
 
@@ -137,8 +138,8 @@ public class MigrationPackageBuilder
 
             var author = file.AuthorMapId >= 0 ? $" Author=\"{file.AuthorMapId}\"" : "";
             var editor = file.EditorMapId >= 0 ? $" ModifiedBy=\"{file.EditorMapId}\"" : "";
-            var created = file.CreatedUtc.ToString("yyyy-MM-ddTHH:mm:ss");
-            var modified = file.ModifiedUtc.ToString("yyyy-MM-ddTHH:mm:ss");
+            var created = file.CreatedUtc.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+            var modified = file.ModifiedUtc.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
 
             manifest.Append($"  <SPObject Id=\"{fileId}\" ObjectType=\"SPFile\" ParentId=\"{folderIds[dir]}\" ParentWebId=\"{TargetWebId}\" ParentWebUrl=\"{X(TargetWebUrl)}\" Url=\"{X(serverRelUrl)}\">\n");
             manifest.Append($"    <File Url=\"{X(webRelUrl)}\" Id=\"{fileId}\" ParentWebId=\"{TargetWebId}\" ParentWebUrl=\"{X(TargetWebUrl)}\" Name=\"{X(name)}\" ListItemIntId=\"{intId}\" ListId=\"{TargetListId}\" ParentId=\"{folderIds[dir]}\" TimeCreated=\"{created}\" TimeLastModified=\"{modified}\" Version=\"1.0\" NoExecute=\"true\" FileSize=\"{file.FileSize}\" Level=\"1\" ContentVersion=\"1\" FileValue=\"{dataName}\"{author}{editor} />\n");

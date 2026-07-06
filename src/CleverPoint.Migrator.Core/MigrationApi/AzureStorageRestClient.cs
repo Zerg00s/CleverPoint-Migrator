@@ -91,4 +91,21 @@ public class AzureStorageRestClient
         }
         return results;
     }
+
+    /// <summary>
+    /// Deletes one processed queue message. Without this, SPO's GET only hides a message
+    /// for its visibility timeout (~30 s), so an error event is re-read every poll into
+    /// duplicate log rows, or is lost in a race with the job-status fallback.
+    /// </summary>
+    public async Task DeleteQueueMessageAsync(string queueSasUri, string messageId, string popReceipt)
+    {
+        if (string.IsNullOrEmpty(messageId) || string.IsNullOrEmpty(popReceipt)) return;
+        var qIndex = queueSasUri.IndexOf('?');
+        var basePart = queueSasUri[..qIndex].TrimEnd('/');
+        var sas = queueSasUri[(qIndex + 1)..];
+        var url = $"{basePart}/messages/{messageId}?popreceipt={Uri.EscapeDataString(popReceipt)}&{sas}";
+        using var del = new HttpRequestMessage(HttpMethod.Delete, url);
+        del.Headers.Add("x-ms-version", ApiVersion);
+        await _http.SendAsync(del);   // best-effort; a 404 (already gone) is harmless
+    }
 }
