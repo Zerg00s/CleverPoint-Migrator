@@ -56,9 +56,10 @@ public class CopyOptions
     public string? UnresolvedUserFallback { get; set; }
 
     /// <summary>
-    /// Optional managed-metadata term remap: source term GUID -> target term GUID. Same-tenant
-    /// copies share a term store so the GUIDs are identical (leave null = identity). Cross-tenant
-    /// copies supply a map so taxonomy field values resolve to the equivalent target terms.
+    /// Optional OVERRIDE for the managed-metadata term remap (source term GUID -> target term GUID).
+    /// Leave null: TermStoreCopier replicates the term sets into the target store and derives this
+    /// map itself (identity same-tenant, and cross-tenant too whenever it can preserve the GUIDs).
+    /// Set it only to force specific terms onto pre-existing target terms.
     /// </summary>
     public Dictionary<Guid, Guid>? TermMap { get; set; }
 

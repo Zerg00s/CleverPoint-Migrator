@@ -54,6 +54,13 @@ public class FileCopier
 
     public Dictionary<string, string>? FieldNameMap { set => _itemCopier.FieldNameMap = value; }
 
+    /// <summary>Cross-tenant term GUID remap, forwarded to the inner item copier (libraries have taxonomy columns too).</summary>
+    public Dictionary<Guid, Guid>? TermMap
+    {
+        get => _itemCopier.TermMap;
+        set => _itemCopier.TermMap = value;
+    }
+
     /// <summary>Max server-stamped Modified seen by the scan (delta baseline source).</summary>
     public DateTime? LastScanMaxModifiedUtc => _itemCopier.LastScanMaxModifiedUtc;
 
@@ -344,6 +351,7 @@ public class FileCopier
             LookupMaps = _itemCopier.LookupMaps,
             CancellationToken = _itemCopier.CancellationToken,
             FieldNameMap = _itemCopier.FieldNameMap,
+            TermMap = _itemCopier.TermMap,
         };
         worker.SourceHashes = SourceHashes;   // share the parent's dictionary + its lock
         worker._hashLock = _hashLock;

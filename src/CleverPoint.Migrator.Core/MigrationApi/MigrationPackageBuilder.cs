@@ -19,7 +19,21 @@ public class PackageFile
     public DateTime ModifiedUtc { get; set; }
     public int AuthorMapId { get; set; } = -1;               // index into Users; -1 = omit
     public int EditorMapId { get; set; } = -1;
-    public Dictionary<string, string> TextFields { get; } = new();  // field internal name -> value
+
+    /// <summary>
+    /// Field values for this item's manifest &lt;Fields&gt; block. The Type must be the field's real
+    /// SharePoint type: the import deserializer parses Value according to it, so a taxonomy value
+    /// written as Type="Text" is stored as junk rather than a term reference.
+    /// </summary>
+    public List<PackageFieldValue> Fields { get; } = new();
+}
+
+/// <summary>One &lt;Field Name Value Type /&gt; row in the manifest.</summary>
+public class PackageFieldValue
+{
+    public string Name { get; set; } = "";    // internal name
+    public string Value { get; set; } = "";
+    public string Type { get; set; } = "Text";
 }
 
 public class PackageUser
@@ -38,6 +52,9 @@ public class PackageFolder
     public DateTime? ModifiedUtc { get; set; }
     public int AuthorMapId { get; set; } = -1;
     public int EditorMapId { get; set; } = -1;
+
+    /// <summary>Field values for the folder's list item -- folders carry columns (incl. taxonomy) too.</summary>
+    public List<PackageFieldValue> Fields { get; } = new();
 }
 
 /// <summary>
@@ -119,7 +136,8 @@ public class MigrationPackageBuilder
 
             manifest.Append($"  <SPObject Id=\"{itemId}\" ObjectType=\"SPListItem\" ParentId=\"{TargetListId}\" ParentWebId=\"{TargetWebId}\" ParentWebUrl=\"{X(TargetWebUrl)}\" Url=\"{X(serverRelUrl)}\">\n");
             manifest.Append($"    <ListItem FileUrl=\"{X(webRelUrl)}\" DocType=\"Folder\" ParentFolderId=\"{folderIds[parent]}\" Order=\"{intId * 100}\" Id=\"{itemId}\" ParentWebId=\"{TargetWebId}\" ParentListId=\"{TargetListId}\" Name=\"{X(name)}\" DirName=\"{X(dirName)}\" IntId=\"{intId}\" DocId=\"{id}\" Version=\"1.0\" ContentTypeId=\"0x0120\"{author}{editor} TimeCreated=\"{created}\" TimeLastModified=\"{modified}\" ModerationStatus=\"Approved\">\n");
-            manifest.Append("      <Fields />\n    </ListItem>\n");
+            AppendFields(manifest, meta?.Fields);
+            manifest.Append("    </ListItem>\n");
             manifest.Append("  </SPObject>\n");
             intId++;
         }
@@ -147,17 +165,7 @@ public class MigrationPackageBuilder
 
             manifest.Append($"  <SPObject Id=\"{itemId}\" ObjectType=\"SPListItem\" ParentId=\"{TargetListId}\" ParentWebId=\"{TargetWebId}\" ParentWebUrl=\"{X(TargetWebUrl)}\" Url=\"{X(serverRelUrl)}\">\n");
             manifest.Append($"    <ListItem FileUrl=\"{X(webRelUrl)}\" DocType=\"File\" ParentFolderId=\"{folderIds[dir]}\" Order=\"{intId * 100}\" Id=\"{itemId}\" ParentWebId=\"{TargetWebId}\" ParentListId=\"{TargetListId}\" Name=\"{X(name)}\" DirName=\"{X(dirName)}\" IntId=\"{intId}\" DocId=\"{fileId}\" Version=\"1.0\" ContentTypeId=\"0x0101\"{author}{editor} TimeCreated=\"{created}\" TimeLastModified=\"{modified}\" ModerationStatus=\"Approved\">\n");
-            if (file.TextFields.Count > 0)
-            {
-                manifest.Append("      <Fields>\n");
-                foreach (var (fieldName, value) in file.TextFields)
-                    manifest.Append($"        <Field Name=\"{X(fieldName)}\" Value=\"{X(value)}\" Type=\"Text\" />\n");
-                manifest.Append("      </Fields>\n");
-            }
-            else
-            {
-                manifest.Append("      <Fields />\n");
-            }
+            AppendFields(manifest, file.Fields);
             manifest.Append("    </ListItem>\n");
             manifest.Append("  </SPObject>\n");
             intId++;
@@ -220,6 +228,23 @@ public class MigrationPackageBuilder
         "<RootObjects xmlns=\"urn:deployment-rootobjectmap-schema\">\n" +
         $"  <RootObject Id=\"{TargetListId}\" Type=\"List\" ParentId=\"{TargetWebId}\" WebUrl=\"{X(TargetWebUrl)}\" Url=\"{X($"{TargetWebUrl}/{ListUrlLeaf}".Replace("//", "/"))}\" IsDependency=\"false\" />\n" +
         "</RootObjects>\n";
+
+    /// <summary>
+    /// The item's &lt;Fields&gt; block. Type matters: the import parses Value according to it, so a taxonomy
+    /// value written as Type="Text" is stored as a string rather than a term reference.
+    /// </summary>
+    private static void AppendFields(StringBuilder manifest, List<PackageFieldValue>? fields)
+    {
+        if (fields == null || fields.Count == 0)
+        {
+            manifest.Append("      <Fields />\n");
+            return;
+        }
+        manifest.Append("      <Fields>\n");
+        foreach (var f in fields)
+            manifest.Append($"        <Field Name=\"{X(f.Name)}\" Value=\"{X(f.Value)}\" Type=\"{X(f.Type)}\" />\n");
+        manifest.Append("      </Fields>\n");
+    }
 
     private static string ParentDir(string path) =>
         path.Contains('/') ? path[..path.LastIndexOf('/')] : "";

@@ -15,6 +15,13 @@ public class DependencyCopier
     private readonly ClientContext _sourceCtx;
     private readonly ClientContext _targetCtx;
 
+    /// <summary>
+    /// Term store replication for this copy. A taxonomy site column's SchemaXml embeds the SOURCE
+    /// SspId/TermSetId, so it cannot be pushed verbatim across tenants; those columns are created
+    /// bare and bound through these maps instead (identity wherever nothing had to move).
+    /// </summary>
+    public TermStoreCopier? TermStore { get; set; }
+
     public DependencyCopier(ClientContext sourceCtx, ClientContext targetCtx)
     {
         _sourceCtx = sourceCtx;
@@ -60,12 +67,22 @@ public class DependencyCopier
             }
             try
             {
-                var schema = System.Text.RegularExpressions.Regex.Replace(
-                    webField.SchemaXml, @"\s(SourceID|Version|ColName|RowOrdinal)=""[^""]*""", "");
-                _targetCtx.Web.Fields.AddFieldAsXml(schema, false, AddFieldOptions.AddFieldInternalNameHint);
-                await _targetCtx.ExecuteQueryAsync();
+                if (webField.TypeAsString is "TaxonomyFieldType" or "TaxonomyFieldTypeMulti")
+                {
+                    // Managed metadata: the SchemaXml carries the source SspId/TermSetId inside
+                    // <Customization>, which is meaningless in another tenant's term store. Create
+                    // the column bare and bind it to the target store instead.
+                    await CreateTaxonomySiteColumnAsync(webField, result);
+                }
+                else
+                {
+                    var schema = System.Text.RegularExpressions.Regex.Replace(
+                        webField.SchemaXml, @"\s(SourceID|Version|ColName|RowOrdinal)=""[^""]*""", "");
+                    _targetCtx.Web.Fields.AddFieldAsXml(schema, false, AddFieldOptions.AddFieldInternalNameHint);
+                    await _targetCtx.ExecuteQueryAsync();
+                    result.Add("SiteColumn", name, name, ItemCopyStatus.Copied, webField.Group);
+                }
                 targetWebFieldNames.Add(name);
-                result.Add("SiteColumn", name, name, ItemCopyStatus.Copied, webField.Group);
             }
             catch (Exception ex)
             {
@@ -74,6 +91,7 @@ public class DependencyCopier
         }
 
         if (!sourceList.ContentTypesEnabled) return;
+
 
         // Content types attached to the list: ensure on the target WEB with
         // the same id (the schema copier then attaches them to the list).
@@ -133,5 +151,47 @@ public class DependencyCopier
                 result.Add("ContentType", ct.Name, "", ItemCopyStatus.Warning, $"content type copy failed: {ex.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// Creates a managed-metadata SITE column on the target web, bound to the TARGET term store.
+    /// Mirrors SchemaCopier's list-level path: add a bare field (SharePoint provisions the companion
+    /// hidden note field), then set SspId/TermSetId/AnchorId from the term store maps.
+    /// </summary>
+    private async Task CreateTaxonomySiteColumnAsync(Field webField, CopyResult result)
+    {
+        var srcTax = _sourceCtx.CastTo<Microsoft.SharePoint.Client.Taxonomy.TaxonomyField>(webField);
+        _sourceCtx.Load(srcTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId, f => f.AllowMultipleValues,
+            f => f.Title, f => f.InternalName, f => f.TypeAsString, f => f.Id);
+        await _sourceCtx.ExecuteQueryAsync();
+
+        var sspId = srcTax.SspId;
+        var termSetId = srcTax.TermSetId;
+        var anchorId = srcTax.AnchorId;
+        if (TermStore is { Ready: true } ts)
+        {
+            // The maps are identity wherever nothing moved, so apply them unconditionally.
+            sspId = ts.TargetSspId;
+            termSetId = ts.MapTermSet(srcTax.TermSetId);
+            anchorId = anchorId == Guid.Empty ? Guid.Empty : ts.MapTerm(anchorId);
+        }
+
+        var xml = $"<Field Type='{srcTax.TypeAsString}' ID='{{{srcTax.Id}}}' "
+                + $"DisplayName='{System.Security.SecurityElement.Escape(srcTax.Title)}' "
+                + $"Name='{srcTax.InternalName}' StaticName='{srcTax.InternalName}' "
+                + $"Group='{System.Security.SecurityElement.Escape(webField.Group ?? "Migrated Columns")}' "
+                + $"{(srcTax.AllowMultipleValues ? "Mult='TRUE' " : "")}/>";
+
+        var created = _targetCtx.Web.Fields.AddFieldAsXml(xml, false, AddFieldOptions.AddFieldInternalNameHint);
+        var tgtTax = _targetCtx.CastTo<Microsoft.SharePoint.Client.Taxonomy.TaxonomyField>(created);
+        tgtTax.SspId = sspId;
+        tgtTax.TermSetId = termSetId;
+        tgtTax.AnchorId = anchorId;
+        tgtTax.AllowMultipleValues = srcTax.AllowMultipleValues;
+        tgtTax.Update();
+        await _targetCtx.ExecuteQueryAsync();
+
+        result.Add("SiteColumn", srcTax.InternalName, srcTax.InternalName, ItemCopyStatus.Copied,
+            $"managed metadata bound to term set {termSetId} in term store {sspId}");
     }
 }

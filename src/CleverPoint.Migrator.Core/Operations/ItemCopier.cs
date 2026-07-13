@@ -163,6 +163,8 @@ public class ItemCopier
         _batchTargetList = targetList;
         _addBaselineId = await MaxItemIdAsync(targetList);
 
+        await PruneUpsertMapAsync(targetList, options, result);
+
         // Page through all source items, folders included.
         var allItems = await LoadAllItemsAsync(sourceList, options);
         result.PlannedItems = allItems.Count;
@@ -740,6 +742,45 @@ public class ItemCopier
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Drops upsert mappings whose TARGET item no longer exists, so those source items are re-ADDED
+    /// instead of updated.
+    ///
+    /// A mapping points at a target item id from a previous run. If that item has since been deleted --
+    /// by a user, or because the whole list was recreated -- GetItemById still builds fine (it is lazy) and
+    /// the failure only surfaces when the batch executes: "Item does not exist. It may have been deleted by
+    /// another user." And because writes are batched, ONE dead id fails every update queued with it, not
+    /// just itself. Cheaper and safer to check the ids up front: one paged id-only read of the target.
+    /// </summary>
+    private async Task PruneUpsertMapAsync(List targetList, CopyOptions options, CopyResult result)
+    {
+        if (options.UpsertItemMap is not { Count: > 0 } map) return;
+
+        var live = new HashSet<int>();
+        var query = new CamlQuery
+        {
+            ViewXml = "<View Scope='RecursiveAll'><ViewFields><FieldRef Name='ID'/></ViewFields>" +
+                      "<RowLimit Paged='TRUE'>5000</RowLimit></View>",
+        };
+        do
+        {
+            var page = targetList.GetItems(query);
+            _targetCtx.Load(page, p => p.Include(i => i.Id), p => p.ListItemCollectionPosition);
+            await _targetCtx.ExecuteQueryAsync();
+            foreach (var item in page) live.Add(item.Id);
+            query.ListItemCollectionPosition = page.ListItemCollectionPosition;
+        } while (query.ListItemCollectionPosition != null);
+
+        var stale = map.Where(kv => !live.Contains(kv.Value)).Select(kv => kv.Key).ToList();
+        if (stale.Count == 0) return;
+
+        foreach (var sourceId in stale) map.Remove(sourceId);
+        Diagnostics.TraceLog.Write("Copy",
+            $"upsert map: {stale.Count} mapping(s) pointed at target items that no longer exist; those items will be re-added");
+        result.Add("List", targetList.Title, targetList.Title, ItemCopyStatus.Info,
+            $"{stale.Count} previously-copied item(s) no longer exist on the target; they will be re-added");
     }
 
     /// <summary>Remap a term GUID through the optional cross-tenant TermMap (identity by default).</summary>

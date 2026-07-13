@@ -18,13 +18,17 @@ See the animation below for a quick demo of how to use the tool.
 ## Download and run
 
 - Navigate to https://github.com/Zerg00s/CleverPoint-Migrator/releases/latest
-- download `CleverPoint.Migrator-win-x64-*.zip`
-- Unzip the archive
+- download and install `CleverPoint.Migrator-*.msi`
+- Run `CleverPoint Migrator`
+
+### Portable version
+
+- download and unzip `CleverPoint.Migrator-win-x64-*.zip`
 - Run `CleverPoint.Migrator.Ux.exe`
 
 ![Run executable](/IMG/RunExe.png)
 
-## Notes for Administrators
+## Notes for Contributors
 
 ### Local Dev
 
@@ -37,5 +41,5 @@ dotnet run --project src\CleverPoint.Migrator.Ux
 We properly sign each release with a certificate. To do this, you need to run the following command in PowerShell:
 
 ```powershell
-.\Sign-App.ps1 -Version 1.0.2 -Release
+.\Sign-App.ps1 -Version 1.0.12 -Release
 ```

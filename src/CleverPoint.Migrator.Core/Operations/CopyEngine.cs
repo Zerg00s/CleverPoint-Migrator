@@ -24,11 +24,19 @@ public static class CopyEngine
         using var targetCtx = target.CreateContext();
 
         var sourceList = sourceCtx.Web.Lists.GetByTitle(sourceListTitle);
-        sourceCtx.Load(sourceList, l => l.BaseType, l => l.Title, l => l.BaseTemplate);
+        sourceCtx.Load(sourceList, l => l.BaseType, l => l.Title, l => l.BaseTemplate,
+            l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString));
         await sourceCtx.ExecuteQueryAsync();
 
         var users = new UserResolver(sourceCtx, targetCtx, userMap, options.UnresolvedUserFallback);
         await users.PrimeSourceUsersAsync();
+
+        // Managed metadata before any schema work: cross-tenant the target term store is a different
+        // object, so the term sets this list depends on must exist there BEFORE columns are bound to
+        // them and BEFORE item values carrying term GUIDs are written. Same-tenant this is a no-op.
+        var termStore = new TermStoreCopier(sourceCtx, targetCtx);
+        await termStore.PrepareAsync(sourceList, result);
+        var termMap = options.TermMap ?? termStore.ItemTermMap();
 
         // Schema dependencies first (site columns, content types on the
         // target web), skipped when source and target are the same web.
@@ -38,12 +46,24 @@ public static class CopyEngine
         await targetCtx.ExecuteQueryAsync();
         if (sourceCtx.Web.Id != targetCtx.Web.Id)
         {
-            var deps = new DependencyCopier(sourceCtx, targetCtx);
+            var deps = new DependencyCopier(sourceCtx, targetCtx) { TermStore = termStore };
             await deps.CopyListDependenciesAsync(sourceList, options, result);
         }
 
-        var schema = new SchemaCopier(sourceCtx, targetCtx);
+        var schema = new SchemaCopier(sourceCtx, targetCtx) { TermStore = termStore };
         var targetList = await schema.CopyAsync(sourceList, options, result);
+
+        // The target list was created by THIS run, so any upsert map carried over from an earlier run
+        // refers to items in the list that used to be there. Updating by those ids fails with "Item does
+        // not exist. It may have been deleted by another user." -- start clean and re-add everything.
+        if (schema.CreatedTargetList && options.UpsertItemMap is { Count: > 0 })
+        {
+            Diagnostics.TraceLog.Write("Copy",
+                $"target list '{options.TargetListTitle}' was recreated; discarding {options.UpsertItemMap.Count} stale item mapping(s)");
+            result.Add("List", sourceListTitle, options.TargetListTitle, ItemCopyStatus.Info,
+                "target list was recreated: previous item mappings discarded, items re-added");
+            options.UpsertItemMap = null;
+        }
 
         // Lookup translation maps: identity for same-web lookups, otherwise
         // match source and target lookup items by their display value.
@@ -87,6 +107,7 @@ public static class CopyEngine
                 LookupMaps = lookupMaps,
                 CancellationToken = cancellationToken,
                 FieldNameMap = options.FieldMap.Count > 0 ? options.FieldMap : null,
+                TermMap = termMap,
             };
             copier.SetDeltaSkipLog(result);
             await copier.CopyAsync(sourceList, targetList, options, result);
@@ -102,7 +123,7 @@ public static class CopyEngine
                 DeltaSkipLog = result,
                 ContentTypeMap = schema.ContentTypeMap,
                 FieldNameMap = options.FieldMap.Count > 0 ? options.FieldMap : null,
-                TermMap = options.TermMap,
+                TermMap = termMap,
             };
             if (options.CopyPermissions)
             {

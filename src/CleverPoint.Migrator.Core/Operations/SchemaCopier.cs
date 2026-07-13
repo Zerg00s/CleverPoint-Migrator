@@ -8,11 +8,13 @@ namespace CleverPoint.Migrator.Core.Operations;
 /// <summary>
 /// Creates/updates the target list so its schema matches the source list:
 /// base template, custom fields (via SchemaXml), core settings, and views.
-/// Lookup and taxonomy fields are out of scope and recorded as warnings.
+/// Lookup columns are rewired to the target's copy of the referenced list;
+/// taxonomy columns are bound to the target term store via <see cref="TermStore"/>.
 /// </summary>
 public partial class SchemaCopier
 {
-    private static readonly HashSet<string> SkippedFieldTypes = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>Managed-metadata columns: created and bound through the term store maps, not raw SchemaXml.</summary>
+    private static readonly HashSet<string> TaxonomyFieldTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "TaxonomyFieldType", "TaxonomyFieldTypeMulti",
     };
@@ -31,6 +33,20 @@ public partial class SchemaCopier
 
     /// <summary>Lookup fields successfully wired up on the target: (internal name, source list id, target list id, show field).</summary>
     public List<(string InternalName, Guid SourceListId, Guid TargetListId, string ShowField)> LookupFields { get; } = new();
+
+    /// <summary>
+    /// Term store replication for this copy. Supplies the TARGET SspId and the source->target term
+    /// set/term maps that taxonomy columns bind to. The maps are identity wherever nothing moved, so
+    /// they apply unconditionally; null only when no term store could be opened.
+    /// </summary>
+    public TermStoreCopier? TermStore { get; set; }
+
+    /// <summary>
+    /// True when the target list did not exist and was created by this run. A caller holding a persisted
+    /// upsert map from an earlier run must throw it away: those target ids belong to the list that used to
+    /// be there, and updating by them would fail with "Item does not exist".
+    /// </summary>
+    public bool CreatedTargetList { get; private set; }
 
     public SchemaCopier(ClientContext sourceCtx, ClientContext targetCtx)
     {
@@ -113,6 +129,7 @@ public partial class SchemaCopier
                 creation.Url = options.TargetListUrl;
             targetList = targetWeb.Lists.Add(creation);
             await _targetCtx.ExecuteQueryAsync();
+            CreatedTargetList = true;
             result.Add("List", sourceList.Title, options.TargetListTitle, ItemCopyStatus.Copied, $"created (template {sourceList.BaseTemplate})");
         }
 
@@ -150,14 +167,18 @@ public partial class SchemaCopier
                 // Lookup fields that already exist still need translation maps.
                 if (field.TypeAsString is "Lookup" or "LookupMulti")
                     await RewireLookupSchemaAsync(field, field.SchemaXml, targetLists, result);
+                // A taxonomy column left over from an earlier run may be bound to the SOURCE term
+                // store (a dead column). Re-point it at the target store rather than trusting it.
+                if (TaxonomyFieldTypes.Contains(field.TypeAsString))
+                    await RebindTaxonomyFieldAsync(field, targetList, result);
                 continue;
             }
 
-            if (SkippedFieldTypes.Contains(field.TypeAsString))
+            if (TaxonomyFieldTypes.Contains(field.TypeAsString))
             {
-                // Managed metadata: create the column on the target and bind it to the same
-                // term set. Same-tenant copies share the term store, so the binding (SspId +
-                // TermSetId) carries over and stored term GUIDs stay valid.
+                // Managed metadata: create the column and bind it to the TARGET term store. Same-tenant
+                // copies share the store, so the source SspId/TermSetId already are the target's and the
+                // maps are identity; cross-tenant copies bind to the term set TermStoreCopier replicated.
                 await CreateTaxonomyFieldAsync(field, targetList, result);
                 targetFieldNames.Add(field.InternalName);
                 continue;
@@ -215,10 +236,14 @@ public partial class SchemaCopier
     }
 
     /// <summary>
-    /// Creates a managed-metadata (taxonomy) column on the target list and binds it to the
-    /// source column's term set. A bare TaxonomyFieldType field is added (SharePoint auto-creates
-    /// the companion hidden note field), then SspId/TermSetId/AnchorId are copied so the column
-    /// points at the same term set. Same tenant = same GUIDs, so the binding is valid as-is.
+    /// Creates a managed-metadata (taxonomy) column on the target list and binds it to the TARGET
+    /// term store. A bare TaxonomyFieldType field is added (SharePoint auto-creates the companion
+    /// hidden note field), then SspId/TermSetId/AnchorId are set.
+    ///
+    /// The binding must use the target store's ids, NOT the source's: cross-tenant the two stores are
+    /// different objects, so copying the source SspId across produces a column pointing at a term store
+    /// that does not exist in the target tenant. <see cref="TermStore"/> supplies the target SspId and
+    /// the term set map (identity wherever nothing had to move).
     /// </summary>
     private async Task CreateTaxonomyFieldAsync(Field sourceField, List targetList, CopyResult result)
     {
@@ -229,25 +254,125 @@ public partial class SchemaCopier
                 f => f.AllowMultipleValues, f => f.Title, f => f.InternalName, f => f.TypeAsString);
             await _sourceCtx.ExecuteQueryAsync();
 
+            var (sspId, termSetId, anchorId) = TargetBinding(srcTax);
+
             var xml = $"<Field Type='{srcTax.TypeAsString}' DisplayName='{System.Security.SecurityElement.Escape(srcTax.Title)}' "
                     + $"Name='{srcTax.InternalName}' StaticName='{srcTax.InternalName}' "
                     + $"{(srcTax.AllowMultipleValues ? "Mult='TRUE' " : "")}/>";
-            var created = targetList.Fields.AddFieldAsXml(xml, true, AddFieldOptions.AddFieldInternalNameHint);
-            var tgtTax = _targetCtx.CastTo<TaxonomyField>(created);
-            tgtTax.SspId = srcTax.SspId;
-            tgtTax.TermSetId = srcTax.TermSetId;
-            tgtTax.AnchorId = srcTax.AnchorId;
-            tgtTax.AllowMultipleValues = srcTax.AllowMultipleValues;
-            tgtTax.Update();
+            targetList.Fields.AddFieldAsXml(xml, true, AddFieldOptions.AddFieldInternalNameHint);
             await _targetCtx.ExecuteQueryAsync();
+
+            // The binding is a SECOND round trip on purpose. Creating the column and updating it in one
+            // batch intermittently fails with "Column '<name>' does not exist. It may have been deleted by
+            // another user." -- field provisioning (the column plus its companion hidden note field) is not
+            // immediately consistent, and the Update can execute before it has settled.
+            await BindTaxonomyFieldAsync(targetList, srcTax.InternalName, sspId, termSetId, anchorId,
+                srcTax.AllowMultipleValues);
+
             result.Add("Field", sourceField.InternalName, sourceField.InternalName, ItemCopyStatus.Copied,
-                $"managed metadata bound to term set {srcTax.TermSetId}");
+                $"managed metadata bound to term set {termSetId} in term store {sspId}");
         }
         catch (Exception ex)
         {
-            result.Add("Field", sourceField.InternalName, "", ItemCopyStatus.Warning,
+            result.Add("Field", sourceField.InternalName, "", ItemCopyStatus.Failed,
                 $"managed metadata column could not be created: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Re-points an EXISTING target taxonomy column at the target term store. Without this, a column
+    /// left behind by an earlier (broken or same-tenant) run keeps its old SspId/TermSetId and every
+    /// item write fails with "The given guid does not exist in the term store". No-op when the binding
+    /// is already correct.
+    /// </summary>
+    private async Task RebindTaxonomyFieldAsync(Field sourceField, List targetList, CopyResult result)
+    {
+        try
+        {
+            var srcTax = _sourceCtx.CastTo<TaxonomyField>(sourceField);
+            _sourceCtx.Load(srcTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId, f => f.InternalName);
+            await _sourceCtx.ExecuteQueryAsync();
+
+            var (sspId, termSetId, anchorId) = TargetBinding(srcTax);
+
+            var existing = targetList.Fields.GetByInternalNameOrTitle(sourceField.InternalName);
+            var tgtTax = _targetCtx.CastTo<TaxonomyField>(existing);
+            _targetCtx.Load(tgtTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId, f => f.AllowMultipleValues);
+            await _targetCtx.ExecuteQueryAsync();
+
+            if (tgtTax.SspId == sspId && tgtTax.TermSetId == termSetId && tgtTax.AnchorId == anchorId)
+            {
+                result.Add("Field", sourceField.InternalName, sourceField.InternalName, ItemCopyStatus.Skipped,
+                    "managed metadata binding already correct");
+                return;
+            }
+
+            Diagnostics.TraceLog.Write("Taxonomy",
+                $"rebinding '{sourceField.InternalName}': SspId {tgtTax.SspId:D} -> {sspId:D}, term set {tgtTax.TermSetId:D} -> {termSetId:D}");
+
+            await BindTaxonomyFieldAsync(targetList, sourceField.InternalName, sspId, termSetId, anchorId,
+                tgtTax.AllowMultipleValues);
+            result.Add("Field", sourceField.InternalName, sourceField.InternalName, ItemCopyStatus.Copied,
+                $"managed metadata rebound to term set {termSetId} in term store {sspId}");
+        }
+        catch (Exception ex)
+        {
+            result.Add("Field", sourceField.InternalName, "", ItemCopyStatus.Failed,
+                $"managed metadata column could not be rebound: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Points a target taxonomy column at a term set, retrying while SharePoint still reports the column as
+    /// missing. A freshly created taxonomy column is not immediately readable: SharePoint provisions it and
+    /// its companion hidden note field asynchronously, and a bind that lands in that window fails with
+    /// "Column 'name' does not exist. It may have been deleted by another user." Retrying is the fix;
+    /// giving up would leave an unbound (dead) column behind.
+    /// </summary>
+    private async Task BindTaxonomyFieldAsync(List targetList, string internalName,
+        Guid sspId, Guid termSetId, Guid anchorId, bool multi)
+    {
+        const int attempts = 5;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                var field = targetList.Fields.GetByInternalNameOrTitle(internalName);
+                var tax = _targetCtx.CastTo<TaxonomyField>(field);
+                tax.SspId = sspId;
+                tax.TermSetId = termSetId;
+                tax.AnchorId = anchorId;
+                tax.AllowMultipleValues = multi;
+                tax.Update();
+                await _targetCtx.ExecuteQueryAsync();
+                return;
+            }
+            catch (Exception ex) when (attempt < attempts && IsNotYetVisible(ex))
+            {
+                Diagnostics.TraceLog.Write("Taxonomy",
+                    $"column '{internalName}' not visible yet (attempt {attempt}/{attempts}): {ex.Message}");
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2));
+            }
+        }
+    }
+
+    /// <summary>The transient "just created it, cannot see it yet" shape.</summary>
+    private static bool IsNotYetVisible(Exception ex) =>
+        ex.Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The (SspId, TermSetId, AnchorId) a target column must carry for a given source column. The maps
+    /// are identity wherever nothing moved (same store, GUID preserved), so this is safe to apply
+    /// unconditionally -- do NOT shortcut on "same tenant": a site-collection term set gets re-homed
+    /// (and re-GUIDed) even inside one tenant when the copy crosses site collections.
+    /// </summary>
+    private (Guid SspId, Guid TermSetId, Guid AnchorId) TargetBinding(TaxonomyField srcTax)
+    {
+        if (TermStore is not { Ready: true } ts)
+            return (srcTax.SspId, srcTax.TermSetId, srcTax.AnchorId);
+
+        var anchorId = srcTax.AnchorId == Guid.Empty ? Guid.Empty : ts.MapTerm(srcTax.AnchorId);
+        return (ts.TargetSspId, ts.MapTermSet(srcTax.TermSetId), anchorId);
     }
 
     /// <summary>Source list CT string id -> target list CT string id (same Name). Drives per-item CT assignment.</summary>

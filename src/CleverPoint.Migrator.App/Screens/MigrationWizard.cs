@@ -398,13 +398,15 @@ public class MigrationWizard : Form
         _cts = new CancellationTokenSource();
         _status.Text = "Running...";
 
+        var useApi = _engine.SelectedIndex == 1;
+
         using var store = new HistoryStore(AppSettings.HistoryDbPath);
         var runId = store.StartRun(new MigrationRun
         {
             Name = $"{_sourceList.Text} -> {targetTitle}",
             SourceUrl = _sourceSite.Text, SourceList = _sourceList.Text,
             TargetUrl = _targetSite.Text, TargetList = targetTitle,
-            Engine = _engine.SelectedIndex == 1 ? "MigrationApi" : "Classic",
+            Engine = useApi ? "MigrationApi" : "Classic",
             ScopeJson = _sourceFolderScope != null || _selectedPaths.Count > 0 || _itemIds.Count > 0
                 ? System.Text.Json.JsonSerializer.Serialize(new ScopePayload(_sourceFolderScope, _selectedPaths, _itemIds))
                 : null,
@@ -535,7 +537,7 @@ public class MigrationWizard : Form
 
             await Task.Run(async () =>
             {
-                if (_engine.SelectedIndex == 1)
+                if (useApi)
                 {
                     var engine = new MigrationApiEngine(source, target);
                     var apiResult = await engine.CopyLibraryAsync(_sourceList.Text, options);
@@ -550,7 +552,7 @@ public class MigrationWizard : Form
 
             // Self-healing (Settings > Advanced, off by default): re-run
             // incrementals until clean and/or re-copy corrupt files.
-            if (_engine.SelectedIndex == 0
+            if (!useApi
                 && ((result.Failed > 0 && _settings.SelfHealAutoRetry) || _settings.SelfHealRepairCorrupt))
             {
                 _status.Text = "Self-healing pass...";

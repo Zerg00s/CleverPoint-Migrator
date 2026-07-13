@@ -42,7 +42,19 @@ public class MigrationApiEngine
         var users = new UserResolver(sourceCtx, targetCtx, null, options.UnresolvedUserFallback);
         await users.PrimeSourceUsersAsync();
 
-        var schema = new SchemaCopier(sourceCtx, targetCtx);
+        // Managed metadata before the schema: the target term store is a different object cross-tenant, so
+        // the term sets must exist there BEFORE columns are bound to them. Without this the API engine's
+        // taxonomy columns bind to the SOURCE SspId and are dead on arrival.
+        sourceCtx.Load(sourceList, l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString));
+        await sourceCtx.ExecuteQueryAsync();
+        var termStore = new Operations.TermStoreCopier(sourceCtx, targetCtx);
+        await termStore.PrepareAsync(sourceList, result);
+        var termMap = options.TermMap ?? termStore.ItemTermMap();
+        string MapTerm(string guid) =>
+            termMap != null && Guid.TryParse(guid, out var g) && termMap.TryGetValue(g, out var m)
+                ? m.ToString() : guid;
+
+        var schema = new SchemaCopier(sourceCtx, targetCtx) { TermStore = termStore };
         var targetList = await schema.CopyAsync(sourceList, options, result);
 
         // Structure-only copy: the list + schema are created above; skip all content.
@@ -69,6 +81,18 @@ public class MigrationApiEngine
         var listLeaf = targetList.RootFolder.ServerRelativeUrl[(targetCtx.Web.ServerRelativeUrl.TrimEnd('/').Length + 1)..];
         var textFieldNames = copyFields.Where(f => f.TypeAsString is "Text" or "Note" or "Choice")
             .Select(f => f.InternalName).ToList();
+
+        // Managed metadata. The import bypasses the taxonomy event receivers, so the package must carry
+        // the stored representation itself: the lookup into the site's TaxonomyHiddenList ("WssId;#Label|
+        // Guid") plus the companion hidden note field. The mapper seeds a WssId for every term first --
+        // a term never used in the target site has no row to point at.
+        var taxonomy = new TaxonomyPackageMapper(targetCtx, targetList);
+        await taxonomy.PrimeAsync(copyFields, allItems, MapTerm,
+            options.FieldMap.Count > 0 ? options.FieldMap : null, msg => OnProgress?.Invoke(msg));
+
+        if (taxonomy.UnresolvedTerms.Count > 0)
+            result.Add("Field", string.Join(", ", taxonomy.UnresolvedTerms), "", ItemCopyStatus.Warning,
+                $"{taxonomy.UnresolvedTerms.Count} term(s) could not be indexed in the target site; those values were not written");
 
         // ---- Shared chunk state ----
         var folderIds = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
@@ -112,14 +136,20 @@ public class MigrationApiEngine
         foreach (var item in folderItems)
         {
             var rel = ((string)item["FileRef"])[(sourceRoot.Length + 1)..];
-            folderMeta.Add(new PackageFolder
+            var folder = new PackageFolder
             {
                 LibraryRelativePath = rel,
                 CreatedUtc = Operations.ItemCopier.ReadUtc(item["Created"]),
                 ModifiedUtc = Operations.ItemCopier.ReadUtc(item["Modified"]),
                 AuthorMapId = await MapUserAsync(item.FieldValues.GetValueOrDefault("Author")),
                 EditorMapId = await MapUserAsync(item.FieldValues.GetValueOrDefault("Editor")),
-            });
+            };
+            // Folders carry columns too, taxonomy included.
+            foreach (var fieldName in textFieldNames)
+                if (item.FieldValues.TryGetValue(fieldName, out var v) && v is string s && s.Length > 0)
+                    folder.Fields.Add(new PackageFieldValue { Name = fieldName, Value = s, Type = "Text" });
+            folder.Fields.AddRange(taxonomy.Emit(item, MapTerm));
+            folderMeta.Add(folder);
         }
         var allFolderPaths = folderMeta.Select(f => f.LibraryRelativePath)
             .Concat(fileItems.Select(i => ParentDir(((string)i["FileRef"])[(sourceRoot.Length + 1)..])).Where(d => d.Length > 0))
@@ -205,7 +235,8 @@ public class MigrationApiEngine
                 };
                 foreach (var fieldName in textFieldNames)
                     if (item.FieldValues.TryGetValue(fieldName, out var v) && v is string s && s.Length > 0)
-                        packageFile.TextFields[fieldName] = s;
+                        packageFile.Fields.Add(new PackageFieldValue { Name = fieldName, Value = s, Type = "Text" });
+                packageFile.Fields.AddRange(taxonomy.Emit(item, MapTerm));
                 builder.Files.Add(packageFile);
             }
 

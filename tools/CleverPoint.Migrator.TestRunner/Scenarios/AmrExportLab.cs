@@ -16,8 +16,12 @@ public static class AmrExportLab
 {
     public static async Task RunAsync()
     {
-        var site = Program.TestSite ?? await TestAssets.EnsureTestSiteAsync(Program.Source);
-        Program.TestSite = site;
+        // AMR_SITE=source exports from the source site collection itself (where the taxonomy fixtures
+        // live); otherwise the shared migtest subsite, as before.
+        var site = Environment.GetEnvironmentVariable("AMR_SITE") == "source"
+            ? Program.Source
+            : Program.TestSite ?? await TestAssets.EnsureTestSiteAsync(Program.Source);
+        if (Environment.GetEnvironmentVariable("AMR_SITE") != "source") Program.TestSite = site;
         var azure = new AzureStorageRestClient();
 
         using var ctx = site.CreateContext();
