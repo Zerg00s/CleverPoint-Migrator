@@ -28,6 +28,41 @@ See the animation below for a quick demo of how to use the tool.
 
 ![Run executable](/IMG/RunExe.png)
 
+## Frequently Asked Questions
+
+**Is it secure? Where does my data go?**
+Everything runs locally on your computer. Nothing is sent to any third-party companies.
+
+**Does it work across tenants?**
+Yes. Tenant-to-tenant migrations work, including managed metadata as of release 1.0.12.
+
+**How many files can it handle?**
+There is no built-in restriction. 100K+ files should work just fine.
+
+**What about throttling?**
+Throttling won't interrupt the copy. When Microsoft throttles a request, it sends back the recommended wait time, and the tool waits and retries.
+
+**What if the migration gets interrupted?**
+Re-run it. The tool also compares file sizes to detect corruption and automatically re-migrates any file that fails the check. You can download a full migration report listing every file, so everything is accounted for.
+
+**Does it migrate permissions?**
+It migrates file and folder permissions, but not site owners or members.
+
+**Does it support site pages?**
+Yes, it does.
+
+**Does it use PnP under the hood?**
+No, but it uses the same API as PnP.
+
+**How much does it cost?**
+It's free. If someone needs additional support, I am happy to provide that.
+
+## What It Is Not
+
+This tool is for moving lists, libraries, folders, and files between SharePoint Online and OneDrive sites. It does not migrate entire sites, and it does not support SharePoint Server, file shares, Google, Exchange, or Teams. For file share migrations, use the free Microsoft SharePoint Migration Tool (SPMT). For full-scale tenant migrations with M365 groups, Teams, and mailboxes, I still use ShareGate.
+
+CleverPoint Migrator is not trying to replace ShareGate, AvePoint, or SPMT. It fills the gap in between: the simple, common case of moving content around SharePoint without buying anything.
+
 ## Notes for Contributors
 
 ### Local Dev
