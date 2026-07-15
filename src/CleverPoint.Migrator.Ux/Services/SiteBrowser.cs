@@ -37,8 +37,13 @@ public record SpPrincipal(string Login, string Title, string Email, bool IsGroup
     }
 }
 public record SpFolderEntry(string Name, string ServerRelativeUrl, bool IsFolder, long Size, int ItemId = 0,
-    string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "")
+    string Created = "", string CreatedBy = "", string Modified = "", string ModifiedBy = "",
+    DateTime? CreatedUtc = null, DateTime? ModifiedUtc = null)
 {
+    // Created/Modified are FRIENDLY DISPLAY strings (locale-formatted, e.g. "12/06/2026 07:55"). They must
+    // NOT be used to sort: a string sort orders "12/06/2026" by its leading day, which on a dd/MM locale
+    // makes the Modified column appear to sort by day-of-month. CreatedUtc/ModifiedUtc carry the real
+    // instant, and the grid sorts by those.
     /// <summary>UI selection state (source-pane checkbox).</summary>
     public bool Selected { get; set; }
 
@@ -242,6 +247,10 @@ public class SiteBrowser
                 parameters = new
                 {
                     RenderOptions = 2,
+                    // Return Created/Modified as ISO-8601 UTC instead of the locale-friendly display string,
+                    // so we can both sort by the real instant and format the display ourselves (consistently
+                    // with the list-items pane). Without this the grid sorts date STRINGS -- by leading day.
+                    DatesInUtc = true,
                     FolderServerRelativeUrl = folderServerRelativeUrl,
                     Paging = paging,
                     // Default scope (NOT RecursiveAll) returns just this folder's direct
@@ -264,9 +273,12 @@ public class SiteBrowser
                 if (name == "Forms") continue;
                 var isFolder = row.TryGetProperty("FSObjType", out var t) && t.GetString() == "1";
                 var size = row.TryGetProperty("File_x0020_Size", out var s) && long.TryParse(s.GetString(), out var l) ? l : 0;
+                var createdUtc = ParseWhen(row, "Created");
+                var modifiedUtc = ParseWhen(row, "Modified");
                 entries.Add(new SpFolderEntry(name, row.GetProperty("FileRef").GetString() ?? "", isFolder, size,
-                    Created: Friendly(row, "Created"), CreatedBy: Person(row, "Author"),
-                    Modified: Friendly(row, "Modified"), ModifiedBy: Person(row, "Editor")));
+                    Created: FormatWhen(createdUtc), CreatedBy: Person(row, "Author"),
+                    Modified: FormatWhen(modifiedUtc), ModifiedBy: Person(row, "Editor"),
+                    CreatedUtc: createdUtc, ModifiedUtc: modifiedUtc));
             }
             paging = doc.RootElement.TryGetProperty("NextHref", out var nh) && nh.ValueKind == JsonValueKind.String
                 ? nh.GetString()!.TrimStart('?') : null;
@@ -331,22 +343,33 @@ public class SiteBrowser
             {
                 var id = e.GetProperty("Id").GetInt32();
                 var title = e.TryGetProperty("Title", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString()! : $"(item {id})";
+                var createdUtc = ParseWhen(e, "Created");
+                var modifiedUtc = ParseWhen(e, "Modified");
                 items.Add(new SpFolderEntry(title, "", false, 0, id,
-                    Created: ItemWhen(e, "Created"), CreatedBy: ItemWho(e, "Author"),
-                    Modified: ItemWhen(e, "Modified"), ModifiedBy: ItemWho(e, "Editor")));
+                    Created: FormatWhen(createdUtc), CreatedBy: ItemWho(e, "Author"),
+                    Modified: FormatWhen(modifiedUtc), ModifiedBy: ItemWho(e, "Editor"),
+                    CreatedUtc: createdUtc, ModifiedUtc: modifiedUtc));
             }
             url = doc.RootElement.TryGetProperty("odata.nextLink", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString()! : "";
         }
         return items;
     }
 
-    private static string ItemWhen(JsonElement e, string field) =>
-        e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String && DateTime.TryParse(v.GetString(), out var dt)
-            ? dt.ToLocalTime().ToString("g") : "";
+    private static string ItemWhen(JsonElement e, string field) => FormatWhen(ParseWhen(e, field));
+
+    /// <summary>
+    /// The real instant from an ISO-8601 date field (Created/Modified come back as UTC ISO from both the
+    /// REST items endpoint and RenderListDataAsStream when DatesInUtc is set). Parsed invariantly with
+    /// RoundtripKind so the offset is honoured and the value is culture-independent -- this is the SORT key.
+    /// </summary>
+    private static DateTime? ParseWhen(JsonElement e, string field) =>
+        e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String
+            ? Core.Model.DateText.TryParseIso(v.GetString()) : null;
+
+    /// <summary>Friendly display of an instant in the viewer's local time (same "g" format across every pane).</summary>
+    private static string FormatWhen(DateTime? dt) => Core.Model.DateText.FormatLocal(dt);
     private static string ItemWho(JsonElement e, string field) =>
         e.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Object && v.TryGetProperty("Title", out var t) ? t.GetString() ?? "" : "";
-    private static string Friendly(JsonElement row, string field) =>
-        row.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
     private static string Person(JsonElement row, string field) =>
         row.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Array && v.GetArrayLength() > 0
             && v[0].TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";

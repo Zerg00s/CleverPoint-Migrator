@@ -977,8 +977,9 @@ public class ItemCopier
 
         var (createdSite, modifiedSite) = await ToSiteLocalAsync(
             ReadUtc(sourceItem["Created"]), ReadUtc(sourceItem["Modified"]));
-        formValues.Add(new ListItemFormUpdateValue { FieldName = "Created", FieldValue = createdSite.ToString("M/d/yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture) });
-        formValues.Add(new ListItemFormUpdateValue { FieldName = "Modified", FieldValue = modifiedSite.ToString("M/d/yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture) });
+        var culture = await TargetCultureAsync();
+        formValues.Add(new ListItemFormUpdateValue { FieldName = "Created", FieldValue = Model.DateText.ForFormUpdate(createdSite, culture) });
+        formValues.Add(new ListItemFormUpdateValue { FieldName = "Modified", FieldValue = Model.DateText.ForFormUpdate(modifiedSite, culture) });
 
         var validation = targetFolderItem.ValidateUpdateListItem(formValues, false, "", false, false, "");
         await _targetCtx.ExecuteQueryAsync();
@@ -1004,8 +1005,9 @@ public class ItemCopier
             formValues.Add(new ListItemFormUpdateValue { FieldName = "Editor", FieldValue = $"[{{\"Key\":\"{editor.Value.Login}\"}}]" });
         var (createdSite, modifiedSite) = await ToSiteLocalAsync(
             ReadUtc(sourceItem["Created"]), ReadUtc(sourceItem["Modified"]));
-        formValues.Add(new ListItemFormUpdateValue { FieldName = "Created", FieldValue = createdSite.ToString("M/d/yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture) });
-        formValues.Add(new ListItemFormUpdateValue { FieldName = "Modified", FieldValue = modifiedSite.ToString("M/d/yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture) });
+        var culture = await TargetCultureAsync();
+        formValues.Add(new ListItemFormUpdateValue { FieldName = "Created", FieldValue = Model.DateText.ForFormUpdate(createdSite, culture) });
+        formValues.Add(new ListItemFormUpdateValue { FieldName = "Modified", FieldValue = Model.DateText.ForFormUpdate(modifiedSite, culture) });
 
         // bNewDocumentUpdate=true: a document update, no version bump.
         var validation = targetItem.ValidateUpdateListItem(formValues, true, "", false, false, "");
@@ -1045,6 +1047,7 @@ public class ItemCopier
     }
 
     private Microsoft.SharePoint.Client.TimeZone? _targetTimeZone;
+    private System.Globalization.CultureInfo? _targetCulture;
 
     /// <summary>Converts UTC values to the target web's regional timezone (for form-update date strings).</summary>
     private async Task<(DateTime Created, DateTime Modified)> ToSiteLocalAsync(DateTime createdUtc, DateTime modifiedUtc)
@@ -1054,5 +1057,19 @@ public class ItemCopier
         var m = _targetTimeZone.UTCToLocalTime(modifiedUtc);
         await _targetCtx.ExecuteQueryAsync();
         return (c.Value, m.Value);
+    }
+
+    /// <summary>
+    /// The target web's locale culture, cached. ValidateUpdateListItem parses date strings using the web's
+    /// regional settings, so form-update dates MUST be formatted in this culture -- not a fixed US format,
+    /// which a dd/MM web reads with day and month swapped.
+    /// </summary>
+    private async Task<System.Globalization.CultureInfo> TargetCultureAsync()
+    {
+        if (_targetCulture != null) return _targetCulture;
+        _targetCtx.Load(_targetCtx.Web.RegionalSettings, r => r.LocaleId);
+        await _targetCtx.ExecuteQueryAsync();
+        _targetCulture = Model.DateText.CultureForLcid((int)_targetCtx.Web.RegionalSettings.LocaleId);
+        return _targetCulture;
     }
 }

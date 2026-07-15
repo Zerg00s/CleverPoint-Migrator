@@ -131,7 +131,11 @@
                         </div>
                     </TemplateColumn>
                     <PropertyColumn Property="@(i => FormatSize(i))" Title="Size" Align="Align.End" />
-                    <PropertyColumn Property="@(i => i.Modified)" Title="Modified" Sortable="true" Align="Align.End" />
+                    @* Display the friendly string, but sort by the real instant -- a string sort of a
+                       locale-formatted date orders by its leading day (dd/MM locales sort by day-of-month). *@
+                    <TemplateColumn Title="Modified" Sortable="true" Align="Align.End" SortBy="@ModifiedSort">
+                        @context.Modified
+                    </TemplateColumn>
                     <PropertyColumn Property="@(i => i.ModifiedBy)" Title="Modified by" Sortable="true" Align="Align.End" />
                 </FluentDataGrid>
             </div>
@@ -143,6 +147,11 @@
 <AddConnectionDialog @ref="_addDialog" OnAdded="OnConnectionAdded" />
 
 @code {
+    // Sort the Modified column by the real instant, not the display string. Nulls (blank dates) sort first
+    // ascending, which puts undated rows together at one end rather than scattered through the order.
+    private static readonly GridSort<SpFolderEntry> ModifiedSort =
+        GridSort<SpFolderEntry>.ByAscending(e => e.ModifiedUtc);
+
     [Parameter] public string Role { get; set; } = "Source";
     [Parameter] public bool IsSource { get; set; }
     [Parameter] public EventCallback OnChanged { get; set; }
