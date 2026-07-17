@@ -120,6 +120,8 @@ public static class Program
             ["lvt-inspect"] = Scenarios.LvtStressTest.InspectAsync,
             ["lvt-probe"] = Scenarios.LvtQueryProbe.RunAsync,
             ["folder-scope"] = Scenarios.FolderScopeTest.RunAsync,
+            ["tick-scope"] = Scenarios.TickedFolderScopeTest.RunAsync,
+            ["ben-lib"] = Scenarios.BenScenarioLib.RunAsync,
             ["lvt-provision"] = Scenarios.LvtStressTest.ProvisionAsync,
             ["lvt-copy"] = Scenarios.LvtStressTest.CopyAsync,
             ["lvt-scan"] = Scenarios.LvtStressTest.ScanAsync,

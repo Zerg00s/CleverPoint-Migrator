@@ -15,13 +15,19 @@ public class DragState
     public List<int> ItemIds { get; private set; } = new();
     public int FolderCount { get; private set; }
 
+    /// <summary>The source folder open when the drag started (server-relative), or null at the list root.
+    /// The dropped items lay out relative to this, so dragging a subfolder lands it directly in the target
+    /// folder rather than rebuilding its source ancestors underneath.</summary>
+    public string? SourceFolder { get; private set; }
+
     /// <summary>Items being dragged (for the drop-zone hint text).</summary>
     public int Count => IsLibrary ? Paths.Count : ItemIds.Count;
     public int FileCount => IsLibrary ? Paths.Count - FolderCount : ItemIds.Count;
 
     public event Action? Changed;
 
-    public void Begin(string site, string list, bool isLibrary, List<string> paths, List<int> ids, int folderCount)
+    public void Begin(string site, string list, bool isLibrary, List<string> paths, List<int> ids, int folderCount,
+        string? sourceFolder = null)
     {
         SourceSite = site;
         SourceListTitle = list;
@@ -29,6 +35,7 @@ public class DragState
         Paths = paths;
         ItemIds = ids;
         FolderCount = folderCount;
+        SourceFolder = sourceFolder;
         Active = true;
         Changed?.Invoke();
     }

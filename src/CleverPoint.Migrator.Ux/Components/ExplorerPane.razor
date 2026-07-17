@@ -371,7 +371,8 @@
         {
             paths = new(); ids = new() { entry.ItemId }; folders = 0;
         }
-        Drag.Begin(_site!, CurrentList.Title, CurrentList.IsLibrary, paths, ids, folders);
+        Drag.Begin(_site!, CurrentList.Title, CurrentList.IsLibrary, paths, ids, folders,
+            IsInSubfolder ? CurrentFolderServerRelativeUrl : null);
     }
 
     private void OnDragEnd() => Drag.End();

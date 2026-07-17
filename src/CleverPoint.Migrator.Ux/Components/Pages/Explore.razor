@@ -124,6 +124,7 @@
         {
             SourceListTitle = Drag.SourceListTitle,
             IsLibrary = Drag.IsLibrary,
+            SourceFolder = Drag.SourceFolder,   // dropped items lay out relative to the dragged-from folder
             SelectedPaths = Drag.Paths.ToList(),
             SelectedItemIds = Drag.ItemIds.ToList(),
             SelectedFolderCount = Drag.FolderCount,
@@ -177,12 +178,12 @@
             {
                 SourceListTitle = _source.CurrentList.Title,
                 IsLibrary = _source.CurrentListIsLibrary,
-                // Nothing ticked = "copy what is in the folder I have open". Without this, an unticked copy
-                // meant the whole LIBRARY, so standing in Folder-A/Sub-1 copied every file from the list
-                // root into the target folder. A tick list carries its own paths, and at the list root this
-                // stays null = whole list, both as before.
-                SourceFolder = !hasSelection && _source.IsInSubfolder
-                    ? _source.CurrentFolderServerRelativeUrl : null,
+                // The folder open on the left is the base the copy lays out from -- for a whole-folder copy
+                // (nothing ticked) AND for ticked items, so ticking "Doc" inside "A/B" lands "Doc" directly
+                // in the target folder rather than rebuilding "A/B/Doc" under it. Null at the list root =
+                // land at the top, as before. (The engine ignores this for the SCAN when items are ticked;
+                // it only affects where the copied paths are rooted.)
+                SourceFolder = _source.IsInSubfolder ? _source.CurrentFolderServerRelativeUrl : null,
                 SelectedPaths = _source.SelectedPaths,
                 SelectedItemIds = _source.SelectedItemIds,
                 SelectedFolderCount = _source.SelectedFolderCount,

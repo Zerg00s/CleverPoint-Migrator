@@ -70,24 +70,42 @@ public class CopyOptions
     public DateTime? ModifiedBeforeUtc { get; set; }
 
     /// <summary>
-    /// Optional server-relative folder inside the source list to copy from (subset copy). Null = whole list.
+    /// The source folder the user was browsing when the copy started (server-relative). Null = the list
+    /// root. This is the BASE the copied layout is relative to -- whatever is copied lands under the target
+    /// root / TargetSubfolderRelative as if this folder were the top, WITHOUT recreating the source
+    /// ancestors above it:
     ///
-    /// This means "copy what is INSIDE this folder": its contents land directly under the target root /
-    /// TargetSubfolderRelative, WITHOUT recreating the source's intermediate folders. Copying
-    /// "Lib/Folder-A/Sub-1" into "Target/Subfolder" puts Sub-1's files in "Target/Subfolder", not in
-    /// "Target/Subfolder/Folder-A/Sub-1". Ignored when SelectedPaths names an explicit selection, which
-    /// keeps its own list-root-relative layout.
+    ///   - whole-folder copy (no tick): "Lib/A/Sub-1" into "Target/Sub" puts Sub-1's files directly in
+    ///     "Target/Sub", not "Target/Sub/A/Sub-1";
+    ///   - ticked selection: browsing "Lib/A" and ticking folder "Doc" puts "Doc" (and its subtree)
+    ///     directly in "Target/Sub", not "Target/Sub/A/Doc". Ticking a top-level folder from the list root
+    ///     leaves this null, so it lands at the top, as before.
     /// </summary>
     public string? SourceFolderServerRelativeUrl { get; set; }
 
     /// <summary>
-    /// The base the copied paths are relative to: the scoped source folder for a folder copy, else the
-    /// list root. Shared by the item and file copiers so both lay content out the same way.
+    /// The base that copied paths are made relative to. The source browsing folder when set (so its
+    /// contents / the items ticked inside it land directly under the target), else the list root.
+    ///
+    /// Guarded for a mixed selection: only rebases onto the folder when EVERY selected path is at or under
+    /// it. Ticks can accumulate across folders as the user navigates, and rebasing an item that lives
+    /// outside the base would mangle its relative path -- those fall back to the list-root layout.
     /// </summary>
-    public string PathBase(string listRootServerRelativeUrl) =>
-        !string.IsNullOrEmpty(SourceFolderServerRelativeUrl) && SelectedPaths.Count == 0
-            ? SourceFolderServerRelativeUrl.TrimEnd('/')
-            : listRootServerRelativeUrl;
+    public string PathBase(string listRootServerRelativeUrl)
+    {
+        if (string.IsNullOrEmpty(SourceFolderServerRelativeUrl)) return listRootServerRelativeUrl;
+        var baseFolder = SourceFolderServerRelativeUrl.TrimEnd('/');
+        if (SelectedPaths.Count == 0) return baseFolder;
+
+        var prefix = baseFolder + "/";
+        var allUnderBase = SelectedPaths.All(p =>
+        {
+            var t = p.TrimEnd('/');
+            return t.Equals(baseFolder, StringComparison.OrdinalIgnoreCase)
+                   || t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        });
+        return allUnderBase ? baseFolder : listRootServerRelativeUrl;
+    }
 
     /// <summary>
     /// Optional wildcard patterns on the item/file NAME (leaf), e.g. "*.pdf"
