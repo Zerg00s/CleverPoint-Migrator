@@ -68,9 +68,9 @@ See the animation below for a quick demo of how to use the tool.
 
 ## What It Is Not
 
-This tool is for moving lists, libraries, folders, and files between SharePoint Online and OneDrive sites. It does not migrate entire sites, and it does not support SharePoint Server, file shares, Google, Exchange, or Teams. For file share migrations, use the free Microsoft SharePoint Migration Tool (SPMT). For full-scale tenant migrations with M365 groups, Teams, and mailboxes, I still use ShareGate.
+This tool is for moving lists, libraries, folders, and files between SharePoint Online and OneDrive sites. It does not migrate entire sites, and it does not support SharePoint Server, file shares, Google, Exchange, or Teams. For file share migrations, use the free Microsoft SharePoint Migration Tool (SPMT). For full-scale tenant migrations with M365 groups, Teams, and mailboxes, I still use ShareGate and Quest ODM.
 
-CleverPoint Migrator is not trying to replace ShareGate, AvePoint, or SPMT. It fills the gap in between: the simple, common case of moving content around SharePoint without buying anything.
+CleverPoint Migrator is not trying to replace ShareGate, Quest ODM, Metalogix, BitTitan, AvePoint, or SPMT. It fills the gap in between: the simple, common case of moving content around SharePoint without buying anything.
 
 ## Notes for Contributors
 
@@ -85,5 +85,5 @@ dotnet run --project src\CleverPoint.Migrator.Ux
 We properly sign each release with a certificate. To do this, you need to run the following command in PowerShell:
 
 ```powershell
-.\Sign-App.ps1 -Version 1.0.12 -Release
+.\Sign-App.ps1 -Version 1.0.14 -Release
 ```

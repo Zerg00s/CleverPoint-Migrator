@@ -177,6 +177,12 @@
             {
                 SourceListTitle = _source.CurrentList.Title,
                 IsLibrary = _source.CurrentListIsLibrary,
+                // Nothing ticked = "copy what is in the folder I have open". Without this, an unticked copy
+                // meant the whole LIBRARY, so standing in Folder-A/Sub-1 copied every file from the list
+                // root into the target folder. A tick list carries its own paths, and at the list root this
+                // stays null = whole list, both as before.
+                SourceFolder = !hasSelection && _source.IsInSubfolder
+                    ? _source.CurrentFolderServerRelativeUrl : null,
                 SelectedPaths = _source.SelectedPaths,
                 SelectedItemIds = _source.SelectedItemIds,
                 SelectedFolderCount = _source.SelectedFolderCount,

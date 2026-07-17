@@ -386,6 +386,7 @@
         {
             SourceListTitle = t.SourceList,
             IsLibrary = t.SourceIsLibrary,
+            SourceFolder = t.Options.SourceFolderServerRelativeUrl,   // keep the run's folder scope on re-run
             SelectedPaths = t.Options.SelectedPaths?.ToList() ?? new(),
             SelectedItemIds = t.Options.ItemIds?.ToList() ?? new(),
         });

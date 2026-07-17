@@ -1,3 +1,4 @@
+using CleverPoint.Migrator.Core.Csom;
 using CleverPoint.Migrator.Core.Model;
 using Microsoft.SharePoint.Client;
 
@@ -36,7 +37,7 @@ public class PermissionCopier
         {
             var page = sourceList.GetItems(query);
             _sourceCtx.Load(page, p => p.Include(i => i.Id, i => i.HasUniqueRoleAssignments), p => p.ListItemCollectionPosition);
-            await _sourceCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
             foreach (var item in page)
                 if (item.HasUniqueRoleAssignments)
                     unique.Add(item.Id);
@@ -52,14 +53,14 @@ public class PermissionCopier
         _sourceCtx.Load(assignments, ras => ras.Include(
             ra => ra.Member.LoginName, ra => ra.Member.Title, ra => ra.Member.PrincipalType,
             ra => ra.RoleDefinitionBindings.Include(rd => rd.Name)));
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
 
         targetItem.BreakRoleInheritance(false, false);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         var roleDefs = _targetCtx.Web.RoleDefinitions;
         _targetCtx.Load(roleDefs, rds => rds.Include(rd => rd.Name));
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         var targetRoleDefs = roleDefs.AsEnumerable().ToDictionary(rd => rd.Name, StringComparer.OrdinalIgnoreCase);
 
         var applied = 0;
@@ -102,7 +103,7 @@ public class PermissionCopier
             if (bound == 0) continue;
 
             targetItem.RoleAssignments.Add(principal, bindings);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             applied++;
         }
 
@@ -112,7 +113,7 @@ public class PermissionCopier
             // accessible to no one but admins. Restore inheritance and warn instead of
             // silently reporting a green "0 role assignment(s)" copy.
             targetItem.ResetRoleInheritance();
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             result.Add("Permission", sourceRef, "", ItemCopyStatus.Warning,
                 "no source principals could be mapped to the target; left inheriting parent permissions");
             return;
@@ -128,7 +129,7 @@ public class PermissionCopier
         {
             var groups = _targetCtx.Web.SiteGroups;
             _targetCtx.Load(groups, gs => gs.Include(g => g.Title));
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             _targetGroupsByName = groups.AsEnumerable()
                 .GroupBy(g => g.Title, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);

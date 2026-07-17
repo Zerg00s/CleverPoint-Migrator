@@ -26,7 +26,7 @@ public static class CopyEngine
         var sourceList = sourceCtx.Web.Lists.GetByTitle(sourceListTitle);
         sourceCtx.Load(sourceList, l => l.BaseType, l => l.Title, l => l.BaseTemplate,
             l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString));
-        await sourceCtx.ExecuteQueryAsync();
+        await sourceCtx.ExecuteWithRetryAsync();
 
         var users = new UserResolver(sourceCtx, targetCtx, userMap, options.UnresolvedUserFallback);
         await users.PrimeSourceUsersAsync();
@@ -42,8 +42,8 @@ public static class CopyEngine
         // target web), skipped when source and target are the same web.
         sourceCtx.Load(sourceCtx.Web, w => w.Id);
         targetCtx.Load(targetCtx.Web, w => w.Id);
-        await sourceCtx.ExecuteQueryAsync();
-        await targetCtx.ExecuteQueryAsync();
+        await sourceCtx.ExecuteWithRetryAsync();
+        await targetCtx.ExecuteWithRetryAsync();
         if (sourceCtx.Web.Id != targetCtx.Web.Id)
         {
             var deps = new DependencyCopier(sourceCtx, targetCtx) { TermStore = termStore };
@@ -174,7 +174,7 @@ public static class CopyEngine
                 var page = list.GetItems(query);
                 ctx.Load(page);
                 ctx.Load(page, p => p.ListItemCollectionPosition);
-                await ctx.ExecuteQueryAsync();
+                await ctx.ExecuteWithRetryAsync();
                 foreach (var item in page)
                     rows.Add((item.Id, item.FieldValues.GetValueOrDefault(showField)?.ToString() ?? ""));
                 query.ListItemCollectionPosition = page.ListItemCollectionPosition;

@@ -1,3 +1,4 @@
+using CleverPoint.Migrator.Core.Csom;
 using System.Text.RegularExpressions;
 using CleverPoint.Migrator.Core.Model;
 using Microsoft.SharePoint.Client;
@@ -70,13 +71,13 @@ public partial class SchemaCopier
                 f => f.CustomFormatter),
             l => l.Views.Include(v => v.Title, v => v.Hidden, v => v.PersonalView, v => v.DefaultView,
                 v => v.RowLimit, v => v.Paged, v => v.ViewQuery, v => v.ViewFields, v => v.CustomFormatter));
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
 
         // Find or create the target list.
         var targetWeb = _targetCtx.Web;
         var targetLists = targetWeb.Lists;
         _targetCtx.Load(targetLists, ls => ls.Include(l => l.Title, l => l.Id));
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         var existing = targetLists.AsEnumerable().FirstOrDefault(l =>
             l.Title.Equals(options.TargetListTitle, StringComparison.OrdinalIgnoreCase));
@@ -92,7 +93,7 @@ public partial class SchemaCopier
                     "Create it first or run a structure + content copy.");
             _targetCtx.Load(existing, l => l.RootFolder.ServerRelativeUrl,
                 l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString, f => f.SchemaXml));
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             foreach (var sourceField in sourceList.Fields)
             {
                 if (sourceField.TypeAsString is not ("Lookup" or "LookupMulti")) continue;
@@ -128,14 +129,14 @@ public partial class SchemaCopier
             if (!string.IsNullOrEmpty(options.TargetListUrl))
                 creation.Url = options.TargetListUrl;
             targetList = targetWeb.Lists.Add(creation);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             CreatedTargetList = true;
             result.Add("List", sourceList.Title, options.TargetListTitle, ItemCopyStatus.Copied, $"created (template {sourceList.BaseTemplate})");
         }
 
         // Load target fields for the merge.
         _targetCtx.Load(targetList, l => l.Fields.Include(f => f.InternalName), l => l.RootFolder.ServerRelativeUrl);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         var targetFieldNames = new HashSet<string>(
             targetList.Fields.AsEnumerable().Select(f => f.InternalName), StringComparer.OrdinalIgnoreCase);
 
@@ -156,7 +157,7 @@ public partial class SchemaCopier
                         var existingField = targetList.Fields.GetByInternalNameOrTitle(field.InternalName);
                         existingField.CustomFormatter = field.CustomFormatter;
                         existingField.UpdateAndPushChanges(true);
-                        await _targetCtx.ExecuteQueryAsync();
+                        await _targetCtx.ExecuteWithRetryAsync();
                         result.Add("Field", field.InternalName, field.InternalName, ItemCopyStatus.Copied, "column formatting synced");
                     }
                     catch (Exception ex)
@@ -201,7 +202,7 @@ public partial class SchemaCopier
                     created.CustomFormatter = field.CustomFormatter;
                     created.UpdateAndPushChanges(true);
                 }
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 targetFieldNames.Add(field.InternalName);
                 result.Add("Field", field.InternalName, field.InternalName, ItemCopyStatus.Copied, field.TypeAsString);
             }
@@ -222,7 +223,7 @@ public partial class SchemaCopier
             targetList.ContentTypesEnabled = sourceList.ContentTypesEnabled;
             targetList.OnQuickLaunch = sourceList.OnQuickLaunch;
             targetList.Update();
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             result.Add("List", sourceList.Title, options.TargetListTitle, ItemCopyStatus.Copied, "settings applied");
         }
 
@@ -252,7 +253,7 @@ public partial class SchemaCopier
             var srcTax = _sourceCtx.CastTo<TaxonomyField>(sourceField);
             _sourceCtx.Load(srcTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId,
                 f => f.AllowMultipleValues, f => f.Title, f => f.InternalName, f => f.TypeAsString);
-            await _sourceCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
 
             var (sspId, termSetId, anchorId) = TargetBinding(srcTax);
 
@@ -260,7 +261,7 @@ public partial class SchemaCopier
                     + $"Name='{srcTax.InternalName}' StaticName='{srcTax.InternalName}' "
                     + $"{(srcTax.AllowMultipleValues ? "Mult='TRUE' " : "")}/>";
             targetList.Fields.AddFieldAsXml(xml, true, AddFieldOptions.AddFieldInternalNameHint);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
 
             // The binding is a SECOND round trip on purpose. Creating the column and updating it in one
             // batch intermittently fails with "Column '<name>' does not exist. It may have been deleted by
@@ -291,14 +292,14 @@ public partial class SchemaCopier
         {
             var srcTax = _sourceCtx.CastTo<TaxonomyField>(sourceField);
             _sourceCtx.Load(srcTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId, f => f.InternalName);
-            await _sourceCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
 
             var (sspId, termSetId, anchorId) = TargetBinding(srcTax);
 
             var existing = targetList.Fields.GetByInternalNameOrTitle(sourceField.InternalName);
             var tgtTax = _targetCtx.CastTo<TaxonomyField>(existing);
             _targetCtx.Load(tgtTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId, f => f.AllowMultipleValues);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
 
             if (tgtTax.SspId == sspId && tgtTax.TermSetId == termSetId && tgtTax.AnchorId == anchorId)
             {
@@ -344,7 +345,7 @@ public partial class SchemaCopier
                 tax.AnchorId = anchorId;
                 tax.AllowMultipleValues = multi;
                 tax.Update();
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 return;
             }
             catch (Exception ex) when (attempt < attempts && IsNotYetVisible(ex))
@@ -389,8 +390,8 @@ public partial class SchemaCopier
         _targetCtx.Load(targetList.ContentTypes, cts => cts.Include(ct => ct.Name, ct => ct.StringId));
         var targetWebCts = _targetCtx.Web.AvailableContentTypes;
         _targetCtx.Load(targetWebCts, cts => cts.Include(ct => ct.Name, ct => ct.StringId));
-        await _sourceCtx.ExecuteQueryAsync();
-        await _targetCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         var targetListCtsByName = targetList.ContentTypes.AsEnumerable()
             .GroupBy(ct => ct.Name, StringComparer.OrdinalIgnoreCase)
@@ -414,7 +415,7 @@ public partial class SchemaCopier
             {
                 var attached = targetList.ContentTypes.AddExistingContentType(webCt);
                 _targetCtx.Load(attached, a => a.StringId);
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 ContentTypeMap[ct.StringId] = attached.StringId;
                 result.Add("ContentType", ct.Name, ct.Name, ItemCopyStatus.Copied, "attached to target list");
             }
@@ -449,13 +450,13 @@ public partial class SchemaCopier
         // Source referenced list (for its title + show field bookkeeping).
         var sourceLookupList = _sourceCtx.Web.Lists.GetById(sourceListId);
         _sourceCtx.Load(sourceLookupList, l => l.Title, l => l.Id);
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
 
         // Same web? Point at the very same list. Different web: match by title.
         _sourceCtx.Load(_sourceCtx.Web, w => w.Id);
         _targetCtx.Load(_targetCtx.Web, w => w.Id);
-        await _sourceCtx.ExecuteQueryAsync();
-        await _targetCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         Guid targetListId;
         if (_sourceCtx.Web.Id == _targetCtx.Web.Id)
@@ -486,7 +487,7 @@ public partial class SchemaCopier
     private async Task CopyViewsAsync(List sourceList, List targetList, CopyResult result)
     {
         _targetCtx.Load(targetList.Views, vs => vs.Include(v => v.Title));
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         var targetViewTitles = new HashSet<string>(targetList.Views.AsEnumerable().Select(v => v.Title), StringComparer.OrdinalIgnoreCase);
 
         foreach (var view in sourceList.Views)
@@ -516,7 +517,7 @@ public partial class SchemaCopier
                     created.CustomFormatter = view.CustomFormatter;
                     created.Update();
                 }
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 result.Add("View", view.Title, view.Title, ItemCopyStatus.Copied,
                     string.IsNullOrEmpty(view.CustomFormatter) ? null : "with view formatting JSON");
             }

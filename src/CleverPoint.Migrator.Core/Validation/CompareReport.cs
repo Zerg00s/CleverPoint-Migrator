@@ -66,8 +66,8 @@ public class CompareReport
         var targetList = targetCtx.Web.Lists.GetByTitle(targetListTitle);
         sourceCtx.Load(sourceList, l => l.ItemCount);
         targetCtx.Load(targetList, l => l.ItemCount);
-        await sourceCtx.ExecuteQueryAsync();
-        await targetCtx.ExecuteQueryAsync();
+        await sourceCtx.ExecuteWithRetryAsync();
+        await targetCtx.ExecuteWithRetryAsync();
 
         var report = new CompareReport
         {
@@ -96,7 +96,7 @@ public class CompareReport
         {
             var root = targetList.RootFolder;
             targetCtx.Load(root, f => f.StorageMetrics.TotalSize);
-            await targetCtx.ExecuteQueryAsync();
+            await targetCtx.ExecuteWithRetryAsync();
             report.StorageBytes = root.StorageMetrics.TotalSize;
         }
         catch { /* generic lists have no storage metrics; leave 0 */ }

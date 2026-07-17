@@ -405,6 +405,7 @@ else
         {
             SourceListTitle = _run.SourceList,
             IsLibrary = scope?.IsLibrary ?? paths.Count > 0,
+            SourceFolder = scope?.SourceFolder,   // keep the run's folder scope on re-run/resume
             SelectedPaths = paths,
             SelectedItemIds = ids,
         });

@@ -267,6 +267,7 @@
             _jobs = Pending.Jobs.Select(j => new PendingJob
             {
                 SourceListTitle = j.SourceListTitle, IsLibrary = j.IsLibrary,
+                SourceFolder = j.SourceFolder,
                 SelectedPaths = j.SelectedPaths.ToList(), SelectedItemIds = j.SelectedItemIds.ToList(),
                 SelectedFolderCount = j.SelectedFolderCount, SelectedFileCount = j.SelectedFileCount,
             }).ToList();
@@ -489,6 +490,8 @@
                 CopyViews = !contentOnly,
                 CopyListSettings = !contentOnly,
                 MaxVersions = _maxVersions,
+                // Copy only what is inside the open source folder. Null = the whole list.
+                SourceFolderServerRelativeUrl = job.SourceFolder,
                 SelectedPaths = job.SelectedPaths,
                 ItemIds = job.SelectedItemIds,
                 ExistingMode = _existingMode switch

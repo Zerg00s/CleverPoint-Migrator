@@ -83,7 +83,9 @@ public class FileCopier
         var copyFields = await _itemCopier.GetCopyFieldsAsync(sourceList, targetList);
         _itemCopier.WarnDroppedFields(options, result);
         await _itemCopier.PrimeTargetTaxonomyFieldsAsync(targetList, copyFields);
-        var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
+        // Paths are relative to the SCOPED folder when the copy is "the contents of this folder", so they
+        // land directly in the target folder rather than rebuilding the source's parent chain under it.
+        var sourceRoot = options.PathBase(sourceList.RootFolder.ServerRelativeUrl);
         var targetWeb = _targetCtx.Web;
         var listRoot = targetList.RootFolder.ServerRelativeUrl;
 
@@ -293,7 +295,7 @@ public class FileCopier
             // Normal path: download (buffered, small files) and hash.
             var file = _sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(fileRef));
             var streamResult = file.OpenBinaryStream();
-            await _sourceCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
             byte[] bytes;
             using (var ms = new MemoryStream())
             {
@@ -308,7 +310,7 @@ public class FileCopier
                 Overwrite = true,
             });
             _targetCtx.Load(uploaded, f => f.ListItemAllFields.Id);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
 
             // Metadata: custom fields + authors/dates, one UpdateOverwriteVersion.
             var targetItem = uploaded.ListItemAllFields;
@@ -359,7 +361,7 @@ public class FileCopier
         // Prime taxonomy columns on the worker's own target list (no-op when there are none).
         var wList = tctx.Web.Lists.GetByTitle(options.TargetListTitle);
         tctx.Load(wList, l => l.Title);
-        await tctx.ExecuteQueryAsync();
+        await tctx.ExecuteWithRetryAsync();
         await worker._itemCopier.PrimeTargetTaxonomyFieldsAsync(wList, copyFields);
 
         while (queue.TryDequeue(out var fileRef))
@@ -374,7 +376,7 @@ public class FileCopier
                 var si = f.ListItemAllFields;
                 sctx.Load(si);
                 sctx.Load(si, i => i.FileSystemObjectType);
-                await sctx.ExecuteQueryAsync();
+                await sctx.ExecuteWithRetryAsync();
                 await worker.CopyFileEntryAsync(si, fileRef, relativePath, targetRoot, copyFields, options, result);
             }
             catch (Exception ex)
@@ -527,7 +529,7 @@ public class FileCopier
                     ContentStream = new MemoryStream(bytes),
                     Overwrite = true,
                 });
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 uploaded++;
             }
             return uploaded;
@@ -555,7 +557,7 @@ public class FileCopier
         var file = _targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetPath));
         var item = file.ListItemAllFields;
         _targetCtx.Load(item);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         return item.FieldValues.TryGetValue("Modified", out var m) && m is DateTime
             ? ItemCopier.ToWriteDate(m) : null;
     }
@@ -570,7 +572,7 @@ public class FileCopier
         if (options.PreserveAuthorsAndDates && _useFormUpdateMetadata)
         {
             targetItem.UpdateOverwriteVersion();
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             await _itemCopier.ApplyDocumentMetadataFormUpdateAsync(sourceItem, targetItem, result, fileRef);
             return;
         }
@@ -589,7 +591,7 @@ public class FileCopier
         }
         // One write persists custom fields AND (when enabled) authors/dates.
         targetItem.UpdateOverwriteVersion();
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         // Probe the FIRST file of the run: some sites silently IGNORE
         // system-field overwrites instead of failing them. When that happens,
@@ -653,7 +655,7 @@ public class FileCopier
         {
             folderItem["HTML_x0020_File_x0020_Type"] = "OneNote.Notebook";
             folderItem.UpdateOverwriteVersion();
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
         }
         catch (Exception ex)
         {
@@ -680,7 +682,7 @@ public class FileCopier
                 {
                     var folder = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(next));
                     _targetCtx.Load(folder, f => f.Exists);
-                    await _targetCtx.ExecuteQueryAsync();
+                    await _targetCtx.ExecuteWithRetryAsync();
                     exists = folder.Exists;
                 }
                 catch (ServerException)
@@ -696,7 +698,7 @@ public class FileCopier
                         // Path-safe create (AddUsingPath), so folder names containing % or # are
                         // taken literally instead of being decoded/mangled by the legacy Add().
                         parent.Folders.AddUsingPath(ResourcePath.FromDecodedUrl(next), new FolderCollectionAddParameters());
-                        await _targetCtx.ExecuteQueryAsync();
+                        await _targetCtx.ExecuteWithRetryAsync();
                     }
                     catch (ServerException)
                     {
@@ -705,7 +707,7 @@ public class FileCopier
                         // error if the folder is genuinely there now; otherwise it is real.
                         var check = targetWeb.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(next));
                         _targetCtx.Load(check, f => f.Exists);
-                        await _targetCtx.ExecuteQueryAsync();
+                        await _targetCtx.ExecuteWithRetryAsync();
                         if (!check.Exists) throw;
                     }
                 }
@@ -732,7 +734,7 @@ public class FileCopier
                 item = file.ListItemAllFields;
             }
             ctx.Load(item);
-            await ctx.ExecuteQueryAsync();
+            await ctx.ExecuteWithRetryAsync();
             return item;
         }
         catch

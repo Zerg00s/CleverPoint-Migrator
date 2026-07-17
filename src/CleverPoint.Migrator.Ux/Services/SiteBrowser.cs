@@ -289,7 +289,7 @@ public class SiteBrowser
         // a topmost notebook - exactly the folder the copy engine must mark.
         if (entries.Any(e => e.IsFolder))
         {
-            var notebooks = await DetectNotebookFoldersAsync(conn, folderServerRelativeUrl);
+            var notebooks = await DetectNotebookFoldersAsync(conn, folderServerRelativeUrl, entries);
             if (notebooks.Count > 0)
                 foreach (var e in entries.Where(e => e.IsFolder && notebooks.Contains(e.ServerRelativeUrl)))
                     e.IsOneNote = true;
@@ -300,7 +300,8 @@ public class SiteBrowser
 
     /// <summary>Server-relative URLs of immediate subfolders that are OneNote
     /// notebooks (have a .onetoc2 directly inside). One round trip via $expand.</summary>
-    private static async Task<HashSet<string>> DetectNotebookFoldersAsync(SpConnection conn, string folderServerRelativeUrl)
+    private static async Task<HashSet<string>> DetectNotebookFoldersAsync(
+        SpConnection conn, string folderServerRelativeUrl, IEnumerable<SpFolderEntry>? childFolders = null)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
@@ -325,10 +326,55 @@ public class SiteBrowser
                     }
                 }
             }
+            return set;
+        }
+        catch (Exception ex) when (IsThresholdError(ex) && childFolders != null)
+        {
+            // Enumerating Folders/Files is list-view-threshold bound: it throws outright once THIS folder
+            // holds more than ~5,000 children, which would silently downgrade every notebook here to a plain
+            // folder. The children are already known from the paged read, so probe them one by one instead.
+            return await DetectNotebookFoldersPerChildAsync(conn, childFolders);
         }
         catch { /* detection is best-effort; fall back to treating them as plain folders */ }
         return set;
     }
+
+    /// <summary>
+    /// Threshold-safe notebook detection: ask each CHILD folder for its own files. Each call is scoped to a
+    /// folder small enough to enumerate; a child that is itself over the threshold throws and is treated as
+    /// a plain folder (a folder with 5,000+ files is not a notebook). Bounded so a very wide folder cannot
+    /// turn one browse into thousands of round trips.
+    /// </summary>
+    private static async Task<HashSet<string>> DetectNotebookFoldersPerChildAsync(
+        SpConnection conn, IEnumerable<SpFolderEntry> childFolders)
+    {
+        const int maxProbes = 200;
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var child in childFolders.Where(e => e.IsFolder).Take(maxProbes))
+        {
+            try
+            {
+                var esc = Uri.EscapeDataString(child.ServerRelativeUrl.Replace("'", "''"));
+                using var doc = await conn.Rest.GetJsonAsync(
+                    $"{conn.SiteUrl}/_api/web/GetFolderByServerRelativeUrl('{esc}')/Files?$select=Name&$top=500");
+                foreach (var file in doc.RootElement.GetProperty("value").EnumerateArray())
+                {
+                    var n = file.TryGetProperty("Name", out var nn) ? nn.GetString() : null;
+                    if (n != null && n.EndsWith(".onetoc2", StringComparison.OrdinalIgnoreCase))
+                    {
+                        set.Add(child.ServerRelativeUrl);
+                        break;
+                    }
+                }
+            }
+            catch { /* this child is over the threshold or unreadable: not a notebook */ }
+        }
+        return set;
+    }
+
+    /// <summary>The SharePoint list-view-threshold error (5,000 rows).</summary>
+    private static bool IsThresholdError(Exception ex) =>
+        ex.Message.Contains("list view threshold", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Generic-list items, paged up to MaxItemsLoaded (live IDs for selection).</summary>
     public async Task<List<SpFolderEntry>> GetListItemsAsync(SpConnection conn, SpListInfo list)

@@ -1,3 +1,4 @@
+using CleverPoint.Migrator.Core.Csom;
 using CleverPoint.Migrator.Core.Model;
 using Microsoft.SharePoint.Client;
 using Microsoft.SharePoint.Client.Taxonomy;
@@ -83,8 +84,8 @@ public class TermStoreCopier
 
         try
         {
-            await _sourceCtx.ExecuteQueryAsync();
-            await _targetCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
         }
         catch (Exception ex)
         {
@@ -117,7 +118,7 @@ public class TermStoreCopier
         {
             var tax = _sourceCtx.CastTo<TaxonomyField>(field);
             _sourceCtx.Load(tax, f => f.TermSetId, f => f.InternalName);
-            await _sourceCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
             if (tax.TermSetId != Guid.Empty) termSetIds.Add(tax.TermSetId);
         }
 
@@ -144,7 +145,7 @@ public class TermStoreCopier
             ts => ts.Group.Id, ts => ts.Group.Name, ts => ts.Group.IsSiteCollectionGroup);
         var sourceTerms = sourceSet.GetAllTerms();
         _sourceCtx.Load(sourceTerms, ts => ts.Include(t => t.Id, t => t.Name, t => t.PathOfTerm, t => t.IsAvailableForTagging));
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
 
         var siteScoped = sourceSet.Group.IsSiteCollectionGroup;
         var scope = siteScoped ? "site-collection" : "tenant";
@@ -173,7 +174,7 @@ public class TermStoreCopier
         {
             targetGroup = targetStore.GetSiteCollectionGroup(_targetCtx.Site, true);
             _targetCtx.Load(targetGroup, g => g.Id, g => g.Name);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
         }
         else
         {
@@ -225,7 +226,7 @@ public class TermStoreCopier
             var created = targetStore.CreateGroup(name, Guid.NewGuid());
             targetStore.CommitAll();
             _targetCtx.Load(created, g => g.Id, g => g.Name);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             result.Add("TermGroup", name, name, ItemCopyStatus.Copied, "created in target term store");
             Diagnostics.TraceLog.Write("Taxonomy", $"created tenant term group '{name}' ({created.Id:D})");
             return created;
@@ -257,7 +258,7 @@ public class TermStoreCopier
             set.IsOpenForTermCreation = sourceSet.IsOpenForTermCreation;
             targetStore.CommitAll();
             _targetCtx.Load(set, ts => ts.Id, ts => ts.Name);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             return set;
         }
         catch (Exception ex)
@@ -268,7 +269,7 @@ public class TermStoreCopier
 
         // Did someone else already create it under this group while our read was stale?
         TaxonomySession.GetTaxonomySession(_targetCtx).UpdateCache();
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         var raced = await FindTermSetByNameAsync(targetGroup, sourceSet.Name);
         if (raced != null)
         {
@@ -281,7 +282,7 @@ public class TermStoreCopier
         var fresh = targetGroup.CreateTermSet(sourceSet.Name, Guid.NewGuid(), targetStore.DefaultLanguage);
         targetStore.CommitAll();
         _targetCtx.Load(fresh, ts => ts.Id, ts => ts.Name);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         Diagnostics.TraceLog.Write("Taxonomy", $"term set '{sourceSet.Name}' created with a new id {fresh.Id:D}");
         return fresh;
     }
@@ -291,12 +292,12 @@ public class TermStoreCopier
         if (refreshCache)
         {
             TaxonomySession.GetTaxonomySession(_targetCtx).UpdateCache();
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
         }
 
         var groups = store.Groups;
         _targetCtx.Load(groups, gs => gs.Include(g => g.Id, g => g.Name, g => g.IsSiteCollectionGroup));
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         return groups.AsEnumerable()
             .FirstOrDefault(g => !g.IsSiteCollectionGroup && string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase));
@@ -311,7 +312,7 @@ public class TermStoreCopier
     {
         var set = store.GetTermSet(id);
         _targetCtx.Load(set, ts => ts.Id, ts => ts.Name, ts => ts.Group.Id);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         if (set.ServerObjectIsNull == true) return null;
         return set.Group.Id == expectedGroupId ? set : null;
     }
@@ -319,7 +320,7 @@ public class TermStoreCopier
     private async Task<TermSet?> FindTermSetByNameAsync(TermGroup group, string name)
     {
         _targetCtx.Load(group.TermSets, ts => ts.Include(t => t.Id, t => t.Name));
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         return group.TermSets.AsEnumerable()
             .FirstOrDefault(ts => string.Equals(ts.Name, name, StringComparison.OrdinalIgnoreCase));
     }
@@ -334,7 +335,7 @@ public class TermStoreCopier
         // Existing target terms, keyed by their path ("Parent;Child").
         var existingTerms = targetSet.GetAllTerms();
         _targetCtx.Load(existingTerms, ts => ts.Include(t => t.Id, t => t.Name, t => t.PathOfTerm));
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         var targetByPath = existingTerms.AsEnumerable()
             .GroupBy(t => t.PathOfTerm, StringComparer.OrdinalIgnoreCase)
@@ -407,7 +408,7 @@ public class TermStoreCopier
             term.IsAvailableForTagging = sourceTerm.IsAvailableForTagging;
             targetStore.CommitAll();
             _targetCtx.Load(term, t => t.Id, t => t.Name, t => t.PathOfTerm);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             return term;
         }
         catch (Exception ex)
@@ -424,7 +425,7 @@ public class TermStoreCopier
             term.IsAvailableForTagging = sourceTerm.IsAvailableForTagging;
             targetStore.CommitAll();
             _targetCtx.Load(term, t => t.Id, t => t.Name, t => t.PathOfTerm);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             return term;
         }
         catch (Exception ex)
@@ -438,13 +439,13 @@ public class TermStoreCopier
     private async Task<TermSetItem?> RefetchParentAsync(TermStore targetStore, TermSetItem parent)
     {
         _targetCtx.Load(parent, p => p.Id);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         TermSetItem? fresh = parent is TermSet
             ? targetStore.GetTermSet(parent.Id)
             : targetStore.GetTerm(parent.Id);
         _targetCtx.Load(fresh, p => p.Id);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         return fresh.ServerObjectIsNull == true ? null : fresh;
     }
 

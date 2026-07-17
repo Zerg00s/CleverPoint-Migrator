@@ -1,3 +1,4 @@
+using CleverPoint.Migrator.Core.Csom;
 using System.Security.Cryptography;
 using CleverPoint.Migrator.Core.Model;
 using CleverPoint.Migrator.Core.Operations;
@@ -89,7 +90,7 @@ public class CopyVerifier
         var sourceItems = await LoadAsync(_sourceCtx, sourceList);
         var targetItems = await LoadAsync(_targetCtx, targetList);
         _sourceCtx.Load(sourceList, l => l.BaseType);
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
         var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
         var targetRoot = targetList.RootFolder.ServerRelativeUrl;
         var isLibrary = sourceList.BaseType == BaseType.DocumentLibrary;
@@ -244,7 +245,7 @@ public class CopyVerifier
     {
         var file = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativeUrl));
         var stream = file.OpenBinaryStream();
-        await ctx.ExecuteQueryAsync();
+        await ctx.ExecuteWithRetryAsync();
         using var ms = new MemoryStream();
         await stream.Value.CopyToAsync(ms);
         var bytes = ms.ToArray();
@@ -262,7 +263,7 @@ public class CopyVerifier
             ctx.Load(page);
             ctx.Load(page, p => p.Include(i => i.Id, i => i.FileSystemObjectType),
                 p => p.ListItemCollectionPosition);
-            await ctx.ExecuteQueryAsync();
+            await ctx.ExecuteWithRetryAsync();
             items.AddRange(page);
             query.ListItemCollectionPosition = page.ListItemCollectionPosition;
         } while (query.ListItemCollectionPosition != null);

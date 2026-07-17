@@ -46,6 +46,15 @@ public class PendingJob
     public string SourceListTitle { get; set; } = "";
     public bool IsLibrary { get; set; }
 
+    /// <summary>
+    /// The source folder whose contents to copy (server-relative), or null for the whole list.
+    ///
+    /// This is the SOURCE mirror of <see cref="PendingMigration.TargetSubfolderRelative"/>. Without it,
+    /// standing in "Lib/Folder-A/Sub-1" with nothing ticked copied the entire LIBRARY (every file from the
+    /// list root down) into the target folder, because an empty selection means "whole list" to the engine.
+    /// </summary>
+    public string? SourceFolder { get; set; }
+
     /// <summary>Library file/folder server-relative URLs to copy. Empty = whole library.</summary>
     public List<string> SelectedPaths { get; set; } = new();
 

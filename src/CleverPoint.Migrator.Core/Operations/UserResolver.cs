@@ -50,7 +50,7 @@ public class UserResolver
     {
         var users = _sourceCtx.Web.SiteUsers;
         _sourceCtx.Load(users, u => u.Include(x => x.Id, x => x.LoginName, x => x.Email, x => x.Title));
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
         foreach (var u in users)
             _sourceUsersById[u.Id] = (u.LoginName, u.Email ?? "", u.Title ?? "");
     }
@@ -83,7 +83,7 @@ public class UserResolver
             {
                 var u = _sourceCtx.Web.GetUserById(sourceUserId);
                 _sourceCtx.Load(u, x => x.LoginName, x => x.Email, x => x.Title);
-                await _sourceCtx.ExecuteQueryAsync();
+                await _sourceCtx.ExecuteWithRetryAsync();
                 src = (u.LoginName, u.Email ?? "", u.Title ?? "");
                 _sourceUsersById[sourceUserId] = src;
             }
@@ -109,7 +109,7 @@ public class UserResolver
 
         var user = _targetCtx.Web.GetUserById(id.Value);
         _targetCtx.Load(user, x => x.LoginName);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         _targetLoginById[id.Value] = user.LoginName;
         return user.LoginName;
     }
@@ -170,7 +170,7 @@ public class UserResolver
         {
             var ensured = _targetCtx.Web.EnsureUser(login);
             _targetCtx.Load(ensured, x => x.Id);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             _targetIdByKey[login] = ensured.Id;
             return ensured.Id;
         }

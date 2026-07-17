@@ -46,7 +46,7 @@ public class MigrationApiEngine
         // the term sets must exist there BEFORE columns are bound to them. Without this the API engine's
         // taxonomy columns bind to the SOURCE SspId and are dead on arrival.
         sourceCtx.Load(sourceList, l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString));
-        await sourceCtx.ExecuteQueryAsync();
+        await sourceCtx.ExecuteWithRetryAsync();
         var termStore = new Operations.TermStoreCopier(sourceCtx, targetCtx);
         await termStore.PrepareAsync(sourceList, result);
         var termMap = options.TermMap ?? termStore.ItemTermMap();

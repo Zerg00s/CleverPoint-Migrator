@@ -69,8 +69,25 @@ public class CopyOptions
     /// <summary>Only copy items modified before this UTC time.</summary>
     public DateTime? ModifiedBeforeUtc { get; set; }
 
-    /// <summary>Optional server-relative folder path inside the source list to copy from (subset copy).</summary>
+    /// <summary>
+    /// Optional server-relative folder inside the source list to copy from (subset copy). Null = whole list.
+    ///
+    /// This means "copy what is INSIDE this folder": its contents land directly under the target root /
+    /// TargetSubfolderRelative, WITHOUT recreating the source's intermediate folders. Copying
+    /// "Lib/Folder-A/Sub-1" into "Target/Subfolder" puts Sub-1's files in "Target/Subfolder", not in
+    /// "Target/Subfolder/Folder-A/Sub-1". Ignored when SelectedPaths names an explicit selection, which
+    /// keeps its own list-root-relative layout.
+    /// </summary>
     public string? SourceFolderServerRelativeUrl { get; set; }
+
+    /// <summary>
+    /// The base the copied paths are relative to: the scoped source folder for a folder copy, else the
+    /// list root. Shared by the item and file copiers so both lay content out the same way.
+    /// </summary>
+    public string PathBase(string listRootServerRelativeUrl) =>
+        !string.IsNullOrEmpty(SourceFolderServerRelativeUrl) && SelectedPaths.Count == 0
+            ? SourceFolderServerRelativeUrl.TrimEnd('/')
+            : listRootServerRelativeUrl;
 
     /// <summary>
     /// Optional wildcard patterns on the item/file NAME (leaf), e.g. "*.pdf"

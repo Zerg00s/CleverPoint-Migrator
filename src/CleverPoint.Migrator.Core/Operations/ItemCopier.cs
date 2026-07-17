@@ -63,6 +63,12 @@ public class ItemCopier
     public DateTime? LastScanMaxModifiedUtc { get; private set; }
 
     // Partial-batch reconciliation state (set at the start of CopyAsync).
+    // _lastAddedTargetId tracks the highest id we have RECORDED as added, so a failed batch only has to
+    // ask for the ids above it (bounded) rather than every id above the run's baseline (unbounded, and
+    // past ~5,000 rows a list-view-threshold error).
+    private int _lastAddedTargetId;
+    /// <summary>False when the target's max id could not be read: reconciliation must not guess.</summary>
+    private bool _baselineKnown;
     private List? _batchTargetList;
     private int _addBaselineId;
 
@@ -97,8 +103,8 @@ public class ItemCopier
             l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString, f => f.ReadOnlyField, f => f.Hidden));
         _targetCtx.Load(targetList, l => l.RootFolder.ServerRelativeUrl,
             l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString, f => f.ReadOnlyField, f => f.Hidden));
-        await _sourceCtx.ExecuteQueryAsync();
-        await _targetCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         var targetFieldTypes = targetList.Fields.AsEnumerable()
             .Where(f => !f.Hidden && !f.ReadOnlyField)
@@ -154,14 +160,18 @@ public class ItemCopier
         WarnDroppedFields(options, result);
         await PrimeTargetTaxonomyFieldsAsync(targetList, copyFields);
 
-        var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
+        // See CopyOptions.PathBase: a folder-scoped copy is relative to that folder, not the list root.
+        var sourceRoot = options.PathBase(sourceList.RootFolder.ServerRelativeUrl);
         var targetRoot = targetList.RootFolder.ServerRelativeUrl;
 
         // Partial-batch reconciliation baseline: items WE add get Ids above this. We are the
         // only writer, so on a batch failure we re-read items above it to learn which adds
         // actually committed (CSOM does not populate the client objects on a failed batch).
         _batchTargetList = targetList;
-        _addBaselineId = await MaxItemIdAsync(targetList);
+        var baseline = await MaxItemIdAsync(targetList);
+        _baselineKnown = baseline.HasValue;
+        _addBaselineId = baseline ?? 0;
+        _lastAddedTargetId = _addBaselineId;
 
         await PruneUpsertMapAsync(targetList, options, result);
 
@@ -223,7 +233,7 @@ public class ItemCopier
                         // early, outside FlushBatchAsync, mis-attributing their Copied/Failed.
                         await FlushBatchAsync(batch, options, result);
                         _targetCtx.Load(targetItem, i => i["Modified"]);
-                        await _targetCtx.ExecuteQueryAsync();
+                        await _targetCtx.ExecuteWithRetryAsync();
                         var sMod = sourceItem["Modified"] is DateTime sd ? sd : DateTime.MaxValue;
                         var tMod = targetItem["Modified"] is DateTime td ? td : DateTime.MinValue;
                         if (sMod <= tMod)
@@ -269,11 +279,12 @@ public class ItemCopier
         List<(ListItem Target, ListItem Source, string SourceRef)>? permissionWork = null;
         try
         {
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             foreach (var (targetItem, sourceRef, sourceItem, isUpdate, itemTargetPath) in batch)
             {
                 result.Add("Item", sourceRef, itemTargetPath, ItemCopyStatus.Copied, isUpdate ? "updated (delta)" : null);
                 result.ItemMappings.Add((sourceItem.Id, targetItem.Id));
+                if (!isUpdate && targetItem.Id > _lastAddedTargetId) _lastAddedTargetId = targetItem.Id;
                 if (options.CopyAttachments
                     && sourceItem.FieldValues.GetValueOrDefault("Attachments") is bool b && b)
                 {
@@ -317,23 +328,44 @@ public class ItemCopier
         {
             var folder = _targetCtx.Web.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelUrl));
             _targetCtx.Load(folder, f => f.Exists);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             return folder.Exists;
         }
         catch { return false; }
     }
 
-    private async Task<int> MaxItemIdAsync(List list)
+    /// <summary>
+    /// The highest item id in the list, used as the "items above this are ours" baseline.
+    ///
+    /// Scope='RecursiveAll' is REQUIRED, not cosmetic: without it the query runs against the default
+    /// (folder) scope, and on a list whose root folder holds more than 5,000 children SharePoint rejects
+    /// it with "The attempted operation is prohibited because it exceeds the list view threshold" -- even
+    /// with RowLimit 1 on the indexed ID. Verified live against a 15,000-item library: the default scope
+    /// throws, RecursiveAll returns the max id. A silent 0 here is dangerous (it makes every pre-existing
+    /// item look like one we added), so failures are logged rather than swallowed quietly.
+    /// </summary>
+    private async Task<int?> MaxItemIdAsync(List list)
     {
         try
         {
-            var q = new CamlQuery { ViewXml = "<View><Query><OrderBy><FieldRef Name='ID' Ascending='FALSE'/></OrderBy></Query><RowLimit>1</RowLimit></View>" };
+            var q = new CamlQuery
+            {
+                ViewXml = "<View Scope='RecursiveAll'><Query><OrderBy><FieldRef Name='ID' Ascending='FALSE'/></OrderBy>"
+                          + "</Query><RowLimit>1</RowLimit></View>",
+            };
             var top = list.GetItems(q);
             _targetCtx.Load(top, t => t.Include(i => i.Id));
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             return top.AsEnumerable().Select(i => i.Id).DefaultIfEmpty(0).Max();
         }
-        catch { return 0; }
+        catch (Exception ex)
+        {
+            // NULL, not 0: a 0 baseline would make every pre-existing item look like one we just added,
+            // and reconciliation would report other people's rows as copied. Unknown means "do not guess".
+            Diagnostics.TraceLog.Write("Copy",
+                $"could not read the target's max item id ({ex.Message}); batch reconciliation is disabled for this run");
+            return null;
+        }
     }
 
     /// <summary>
@@ -353,21 +385,33 @@ public class ItemCopier
         try
         {
             List<int> ourAddIds = new();
-            if (_batchTargetList != null && addEntries.Count > 0)
+            if (_batchTargetList != null && addEntries.Count > 0 && _baselineKnown)
             {
+                // The newest N items by id, where N is this batch's add count -- we are the only writer, so
+                // the ids we just created are the highest ones. Filter to "above the last id we recorded"
+                // in memory rather than in CAML.
+                //
+                // The shape matters on a large list. There is deliberately NO <Where>: a filter that MATCHES
+                // more than 5,000 rows throws "exceeds the list view threshold" even with a RowLimit, so
+                // "ID > baseline" is a trap the moment the baseline is low or unknown (it matches the whole
+                // list). Scope='RecursiveAll' + OrderBy on the indexed ID + a small RowLimit is the shape
+                // verified safe against a 15,000-item library.
                 var q = new CamlQuery
                 {
-                    ViewXml = $"<View><Query><Where><Gt><FieldRef Name='ID'/><Value Type='Counter'>{_addBaselineId}</Value></Gt></Where>" +
-                              "<OrderBy><FieldRef Name='ID' Ascending='TRUE'/></OrderBy></Query></View>"
+                    ViewXml = "<View Scope='RecursiveAll'><Query><OrderBy><FieldRef Name='ID' Ascending='FALSE'/>"
+                              + $"</OrderBy></Query><RowLimit>{addEntries.Count}</RowLimit></View>",
                 };
                 var created = _batchTargetList.GetItems(q);
                 _targetCtx.Load(created, c => c.Include(i => i.Id));
-                await _targetCtx.ExecuteQueryAsync();
-                ourAddIds = created.AsEnumerable().Select(i => i.Id).OrderBy(x => x).ToList();
+                await _targetCtx.ExecuteWithRetryAsync();
+                ourAddIds = created.AsEnumerable()
+                    .Select(i => i.Id)
+                    .Where(id => id > _lastAddedTargetId)   // ignore rows that were already there
+                    .OrderBy(x => x)
+                    .ToList();
             }
-            // Adds already recorded Copied by earlier batches (updates carry the "updated (delta)" note).
-            var priorAdds = result.Records.Count(r => r.ItemType == "Item" && r.Status == ItemCopyStatus.Copied && r.Message != "updated (delta)");
-            var committedNow = Math.Max(0, ourAddIds.Count - priorAdds);
+            // Ids above the last recorded add ARE this batch's commits, in queue order.
+            var committedNow = ourAddIds.Count;
 
             for (var i = 0; i < addEntries.Count; i++)
             {
@@ -375,7 +419,8 @@ public class ItemCopier
                 if (i < committedNow)
                 {
                     result.Add("Item", e.SourceRef, e.TargetPath, ItemCopyStatus.Copied, null);
-                    result.ItemMappings.Add((e.SourceItem.Id, ourAddIds[priorAdds + i]));
+                    result.ItemMappings.Add((e.SourceItem.Id, ourAddIds[i]));
+                    if (ourAddIds[i] > _lastAddedTargetId) _lastAddedTargetId = ourAddIds[i];
                 }
                 else
                     result.Add("Item", e.SourceRef, e.TargetPath, ItemCopyStatus.Failed, ex.Message);
@@ -404,8 +449,8 @@ public class ItemCopier
             var targetFiles = targetItem.AttachmentFiles;
             _sourceCtx.Load(sourceFiles, fs => fs.Include(a => a.FileName, a => a.ServerRelativeUrl));
             _targetCtx.Load(targetFiles, fs => fs.Include(a => a.FileName));
-            await _sourceCtx.ExecuteQueryAsync();
-            await _targetCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             var existing = new HashSet<string>(targetFiles.AsEnumerable().Select(a => a.FileName), StringComparer.OrdinalIgnoreCase);
 
             var copied = 0;
@@ -413,7 +458,7 @@ public class ItemCopier
             {
                 var file = _sourceCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(att.ServerRelativeUrl));
                 var stream = file.OpenBinaryStream();
-                await _sourceCtx.ExecuteQueryAsync();
+                await _sourceCtx.ExecuteWithRetryAsync();
                 using var ms = new MemoryStream();
                 await stream.Value.CopyToAsync(ms);
                 ms.Position = 0;
@@ -421,14 +466,14 @@ public class ItemCopier
                 if (existing.Contains(att.FileName))
                 {
                     targetFiles.GetByFileName(att.FileName).DeleteObject();
-                    await _targetCtx.ExecuteQueryAsync();
+                    await _targetCtx.ExecuteWithRetryAsync();
                 }
                 targetItem.AttachmentFiles.Add(new AttachmentCreationInformation
                 {
                     FileName = att.FileName,
                     ContentStream = ms,
                 });
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 copied++;
             }
 
@@ -437,7 +482,7 @@ public class ItemCopier
                 // Attachment writes stamped Modified; restore preserved values.
                 await ApplyAuthorsAndDatesAsync(sourceItem, targetItem);
                 targetItem.UpdateOverwriteVersion();
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 result.Add("Attachment", sourceRef, "", ItemCopyStatus.Copied, $"{copied} attachment(s)");
             }
         }
@@ -473,20 +518,37 @@ public class ItemCopier
         if (options.SelectedPaths.Count > 0 && options.ItemIds.Count == 0)
             return await LoadSelectedItemsAsync(sourceList, options);
 
-        var items = new List<ListItem>();
-        var query = new CamlQuery
-        {
-            ViewXml = $"<View Scope='RecursiveAll'><RowLimit Paged='TRUE'>{options.PageSize}</RowLimit></View>",
-        };
-        if (!string.IsNullOrEmpty(options.SourceFolderServerRelativeUrl))
-            query.FolderServerRelativeUrl = options.SourceFolderServerRelativeUrl;
-
         // Wildcard name patterns precompiled once per scan.
         var nameRegexes = options.NamePatterns.Count == 0 ? null : options.NamePatterns
             .Select(p => new System.Text.RegularExpressions.Regex(
                 "^" + System.Text.RegularExpressions.Regex.Escape(p).Replace("\\*", ".*").Replace("\\?", ".") + "$",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase))
             .ToList();
+
+        var folderScope = string.IsNullOrEmpty(options.SourceFolderServerRelativeUrl)
+            ? null : options.SourceFolderServerRelativeUrl;
+        try
+        {
+            return await ScanAsync(folderScope, null);
+        }
+        catch (Exception ex) when (folderScope != null && IsThresholdError(ex))
+        {
+            // The scoped folder is over the threshold, where a folder-scoped query is refused outright.
+            // Scan the whole list (always pageable) and keep only what lives under that folder.
+            Diagnostics.TraceLog.Write("Copy",
+                $"source folder '{folderScope}' exceeds the list view threshold; scanning the whole list and filtering by path");
+            LastScanMaxModifiedUtc = null;   // the abandoned attempt may have advanced it
+            return await ScanAsync(null, folderScope.TrimEnd('/') + "/");
+        }
+
+        async Task<List<ListItem>> ScanAsync(string? scope, string? pathPrefix)
+        {
+        var items = new List<ListItem>();
+        var query = new CamlQuery
+        {
+            ViewXml = $"<View Scope='RecursiveAll'><RowLimit Paged='TRUE'>{options.PageSize}</RowLimit></View>",
+        };
+        if (scope != null) query.FolderServerRelativeUrl = scope;
 
         do
         {
@@ -496,10 +558,16 @@ public class ItemCopier
             _sourceCtx.Load(page);
             _sourceCtx.Load(page, p => p.Include(i => i.Id, i => i.FileSystemObjectType),
                 p => p.ListItemCollectionPosition);
-            await _sourceCtx.ExecuteQueryAsync();
+            await _sourceCtx.ExecuteWithRetryAsync();
 
             foreach (var item in page)
             {
+                // Whole-list fallback: keep only what lives under the requested folder.
+                if (pathPrefix != null
+                    && !(item.FieldValues.GetValueOrDefault("FileRef") is string fr
+                         && fr.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
                 var itemModified = ReadUtc(item["Modified"]);
 
                 if (nameRegexes != null)
@@ -568,6 +636,7 @@ public class ItemCopier
         } while (query.ListItemCollectionPosition != null);
 
         return items;
+        }
     }
 
     /// <summary>
@@ -639,12 +708,40 @@ public class ItemCopier
 
     private async Task<List<ListItem>> ScanFolderAsync(List sourceList, string folderServerRel)
     {
+        try
+        {
+            return await PageItemsAsync(sourceList, folderServerRel, 200, null);
+        }
+        catch (Exception ex) when (IsThresholdError(ex))
+        {
+            // The folder is over the list view threshold. Scan the LIST instead and match on the path.
+            Diagnostics.TraceLog.Write("Copy",
+                $"folder '{folderServerRel}' exceeds the list view threshold; scanning the whole list and filtering by path");
+            var prefix = folderServerRel.TrimEnd('/') + "/";
+            return await PageItemsAsync(sourceList, null, 2000,
+                i => i.FieldValues.GetValueOrDefault("FileRef") is string f
+                     && f.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
+    /// Pages a list, optionally restricted to one folder subtree.
+    ///
+    /// <paramref name="folderServerRel"/> is the FAST path, but it is only usable below the threshold: a
+    /// folder-scoped CAML query -- RecursiveAll or not, any page size -- is rejected with "exceeds the list
+    /// view threshold" once that folder holds more than 5,000 items (verified live against a 6,000-file
+    /// folder; it survives the first pages and throws deeper in, which is why a short probe misses it).
+    /// Passing null scans the whole list, which pages safely at any size, and the caller filters by path.
+    /// </summary>
+    private async Task<List<ListItem>> PageItemsAsync(
+        List sourceList, string? folderServerRel, int pageSize, Func<ListItem, bool>? keep)
+    {
         var items = new List<ListItem>();
         var query = new CamlQuery
         {
-            ViewXml = "<View Scope='RecursiveAll'><RowLimit Paged='TRUE'>200</RowLimit></View>",
-            FolderServerRelativeUrl = folderServerRel,
+            ViewXml = $"<View Scope='RecursiveAll'><RowLimit Paged='TRUE'>{pageSize}</RowLimit></View>",
         };
+        if (folderServerRel != null) query.FolderServerRelativeUrl = folderServerRel;
         do
         {
             CancellationToken.ThrowIfCancellationRequested();
@@ -652,11 +749,16 @@ public class ItemCopier
             _sourceCtx.Load(page);
             _sourceCtx.Load(page, p => p.Include(i => i.Id, i => i.FileSystemObjectType), p => p.ListItemCollectionPosition);
             await _sourceCtx.ExecuteWithRetryAsync();
-            items.AddRange(page.AsEnumerable());
+            foreach (var item in page)
+                if (keep == null || keep(item)) items.Add(item);
             query.ListItemCollectionPosition = page.ListItemCollectionPosition;
         } while (query.ListItemCollectionPosition != null);
         return items;
     }
+
+    /// <summary>SharePoint's 5,000-row list view threshold refusal.</summary>
+    internal static bool IsThresholdError(Exception ex) =>
+        ex.Message.Contains("list view threshold", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Copies plain field values, translating user fields through the resolver.</summary>
     public async Task ApplyFieldValuesAsync(ListItem sourceItem, ListItem targetItem,
@@ -768,7 +870,7 @@ public class ItemCopier
         {
             var page = targetList.GetItems(query);
             _targetCtx.Load(page, p => p.Include(i => i.Id), p => p.ListItemCollectionPosition);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             foreach (var item in page) live.Add(item.Id);
             query.ListItemCollectionPosition = page.ListItemCollectionPosition;
         } while (query.ListItemCollectionPosition != null);
@@ -808,7 +910,7 @@ public class ItemCopier
             _targetCtx.Load(tf, f => f.InternalName);
             _targetTaxFields[write] = tf;
         }
-        try { await _targetCtx.ExecuteQueryAsync(); }
+        try { await _targetCtx.ExecuteWithRetryAsync(); }
         catch { _targetTaxFields.Clear(); }   // fields missing -> multi values warn, single still work
     }
 
@@ -909,7 +1011,7 @@ public class ItemCopier
             folderItem["Title"] = folderCreation.LeafName;
             folderItem.Update();
             _targetCtx.Load(folderItem, i => i.Id);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
         }
         catch (ServerException)
         {
@@ -958,7 +1060,7 @@ public class ItemCopier
             targetFolderItem["Created"] = ToWriteDate(sourceItem["Created"]);
             targetFolderItem["Modified"] = ToWriteDate(sourceItem["Modified"]);
             targetFolderItem.UpdateOverwriteVersion();
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             return;
         }
         catch (ServerException ex) when (ex.Message.Contains("Invalid data", StringComparison.OrdinalIgnoreCase)
@@ -982,7 +1084,7 @@ public class ItemCopier
         formValues.Add(new ListItemFormUpdateValue { FieldName = "Modified", FieldValue = Model.DateText.ForFormUpdate(modifiedSite, culture) });
 
         var validation = targetFolderItem.ValidateUpdateListItem(formValues, false, "", false, false, "");
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         foreach (var fv in validation.Where(v => v.HasException))
             result.Add("Folder", sourceRef, "", ItemCopyStatus.Warning, $"{fv.FieldName}: {fv.ErrorMessage}");
     }
@@ -1011,7 +1113,7 @@ public class ItemCopier
 
         // bNewDocumentUpdate=true: a document update, no version bump.
         var validation = targetItem.ValidateUpdateListItem(formValues, true, "", false, false, "");
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         foreach (var fv in validation.Where(v => v.HasException))
             result.Add("File", sourceRef, "", ItemCopyStatus.Warning, $"{fv.FieldName}: {fv.ErrorMessage}");
     }
@@ -1055,7 +1157,7 @@ public class ItemCopier
         _targetTimeZone ??= _targetCtx.Web.RegionalSettings.TimeZone;
         var c = _targetTimeZone.UTCToLocalTime(createdUtc);
         var m = _targetTimeZone.UTCToLocalTime(modifiedUtc);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         return (c.Value, m.Value);
     }
 
@@ -1068,7 +1170,7 @@ public class ItemCopier
     {
         if (_targetCulture != null) return _targetCulture;
         _targetCtx.Load(_targetCtx.Web.RegionalSettings, r => r.LocaleId);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         _targetCulture = Model.DateText.CultureForLcid((int)_targetCtx.Web.RegionalSettings.LocaleId);
         return _targetCulture;
     }

@@ -1,3 +1,4 @@
+using CleverPoint.Migrator.Core.Csom;
 using CleverPoint.Migrator.Core.Model;
 using Microsoft.SharePoint.Client;
 
@@ -35,7 +36,7 @@ public class DependencyCopier
                 ct => ct.Parent.StringId, ct => ct.FieldLinks.Include(fl => fl.Name)),
             l => l.Fields.Include(f => f.InternalName, f => f.SchemaXml, f => f.Hidden, f => f.FromBaseType,
                 f => f.Sealed, f => f.TypeAsString, f => f.ReadOnlyField));
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
 
         // Site columns used by the source list that exist as SITE columns on
         // the source web: ensure equivalents on the target web.
@@ -43,8 +44,8 @@ public class DependencyCopier
         var targetWebFields = _targetCtx.Web.AvailableFields;
         _sourceCtx.Load(sourceWebFields, fs => fs.Include(f => f.InternalName, f => f.SchemaXml, f => f.Group));
         _targetCtx.Load(targetWebFields, fs => fs.Include(f => f.InternalName));
-        await _sourceCtx.ExecuteQueryAsync();
-        await _targetCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         var targetWebFieldNames = new HashSet<string>(
             targetWebFields.AsEnumerable().Select(f => f.InternalName), StringComparer.OrdinalIgnoreCase);
@@ -79,7 +80,7 @@ public class DependencyCopier
                     var schema = System.Text.RegularExpressions.Regex.Replace(
                         webField.SchemaXml, @"\s(SourceID|Version|ColName|RowOrdinal)=""[^""]*""", "");
                     _targetCtx.Web.Fields.AddFieldAsXml(schema, false, AddFieldOptions.AddFieldInternalNameHint);
-                    await _targetCtx.ExecuteQueryAsync();
+                    await _targetCtx.ExecuteWithRetryAsync();
                     result.Add("SiteColumn", name, name, ItemCopyStatus.Copied, webField.Group);
                 }
                 targetWebFieldNames.Add(name);
@@ -97,7 +98,7 @@ public class DependencyCopier
         // the same id (the schema copier then attaches them to the list).
         var targetWebCts = _targetCtx.Web.AvailableContentTypes;
         _targetCtx.Load(targetWebCts, cts => cts.Include(ct => ct.StringId, ct => ct.Name));
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
         var targetCtIds = new HashSet<string>(targetWebCts.AsEnumerable().Select(ct => ct.StringId), StringComparer.OrdinalIgnoreCase);
         var targetCtNames = new HashSet<string>(targetWebCts.AsEnumerable().Select(ct => ct.Name), StringComparer.OrdinalIgnoreCase);
 
@@ -122,7 +123,7 @@ public class DependencyCopier
                     Name = ct.Name,
                     Group = string.IsNullOrEmpty(ct.Group) ? "Migrated Content Types" : ct.Group,
                 });
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
 
                 // Field links: attach site columns the CT uses (best effort).
                 foreach (var fl in ct.FieldLinks.AsEnumerable())
@@ -135,7 +136,7 @@ public class DependencyCopier
                         var field = _targetCtx.Web.AvailableFields.GetByInternalNameOrTitle(fl.Name);
                         created.FieldLinks.Add(new FieldLinkCreationInformation { Field = field });
                         created.Update(false);
-                        await _targetCtx.ExecuteQueryAsync();
+                        await _targetCtx.ExecuteWithRetryAsync();
                     }
                     catch (Exception ex)
                     {
@@ -163,7 +164,7 @@ public class DependencyCopier
         var srcTax = _sourceCtx.CastTo<Microsoft.SharePoint.Client.Taxonomy.TaxonomyField>(webField);
         _sourceCtx.Load(srcTax, f => f.SspId, f => f.TermSetId, f => f.AnchorId, f => f.AllowMultipleValues,
             f => f.Title, f => f.InternalName, f => f.TypeAsString, f => f.Id);
-        await _sourceCtx.ExecuteQueryAsync();
+        await _sourceCtx.ExecuteWithRetryAsync();
 
         var sspId = srcTax.SspId;
         var termSetId = srcTax.TermSetId;
@@ -189,7 +190,7 @@ public class DependencyCopier
         tgtTax.AnchorId = anchorId;
         tgtTax.AllowMultipleValues = srcTax.AllowMultipleValues;
         tgtTax.Update();
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         result.Add("SiteColumn", srcTax.InternalName, srcTax.InternalName, ItemCopyStatus.Copied,
             $"managed metadata bound to term set {termSetId} in term store {sspId}");

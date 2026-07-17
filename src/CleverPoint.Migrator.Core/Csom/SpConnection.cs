@@ -66,25 +66,71 @@ public class SpConnection
 
 public static class CsomExtensions
 {
-    /// <summary>ExecuteQuery with throttling retry (CSOM throws on 429 with a WebException).</summary>
+    /// <summary>
+    /// ExecuteQuery that survives throttling. SharePoint answers 429/503 when it wants less traffic, and
+    /// CSOM surfaces that as an exception -- so a plain ExecuteQueryAsync turns a "slow down" into a failed
+    /// item. This waits and retries instead, and does it politely:
+    ///
+    ///  - it takes its turn on the SHARED per-host gate, so a 429 raised by ANY concurrent request (REST
+    ///    uploads, other parallel workers, another migration in the same process) holds this one back too;
+    ///  - it honors the server's Retry-After when present rather than guessing a backoff;
+    ///  - it PAUSES the whole host for that delay, so the other workers back off as well.
+    ///
+    /// Retrying the batch is safe: a throttled request is rejected outright, so nothing was committed.
+    /// </summary>
     public static async Task ExecuteWithRetryAsync(this ClientContext ctx, int maxRetries = 6, Action<int, int>? onThrottle = null)
     {
+        var host = new Uri(ctx.Url).Host;
         for (var attempt = 1; ; attempt++)
         {
+            await Http.RequestThrottle.WaitTurnAsync(host);
             try
             {
                 await ctx.ExecuteQueryAsync();
                 return;
             }
-            catch (WebException ex) when (attempt <= maxRetries && IsThrottle(ex))
+            catch (Exception ex) when (attempt <= maxRetries && TryGetThrottleWait(ex, attempt, out var wait))
             {
-                var wait = (int)Math.Pow(2, attempt);
-                onThrottle?.Invoke(wait, attempt);
-                await Task.Delay(TimeSpan.FromSeconds(wait));
+                Http.RequestThrottle.PauseHost(host, wait);
+                onThrottle?.Invoke((int)wait.TotalSeconds, attempt);
+                Diagnostics.TraceLog.Write("Throttle",
+                    $"CSOM throttled on {host} (attempt {attempt}/{maxRetries}); waiting {wait.TotalSeconds:F0}s");
+                await Task.Delay(wait);
             }
         }
     }
 
-    private static bool IsThrottle(WebException ex) =>
-        ex.Response is HttpWebResponse r && ((int)r.StatusCode == 429 || (int)r.StatusCode == 503);
+    /// <summary>
+    /// True (with how long to wait) when an exception is SharePoint asking for less traffic. Prefers the
+    /// server's Retry-After; falls back to exponential backoff. The message check is the important one in
+    /// practice: depending on the stack, CSOM can surface the 429 without an inspectable response object,
+    /// which is how "The remote server returned an error: (429)" reached users as a failed file.
+    /// </summary>
+    /// <summary>
+    /// True (with how long to wait) when an exception is SharePoint asking for less traffic. Public so the
+    /// throttle handling can be tested against the exact exception shapes SharePoint produces.
+    /// </summary>
+    public static bool TryGetThrottleWait(Exception ex, int attempt, out TimeSpan wait)
+    {
+        wait = default;
+        var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt), 300));
+
+        var web = ex as WebException ?? ex.InnerException as WebException;
+        if (web?.Response is HttpWebResponse r && IsThrottleStatus((int)r.StatusCode))
+        {
+            var header = r.Headers["Retry-After"];
+            wait = int.TryParse(header, out var secs) && secs > 0 ? TimeSpan.FromSeconds(secs) : backoff;
+            return true;
+        }
+
+        for (var e = ex; e != null; e = e.InnerException)
+            if (e.Message.Contains("(429)") || e.Message.Contains("(503)") || e.Message.Contains("(504)"))
+            {
+                wait = backoff;
+                return true;
+            }
+        return false;
+    }
+
+    private static bool IsThrottleStatus(int status) => status is 429 or 503 or 504;
 }

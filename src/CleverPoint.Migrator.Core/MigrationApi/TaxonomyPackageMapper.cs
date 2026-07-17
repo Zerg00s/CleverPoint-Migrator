@@ -1,3 +1,4 @@
+using CleverPoint.Migrator.Core.Csom;
 using Microsoft.SharePoint.Client;
 using Microsoft.SharePoint.Client.Taxonomy;
 
@@ -85,13 +86,13 @@ public class TaxonomyPackageMapper
                 f => f.TermSetId, f => f.AllowMultipleValues);
             pending.Add((name, tf));
         }
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         foreach (var (sourceName, tf) in pending)
         {
             var note = _targetList.Fields.GetById(tf.TextField);
             _targetCtx.Load(note, f => f.InternalName);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
 
             _columns[sourceName] = new TaxColumn
             {
@@ -134,7 +135,7 @@ public class TaxonomyPackageMapper
     {
         // A library needs a file to hang a list item off; a list takes a plain item.
         _targetCtx.Load(_targetList, l => l.BaseType, l => l.RootFolder.ServerRelativeUrl);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         ListItem seed;
         Microsoft.SharePoint.Client.File? seedFile = null;
@@ -148,7 +149,7 @@ public class TaxonomyPackageMapper
                 Overwrite = true,
             });
             _targetCtx.Load(seedFile, f => f.ListItemAllFields);
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
             seed = seedFile.ListItemAllFields;
         }
         else
@@ -156,7 +157,7 @@ public class TaxonomyPackageMapper
             seed = _targetList.AddItem(new ListItemCreationInformation());
             seed["Title"] = "_taxonomy-seed";
             seed.Update();
-            await _targetCtx.ExecuteQueryAsync();
+            await _targetCtx.ExecuteWithRetryAsync();
         }
 
         try
@@ -175,7 +176,7 @@ public class TaxonomyPackageMapper
                     coll.PopulateFromLabelGuidPairs(pairs);
                     multi.Field.SetFieldValueByValueCollection(seed, coll);
                     seed.Update();
-                    await _targetCtx.ExecuteQueryAsync();
+                    await _targetCtx.ExecuteWithRetryAsync();
                     await HarvestAsync(seed, multi);
                 }
                 else if (single != null)
@@ -187,7 +188,7 @@ public class TaxonomyPackageMapper
                             WssId = -1, Label = label, TermGuid = termId.ToString(),
                         };
                         seed.Update();
-                        await _targetCtx.ExecuteQueryAsync();
+                        await _targetCtx.ExecuteWithRetryAsync();
                         await HarvestAsync(seed, single);
                     }
                 }
@@ -198,18 +199,18 @@ public class TaxonomyPackageMapper
             try
             {
                 seed.DeleteObject();
-                await _targetCtx.ExecuteQueryAsync();
+                await _targetCtx.ExecuteWithRetryAsync();
                 if (seedFile != null)
                 {
                     // The file lands in the recycle bin; leaving it there is noise, so clear it.
                     var recycled = _targetCtx.Web.RecycleBin;
                     _targetCtx.Load(recycled, r => r.Include(e => e.Id, e => e.LeafName));
-                    await _targetCtx.ExecuteQueryAsync();
+                    await _targetCtx.ExecuteWithRetryAsync();
                     foreach (var e in recycled.AsEnumerable()
                                  .Where(e => e.LeafName.StartsWith("_taxonomy-seed-", StringComparison.OrdinalIgnoreCase))
                                  .ToList())
                         e.DeleteObject();
-                    await _targetCtx.ExecuteQueryAsync();
+                    await _targetCtx.ExecuteWithRetryAsync();
                 }
             }
             catch (Exception ex)
@@ -228,7 +229,7 @@ public class TaxonomyPackageMapper
     private async Task HarvestAsync(ListItem seed, TaxColumn column)
     {
         _targetCtx.Load(seed);
-        await _targetCtx.ExecuteQueryAsync();
+        await _targetCtx.ExecuteWithRetryAsync();
 
         var value = seed.FieldValues.GetValueOrDefault(column.InternalName);
         foreach (var v in Flatten(value))

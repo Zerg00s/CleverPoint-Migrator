@@ -49,8 +49,8 @@ public class PageCopier
         targetCtx.Load(targetCtx.Web, w => w.ServerRelativeUrl, w => w.Url);
         sourceCtx.Load(sourceList.RootFolder, f => f.ServerRelativeUrl);
         targetCtx.Load(targetList.RootFolder, f => f.ServerRelativeUrl);
-        await sourceCtx.ExecuteQueryAsync();
-        await targetCtx.ExecuteQueryAsync();
+        await sourceCtx.ExecuteWithRetryAsync();
+        await targetCtx.ExecuteWithRetryAsync();
 
         var users = new UserResolver(sourceCtx, targetCtx);
         await users.PrimeSourceUsersAsync();
@@ -59,7 +59,7 @@ public class PageCopier
         var targetPages = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         var existingQuery = targetList.GetItems(CamlQuery.CreateAllItemsQuery(500));
         targetCtx.Load(existingQuery);
-        await targetCtx.ExecuteQueryAsync();
+        await targetCtx.ExecuteWithRetryAsync();
         foreach (var item in existingQuery)
         {
             var n = ((string)item["FileRef"]).Split('/')[^1];
@@ -68,7 +68,7 @@ public class PageCopier
 
         var pages = sourceList.GetItems(CamlQuery.CreateAllItemsQuery(500));
         sourceCtx.Load(pages);
-        await sourceCtx.ExecuteQueryAsync();
+        await sourceCtx.ExecuteWithRetryAsync();
 
         foreach (var page in pages.AsEnumerable().Where(p => p.FileSystemObjectType == FileSystemObjectType.File))
         {
@@ -118,7 +118,7 @@ public class PageCopier
                 var stub = targetCtx.Web.GetFolderByServerRelativePath(ResourcePath.FromDecodedUrl(targetList.RootFolder.ServerRelativeUrl))
                     .Files.AddTemplateFile(targetUrl, TemplateFileType.ClientSidePage);
                 targetCtx.Load(stub, f => f.ServerRelativeUrl);
-                await targetCtx.ExecuteQueryAsync();
+                await targetCtx.ExecuteWithRetryAsync();
                 if (!stub.ServerRelativeUrl.Equals(targetUrl, StringComparison.OrdinalIgnoreCase))
                 {
                     // Name occupied (likely a checked-out page); undo the
@@ -131,7 +131,7 @@ public class PageCopier
 
                 var stubItem = targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetUrl)).ListItemAllFields;
                 targetCtx.Load(stubItem, i => i.Id);
-                await targetCtx.ExecuteQueryAsync();
+                await targetCtx.ExecuteWithRetryAsync();
                 var targetWebUrl = targetCtx.Web.Url.TrimEnd('/');
                 var pageId = stubItem.Id;
 
@@ -169,7 +169,7 @@ public class PageCopier
                 // draft minor version behind), then publish LAST.
                 var item = targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetUrl)).ListItemAllFields;
                 targetCtx.Load(item, i => i.Id);
-                await targetCtx.ExecuteQueryAsync();
+                await targetCtx.ExecuteWithRetryAsync();
                 var authorId = page.FieldValues.GetValueOrDefault("Author") is FieldUserValue av
                     ? await users.ResolveAsync(av.LookupId) : null;
                 var editorId = page.FieldValues.GetValueOrDefault("Editor") is FieldUserValue ev
@@ -188,7 +188,7 @@ public class PageCopier
                 if (page.FieldValues.TryGetValue("PromotedState", out var ps) && ps is not null)
                     item["PromotedState"] = ps;
                 item.UpdateOverwriteVersion();
-                await targetCtx.ExecuteQueryAsync();
+                await targetCtx.ExecuteWithRetryAsync();
 
                 await _target.Rest.PostAsync($"{targetWebUrl}/_api/sitepages/pages({pageId})/publish");
 
@@ -215,12 +215,12 @@ public class PageCopier
     {
         var item = pagesList.GetItemById(pageId);
         ctx.Load(item);
-        await ctx.ExecuteQueryAsync();
+        await ctx.ExecuteWithRetryAsync();
         var actualRef = (string)item["FileRef"];
         if (!actualRef.Equals(intendedUrl, StringComparison.OrdinalIgnoreCase))
         {
             ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(actualRef)).MoveTo(intendedUrl, MoveOperations.Overwrite);
-            await ctx.ExecuteQueryAsync();
+            await ctx.ExecuteWithRetryAsync();
         }
     }
 
@@ -240,7 +240,7 @@ public class PageCopier
             var item = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(fileUrl)).ListItemAllFields;
             ctx.Load(item, i => i["ContentTypeId"]);
             ctx.Load(list.ContentTypes, cts => cts.Include(c => c.Name, c => c.StringId));
-            await ctx.ExecuteQueryAsync();
+            await ctx.ExecuteWithRetryAsync();
 
             var current = item["ContentTypeId"]?.ToString() ?? "";
             if (current.StartsWith(SitePageContentTypeBaseId, StringComparison.OrdinalIgnoreCase))
@@ -254,7 +254,7 @@ public class PageCopier
 
             item["ContentTypeId"] = sitePageCt.StringId;
             item.UpdateOverwriteVersion();
-            await ctx.ExecuteQueryAsync();
+            await ctx.ExecuteWithRetryAsync();
         }
         catch { /* best-effort; the SitePages call will surface a clear error if it still fails */ }
     }
@@ -271,7 +271,7 @@ public class PageCopier
         try
         {
             ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativeUrl)).DeleteObject();
-            await ctx.ExecuteQueryAsync();
+            await ctx.ExecuteWithRetryAsync();
             return "deleted";
         }
         catch (ServerException first)
@@ -285,7 +285,7 @@ public class PageCopier
                 var file = ctx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(serverRelativeUrl));
                 file.UndoCheckOut();
                 file.DeleteObject();
-                await ctx.ExecuteQueryAsync();
+                await ctx.ExecuteWithRetryAsync();
                 return "undocheckout+deleted";
             }
             catch (ServerException second)

@@ -86,7 +86,7 @@ public static class RunCoordinator
                     try
                     {
                         targetCtx.Web.GetFileByServerRelativePath(ResourcePath.FromDecodedUrl(targetRef)).DeleteObject();
-                        await targetCtx.ExecuteQueryAsync();
+                        await targetCtx.ExecuteWithRetryAsync();
                         onProgress?.Invoke($"healing: deleted corrupt target {targetRef.Split('/')[^1]}");
                     }
                     catch (Exception ex)
@@ -153,7 +153,7 @@ public static class RunCoordinator
     {
         var list = ctx.Web.Lists.GetByTitle(listTitle);
         ctx.Load(list.RootFolder, f => f.ServerRelativeUrl);
-        await ctx.ExecuteQueryAsync();
+        await ctx.ExecuteWithRetryAsync();
         var root = list.RootFolder.ServerRelativeUrl;
 
         var sizes = new Dictionary<string, (string, long)>(StringComparer.OrdinalIgnoreCase);
@@ -163,7 +163,7 @@ public static class RunCoordinator
             var page = list.GetItems(query);
             ctx.Load(page);
             ctx.Load(page, p => p.Include(i => i.FileSystemObjectType), p => p.ListItemCollectionPosition);
-            await ctx.ExecuteQueryAsync();
+            await ctx.ExecuteWithRetryAsync();
             foreach (var item in page)
             {
                 if (item.FileSystemObjectType != FileSystemObjectType.File) continue;
