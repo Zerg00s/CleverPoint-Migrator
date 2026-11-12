@@ -41,7 +41,7 @@
         <div class="task-list" style="margin-top:8px;">
             @foreach (var t in _tasks)
             {
-                <div class="task-row @(t.Id == _selectedId ? "sel" : "")" @onclick="@(() => _selectedId = t.Id)" role="button">
+                <div class="task-row @(t.Id == _selectedId ? "sel" : "")" @onclick="@(() => SelectTask(t.Id))" role="button">
                     <div class="task-spin" title="@StateLabel(t.State)">
                         @switch (t.State)
                         {
@@ -105,6 +105,10 @@
                                 <span class="tp-throttle tp-throttle-sm" title="SharePoint is throttling; backing off and retrying.">throttling…</span>
                             }
                             <span class="hint">@(t.Total > 0 ? $"{t.Percent}%" : $"{t.LogCount} processed")</span>
+                            @if (t.Failed > 0)
+                            {
+                                <span class="hint st-failed-text" title="Items that failed so far. Use 'Failed only' in the live log to see them.">· @t.Failed failed</span>
+                            }
                         }
                         else if (t.State == CopyTaskState.Queued)
                         {
@@ -144,6 +148,24 @@
             }
             <span class="section-title" style="margin:0;">@_selected.Name · live log (@_selected.LogCount items)</span>
             <FluentSpacer />
+            @{ var failedCount = _selected.Failed; }
+            <FluentButton Appearance="@(_failedOnly ? Appearance.Accent : Appearance.Neutral)"
+                          IconStart="@(new Icons.Regular.Size20.ErrorCircle())"
+                          @onclick="@(() => _failedOnly = !_failedOnly)"
+                          Disabled="@(!_failedOnly && failedCount == 0)"
+                          Title="@(_failedOnly ? "Show all log rows" : "Show only the rows that failed (they stay put while the copy keeps running)")">
+                @(_failedOnly ? "All rows" : failedCount > 0 ? $"Failed only ({failedCount})" : "Failed only")
+            </FluentButton>
+            @if (_selected.State == CopyTaskState.Running)
+            {
+                var newSincePause = _paused ? Math.Max(0, _selected.LogCount - _pausedAtCount) : 0;
+                <FluentButton Appearance="@(_paused ? Appearance.Accent : Appearance.Neutral)"
+                              IconStart="@(_paused ? new Icons.Regular.Size20.Play() : new Icons.Regular.Size20.Pause())"
+                              @onclick="TogglePause"
+                              Title="@(_paused ? "Resume the live log" : "Freeze the log so you can click a row; the copy keeps running")">
+                    @(_paused ? (newSincePause > 0 ? $"Resume ({newSincePause:N0} new)" : "Resume") : "Pause log")
+                </FluentButton>
+            }
             <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Edit())"
                           @onclick="@(() => OpenCopyTask(_selected))" Title="Open this copy task's settings (the New Copy Task screen)">Copy task</FluentButton>
             <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())"
@@ -161,6 +183,17 @@
                 <FluentMenuItem OnClick="@(() => Export(LogExporter.Format.Xlsx))">Excel (.xlsx)</FluentMenuItem>
             </FluentMenu>
         </FluentToolbar>
+        @if (_verifying)
+        {
+            <div class="verify-row">
+                <FluentProgressRing Style="width:16px;height:16px;" />
+                <span class="tp-metric">@(_verifyDeep ? "Deep verify" : "Verify")@(string.IsNullOrEmpty(_verifyStatus) ? "…" : $": {_verifyStatus}")</span>
+                <FluentSpacer />
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size16.DismissCircle())"
+                              Disabled="@(_verifyCts is null || _verifyCts.IsCancellationRequested)"
+                              @onclick="CancelVerify" Title="Stop the verification (no report is written)">Cancel</FluentButton>
+            </div>
+        }
         @if (_selected.State == CopyTaskState.Running && _selected.Total > 0)
         {
             <div class="task-prog" style="margin-top:10px;">
@@ -186,16 +219,27 @@
         @{
             // Snapshot under the same lock the worker uses to Add/RemoveRange, or a mid-run
             // trim (RemoveRange shifting the backing array) throws inside the renderer.
+            // While paused the frozen snapshot is rendered instead, so rows stop moving under the
+            // cursor; the worker keeps appending to the task's Log behind it.
             List<Core.Model.ItemCopyRecord> rows;
-            lock (_selected.Log) { rows = _selected.Log.AsEnumerable().Reverse().ToList(); }
+            if (_paused && _pausedRows is not null && _selected.State == CopyTaskState.Running)
+                rows = _pausedRows;
+            else
+            {
+                lock (_selected.Log) { rows = _selected.Log.AsEnumerable().Reverse().ToList(); }
+                if (!_selected.IsActive) { _paused = false; _pausedRows = null; }
+            }
+            if (_failedOnly) rows = rows.Where(r => r.Status == Core.Model.ItemCopyStatus.Failed).ToList();
         }
         <div class="cp-scroll cp-grid" style="height: calc(100vh - 470px); min-height:180px; margin-top:12px;">
             @if (rows.Count == 0)
             {
                 <div style="padding:48px 16px; text-align:center;">
-                    <span class="hint">@(_selected.State == CopyTaskState.Running
-                        ? (string.IsNullOrEmpty(_selected.Phase) ? "Waiting for the first item…" : _selected.Phase)
-                        : "No items were logged for this task.")</span>
+                    <span class="hint">@(_failedOnly
+                        ? "No failed rows in the live log (it keeps the most recent 3,000 rows; run history has the full record)."
+                        : _selected.State == CopyTaskState.Running
+                            ? (string.IsNullOrEmpty(_selected.Phase) ? "Waiting for the first item…" : _selected.Phase)
+                            : "No items were logged for this task.")</span>
                 </div>
             }
             else
@@ -303,6 +347,29 @@
     }
 
     private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+
+    // Live-log controls. "Failed only" filters the rendered snapshot; "Pause" freezes it so a
+    // fast-moving log (thousands of rows/min) can actually be clicked.
+    private bool _failedOnly;
+    private bool _paused;
+    private int _pausedAtCount;
+    private List<Core.Model.ItemCopyRecord>? _pausedRows;
+
+    private void TogglePause()
+    {
+        if (_selected is not { } t) return;
+        if (_paused) { _paused = false; _pausedRows = null; return; }
+        lock (t.Log) { _pausedRows = t.Log.AsEnumerable().Reverse().ToList(); }
+        _pausedAtCount = t.LogCount;
+        _paused = true;
+    }
+
+    private void SelectTask(int id)
+    {
+        if (id == _selectedId) return;
+        _selectedId = id;
+        _paused = false; _pausedRows = null; _failedOnly = false;
+    }
     private void Refresh() => _tasks = Runner.Snapshot();
 
     private void OpenInHistory(CopyTask t) => Nav.NavigateTo("/history");
@@ -345,25 +412,53 @@
     // then surface it via the "saved to…" modal. Runs on a background thread (paging every item,
     // and hashing for deep) so the live-log UI stays responsive.
     private bool _verifying;
+    private bool _verifyDeep;
+    private string _verifyStatus = "";
+    private CancellationTokenSource? _verifyCts;
+    private DateTime _lastVerifyRender = DateTime.MinValue;
+
     private async Task Verify(CopyTask? t, bool deep)
     {
         if (t is null || _verifying) return;
         var run = t.HistoryRunId > 0 ? History.GetRun(t.HistoryRunId) : null;
         if (run is null) { Toasts.ShowWarning("This task has no completed run to verify yet."); return; }
-        _verifying = true;
-        Toasts.ShowInfo(deep
-            ? "Deep verification started (hashing file contents). This can take a while for large libraries…"
-            : "Verification started. This can take a while for large libraries…");
+        _verifying = true; _verifyDeep = deep; _verifyStatus = "Starting…";
+        _verifyCts = new CancellationTokenSource();
+        var ct = _verifyCts.Token;
         StateHasChanged();
         try
         {
-            var (report, path) = await Task.Run(() => Migrations.VerifyRunAsync(run, deep));
+            var (report, path) = await Task.Run(() => Migrations.VerifyRunAsync(run, deep,
+                onProgress: OnVerifyProgress, ct: ct), ct);
             _exportedPath = path;
             if (report.IsClean) Toasts.ShowSuccess($"Verified: {report.Verdict}.");
             else Toasts.ShowWarning($"{report.Mismatches.Count} difference(s) found. See the report.");
         }
+        catch (OperationCanceledException) { Toasts.ShowInfo("Verification cancelled. No report was written."); }
         catch (Exception ex) { Toasts.ShowError($"Verification could not run: {ex.Message}"); }
-        finally { _verifying = false; StateHasChanged(); }
+        finally
+        {
+            _verifying = false; _verifyStatus = "";
+            _verifyCts?.Dispose(); _verifyCts = null;
+            StateHasChanged();
+        }
+    }
+
+    // Called from the verifier's background thread; re-render at most ~4×/s so a fast
+    // compare loop does not flood the renderer.
+    private void OnVerifyProgress(string text)
+    {
+        _verifyStatus = text;
+        var now = DateTime.UtcNow;
+        if ((now - _lastVerifyRender).TotalMilliseconds < 250) return;
+        _lastVerifyRender = now;
+        if (!_disposed) _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void CancelVerify()
+    {
+        try { _verifyCts?.Cancel(); } catch { }
+        _verifyStatus = "Cancelling…";
     }
 
     // Local time, e.g. "5/31/2026 7:59:49 PM".
@@ -380,11 +475,14 @@
         Pending.Reset(t.SourceSite, t.TargetSite);
         Pending.TargetListTitle = string.IsNullOrEmpty(t.Options.TargetListTitle) ? null : t.Options.TargetListTitle;
         Pending.TargetListUrl = t.Options.TargetListUrl;
+        Pending.TargetListPath = t.Options.TargetListServerRelativeUrl;
         Pending.TargetSubfolderRelative = t.Options.TargetSubfolderRelative;
         Pending.ContentOnly = !t.Options.MergeSchema;
+        Pending.RestoredSettings = RunScope.FromOptions(t.Options, t.Engine, t.SourceIsLibrary);
         Pending.Jobs.Add(new PendingJob
         {
             SourceListTitle = t.SourceList,
+            SourceListPath = t.Options.SourceListServerRelativeUrl,
             IsLibrary = t.SourceIsLibrary,
             SourceFolder = t.Options.SourceFolderServerRelativeUrl,   // keep the run's folder scope on re-run
             SelectedPaths = t.Options.SelectedPaths?.ToList() ?? new(),
@@ -480,5 +578,8 @@
         _ => "st-interrupted",
     };
 
-    public void Dispose() => Runner.Changed -= OnChanged;
+    // A verify keeps running after navigation (the CSV still lands in Downloads and the
+    // result toast is global); only the progress re-renders stop.
+    private bool _disposed;
+    public void Dispose() { _disposed = true; Runner.Changed -= OnChanged; }
 }

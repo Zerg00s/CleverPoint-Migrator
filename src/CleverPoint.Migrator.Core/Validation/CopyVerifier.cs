@@ -82,13 +82,17 @@ public class CopyVerifier
     public async Task<List<string>> VerifyAsync(List sourceList, List targetList,
         IEnumerable<string> compareFields, bool compareFileContent = false,
         Dictionary<string, string>? knownSourceHashes = null, bool compareUsers = true,
-        int contentSampleEvery = 1, VerificationStats? stats = null, List<VerificationRow>? itemRows = null)
+        int contentSampleEvery = 1, VerificationStats? stats = null, List<VerificationRow>? itemRows = null,
+        Action<string>? onProgress = null, CancellationToken ct = default)
     {
         var fileIndex = 0;
         var mismatches = new List<string>();
 
-        var sourceItems = await LoadAsync(_sourceCtx, sourceList);
-        var targetItems = await LoadAsync(_targetCtx, targetList);
+        // Progress is phase text for the UI ("Reading source… 12,500 items", "Comparing 7,838 / 62,281").
+        // Paging and hashing are the slow parts, so both report as they go.
+        var sourceItems = await LoadAsync(_sourceCtx, sourceList, n => onProgress?.Invoke($"Reading source list… {n:N0} items"), ct);
+        var targetItems = await LoadAsync(_targetCtx, targetList, n => onProgress?.Invoke($"Reading target list… {n:N0} items"), ct);
+        ct.ThrowIfCancellationRequested();
         _sourceCtx.Load(sourceList, l => l.BaseType);
         await _sourceCtx.ExecuteWithRetryAsync();
         var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
@@ -127,8 +131,14 @@ public class CopyVerifier
             stats.SourceFiles = sourceItems.Count(i => i.FileSystemObjectType == FileSystemObjectType.File);
         }
 
+        var compared = 0;
         foreach (var src in sourceItems)
         {
+            if (compared++ % 200 == 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                onProgress?.Invoke($"Comparing {compared - 1:N0} / {sourceItems.Count:N0}");
+            }
             var rel = KeyOf(src, sourceRoot);
             var row = itemRows == null ? null : new VerificationRow
             {
@@ -174,6 +184,8 @@ public class CopyVerifier
             if (compareFileContent && src.FileSystemObjectType == FileSystemObjectType.File
                 && fileIndex++ % contentSampleEvery == 0)
             {
+                ct.ThrowIfCancellationRequested();
+                onProgress?.Invoke($"Comparing {compared - 1:N0} / {sourceItems.Count:N0} · hashing {Str(src, "FileLeafRef")}");
                 var (tgtHash, tgtBytes) = await HashWithSizeAsync(_targetCtx, (string)tgt["FileRef"]);
                 var srcHash = knownSourceHashes?.GetValueOrDefault((string)src["FileRef"])
                     ?? (await HashWithSizeAsync(_sourceCtx, (string)src["FileRef"])).Hash;
@@ -214,6 +226,8 @@ public class CopyVerifier
         }
 
         // Anything extra on the target?
+        ct.ThrowIfCancellationRequested();
+        onProgress?.Invoke($"Compared {sourceItems.Count:N0} items · checking for extra items on the target…");
         var sourcePaths = new HashSet<string>(sourceItems.Select(i => KeyOf(i, sourceRoot)), StringComparer.OrdinalIgnoreCase);
         foreach (var extra in targetByPath.Keys.Where(p => !sourcePaths.Contains(p)))
         {
@@ -252,19 +266,22 @@ public class CopyVerifier
         return (Convert.ToHexString(SHA256.HashData(bytes)), bytes.LongLength);
     }
 
-    private static async Task<List<ListItem>> LoadAsync(ClientContext ctx, List list)
+    private static async Task<List<ListItem>> LoadAsync(ClientContext ctx, List list, Action<int>? onPage = null, CancellationToken ct = default)
     {
         ctx.Load(list, l => l.RootFolder.ServerRelativeUrl);
         var items = new List<ListItem>();
         var query = new CamlQuery { ViewXml = "<View Scope='RecursiveAll'><RowLimit Paged='TRUE'>500</RowLimit></View>" };
+        onPage?.Invoke(0);
         do
         {
+            ct.ThrowIfCancellationRequested();
             var page = list.GetItems(query);
             ctx.Load(page);
             ctx.Load(page, p => p.Include(i => i.Id, i => i.FileSystemObjectType),
                 p => p.ListItemCollectionPosition);
             await ctx.ExecuteWithRetryAsync();
             items.AddRange(page);
+            onPage?.Invoke(items.Count);
             query.ListItemCollectionPosition = page.ListItemCollectionPosition;
         } while (query.ListItemCollectionPosition != null);
         return items;

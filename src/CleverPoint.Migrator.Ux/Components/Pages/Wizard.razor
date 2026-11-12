@@ -266,7 +266,7 @@
             _tgt = Pending.TargetSite;
             _jobs = Pending.Jobs.Select(j => new PendingJob
             {
-                SourceListTitle = j.SourceListTitle, IsLibrary = j.IsLibrary,
+                SourceListTitle = j.SourceListTitle, SourceListPath = j.SourceListPath, IsLibrary = j.IsLibrary,
                 SourceFolder = j.SourceFolder,
                 SelectedPaths = j.SelectedPaths.ToList(), SelectedItemIds = j.SelectedItemIds.ToList(),
                 SelectedFolderCount = j.SelectedFolderCount, SelectedFileCount = j.SelectedFileCount,
@@ -303,6 +303,7 @@
             _targetTitle = Pending.TargetListTitle!;
             _targetUrl = string.IsNullOrWhiteSpace(Pending.TargetListUrl) ? DefaultUrl(_targetTitle) : Pending.TargetListUrl!;
             _targetSubfolder = Pending.TargetSubfolderRelative ?? "";
+            _targetPath = Pending.TargetListPath;
             _targetLocked = true;
         }
         else
@@ -333,6 +334,31 @@
         // use the Classic engine (which honors it); otherwise files would land in the list root.
         if (!string.IsNullOrEmpty(_targetSubfolder)) _engine = "Classic";
         _maxVersions = Math.Clamp(Settings.DefaultMaxVersions, 1, 2000);
+        if (!fromRunAgain && Pending.RestoredSettings is { } restored) ApplyRestoredSettings(restored);
+    }
+
+    // "Run again" / "Copy task": start from the settings the original run used, not the app
+    // defaults. Only fields the scope recorded are applied (older runs leave the defaults).
+    private void ApplyRestoredSettings(RunScope r)
+    {
+        if (r.Engine is "Classic" or "MigrationApi" && string.IsNullOrEmpty(_targetSubfolder)) _engine = r.Engine;
+        if (r.CopyMode is "full" or "content" or "structure" && !_lockContentOnly) _copyMode = r.CopyMode;
+        if (r.MaxVersions is { } mv) _maxVersions = Math.Clamp(mv, 1, 2000);
+        if (r.ExistingMode is "Overwrite" or "CopyIfNewer" or "Skip") _existingMode = r.ExistingMode;
+        if (r.DateField is "Modified" or "Created") _dateField = r.DateField;
+        if (r.ModifiedSinceUtc.HasValue || r.ModifiedBeforeUtc.HasValue)
+        {
+            // Reverse of LocalDayStartUtc: the stored bounds are local-midnight UTC instants;
+            // "before" is the midnight AFTER the picked "to" day. Shift by half a day before
+            // taking .Date so a DST change (midnight landing at 23:00 or 01:00) can't move the
+            // restored day by one.
+            _useDateFilter = true;
+            _dateFrom = r.ModifiedSinceUtc?.ToLocalTime().AddHours(12).Date;
+            _dateTo = r.ModifiedBeforeUtc?.ToLocalTime().AddHours(-12).Date;
+        }
+        if (r.PreserveAuthorsAndDates is { } p) _preserve = p;
+        if (r.CopyAttachments is { } a) _attachments = a;
+        if (r.CopyPermissions is { } perm) _permissions = perm;
     }
 
     private static string DefaultUrl(string title) => string.Concat(title.Where(char.IsLetterOrDigit));
@@ -371,19 +397,27 @@
         try
         {
             var resolved = UxConnectionResolver.Resolve(conn, _src, SignIn);
+            // Titles are compared here, not with $filter=Title eq: the filter matches the site's own
+            // language while the title we hold may be in the user's (translated built-in lists).
+            using var doc = await resolved.Rest.GetJsonAsync(
+                $"{resolved.SiteUrl}/_api/web/lists?$select=Title,BaseType&$top=5000");
+            var all = doc.RootElement.GetProperty("value").EnumerateArray().ToList();
             foreach (var j in _jobs)
             {
-                var titleEnc = Uri.EscapeDataString(j.SourceListTitle.Trim().Replace("'", "''"));
-                using var doc = await resolved.Rest.GetJsonAsync(
-                    $"{resolved.SiteUrl}/_api/web/lists?$select=BaseType&$filter=Title eq '{titleEnc}'&$top=1");
-                var arr = doc.RootElement.GetProperty("value");
-                if (arr.GetArrayLength() > 0)
-                    j.IsLibrary = arr[0].GetProperty("BaseType").GetInt32() == 1;
+                var match = all.Where(e => string.Equals(e.GetProperty("Title").GetString(), j.SourceListTitle.Trim(),
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+                if (match.Count > 0)
+                    j.IsLibrary = match[0].GetProperty("BaseType").GetInt32() == 1;
             }
         }
         catch { /* leave the default; the chip just stays conservative */ }
         StateHasChanged();
     }
+
+    // Root folder path of the target list the explorer had open, and the title it had then.
+    private string? _targetPath;
+    private bool TargetPathApplies => !string.IsNullOrWhiteSpace(_targetPath)
+        && string.Equals(_targetTitle?.Trim(), Pending.TargetListTitle?.Trim(), StringComparison.OrdinalIgnoreCase);
 
     // Live check of the target list: new / exists / type-mismatch. Non-blocking.
     private async Task CheckTargetAsync()
@@ -397,11 +431,19 @@
         try
         {
             var resolved = UxConnectionResolver.Resolve(conn, _tgt, SignIn);
-            var titleEnc = Uri.EscapeDataString(_targetTitle.Trim().Replace("'", "''"));
+            // Compare titles on our side rather than with $filter=Title eq: SharePoint reports built-in
+            // titles in the user's language but filters on the site's own, so the filter can miss a list
+            // the explorer just showed. The root folder path, when known, settles it outright.
             using var doc = await resolved.Rest.GetJsonAsync(
-                $"{resolved.SiteUrl}/_api/web/lists?$select=Title,BaseType,ItemCount&$filter=Title eq '{titleEnc}'&$top=1");
-            var arr = doc.RootElement.GetProperty("value");
-            if (arr.GetArrayLength() == 0)
+                $"{resolved.SiteUrl}/_api/web/lists?$select=Title,BaseType,ItemCount,RootFolder/ServerRelativeUrl&$expand=RootFolder&$top=5000");
+            var wantTitle = _targetTitle.Trim();
+            var wantPath = TargetPathApplies ? _targetPath!.TrimEnd('/') : null;
+            var all = doc.RootElement.GetProperty("value").EnumerateArray().ToList();
+            var arr = all.Where(e => wantPath != null && string.Equals(
+                    e.GetProperty("RootFolder").GetProperty("ServerRelativeUrl").GetString()?.TrimEnd('/'), wantPath, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (arr.Count == 0)
+                arr = all.Where(e => string.Equals(e.GetProperty("Title").GetString(), wantTitle, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (arr.Count == 0)
             {
                 _targetState = TargetState.New;
                 _targetStateMsg = "New (will be created)";
@@ -478,6 +520,10 @@
             {
                 TargetListTitle = title,
                 TargetListUrl = url,
+                // Language-independent keys. The target path only applies while the wizard still points
+                // at the list the explorer had open; a retyped title means "a different list".
+                SourceListServerRelativeUrl = job.SourceListPath,
+                TargetListServerRelativeUrl = !_batch && TargetPathApplies ? _targetPath : null,
                 TargetSubfolderRelative = _targetSubfolder,
                 PreserveAuthorsAndDates = _preserve,
                 CopyAttachments = _attachments,

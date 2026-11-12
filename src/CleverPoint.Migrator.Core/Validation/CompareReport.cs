@@ -58,12 +58,14 @@ public class CompareReport
     public static async Task<CompareReport> RunAsync(SpConnection source, SpConnection target,
         string sourceListTitle, string targetListTitle, IEnumerable<string> compareFields,
         bool compareContent = false, int contentSampleEvery = 10,
-        Dictionary<int, int>? itemMap = null, bool compareUsers = true)
+        Dictionary<int, int>? itemMap = null, bool compareUsers = true,
+        Action<string>? onProgress = null, CancellationToken ct = default)
     {
+        onProgress?.Invoke("Connecting to source and target…");
         using var sourceCtx = source.CreateContext();
         using var targetCtx = target.CreateContext();
-        var sourceList = sourceCtx.Web.Lists.GetByTitle(sourceListTitle);
-        var targetList = targetCtx.Web.Lists.GetByTitle(targetListTitle);
+        var sourceList = await Operations.ListLocator.FindAsync(sourceCtx, sourceListTitle);
+        var targetList = await Operations.ListLocator.FindAsync(targetCtx, targetListTitle);
         sourceCtx.Load(sourceList, l => l.ItemCount);
         targetCtx.Load(targetList, l => l.ItemCount);
         await sourceCtx.ExecuteWithRetryAsync();
@@ -85,13 +87,15 @@ public class CompareReport
         var verifier = new CopyVerifier(sourceCtx, targetCtx) { ItemMap = itemMap };
         report.Mismatches.AddRange(await verifier.VerifyAsync(sourceList, targetList, compareFields,
             compareFileContent: compareContent, compareUsers: compareUsers,
-            contentSampleEvery: contentSampleEvery, stats: stats, itemRows: report.ItemRows));
+            contentSampleEvery: contentSampleEvery, stats: stats, itemRows: report.ItemRows,
+            onProgress: onProgress, ct: ct));
         report.ItemsPaired = stats.ItemsPaired;
         report.FilesHashVerified = stats.FilesHashChecked;
         report.BytesHashVerified = stats.BytesHashChecked;
         report.SourceFiles = stats.SourceFiles;
 
         // Target library storage (one cheap call; includes version overhead, labelled as such).
+        onProgress?.Invoke("Reading target storage size…");
         try
         {
             var root = targetList.RootFolder;

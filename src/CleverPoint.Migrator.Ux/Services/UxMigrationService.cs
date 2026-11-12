@@ -59,9 +59,13 @@ public class UxMigrationService
     /// Runs a source-vs-target verification for a completed run and writes a client-ready HTML
     /// report to Downloads. Metadata-only by default (fast, honest verdict); deep=true also
     /// hashes a 1-in-10 sample of file contents. Returns the report and the HTML path.
+    /// onProgress receives short phase text ("Reading source list… 12,500 items") for the UI;
+    /// ct cancels between pages/items and throws OperationCanceledException.
     /// </summary>
-    public async Task<(CompareReport Report, string HtmlPath)> VerifyRunAsync(MigrationRun run, bool deep, string? clientName = null)
+    public async Task<(CompareReport Report, string HtmlPath)> VerifyRunAsync(MigrationRun run, bool deep, string? clientName = null,
+        Action<string>? onProgress = null, CancellationToken ct = default)
     {
+        onProgress?.Invoke("Checking sign-in…");
         var sConn = UxConnectionResolver.Find(_settings, run.SourceUrl)
             ?? throw new InvalidOperationException($"No saved connection for the source {HostOf(run.SourceUrl)}.");
         var tConn = UxConnectionResolver.Find(_settings, run.TargetUrl)
@@ -82,7 +86,9 @@ public class UxMigrationService
         catch { /* no map is fine for libraries */ }
 
         var report = await CompareReport.RunAsync(source, target, run.SourceList, run.TargetList,
-            Array.Empty<string>(), compareContent: deep, contentSampleEvery: 10, itemMap: itemMap);
+            Array.Empty<string>(), compareContent: deep, contentSampleEvery: 10, itemMap: itemMap,
+            onProgress: onProgress, ct: ct);
+        onProgress?.Invoke("Writing the report…");
         report.PreparedBy = "CleverPoint Migrator";
         report.ClientName = clientName;
         report.ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
@@ -138,16 +144,9 @@ public class UxMigrationService
             Engine = engine == "MigrationApi" ? "MigrationApi" : "Classic",
             // Remember the exact source scope so the run can be re-opened in the
             // explorer later (folder + the picked files/folders/list items).
-            ScopeJson = System.Text.Json.JsonSerializer.Serialize(new RunScope
-            {
-                SourceFolder = options.SourceFolderServerRelativeUrl,
-                TargetListUrl = options.TargetListUrl,
-                TargetSubfolder = options.TargetSubfolderRelative,
-                SelectedPaths = options.SelectedPaths,
-                ItemIds = options.ItemIds,
-                IsLibrary = sourceIsLibrary,
-                ContentOnly = !options.MergeSchema,
-            }),
+            // The wizard settings ride along so "Run again" restores the same choices.
+            ScopeJson = System.Text.Json.JsonSerializer.Serialize(
+                RunScope.FromOptions(options, engine == "MigrationApi" ? "MigrationApi" : "Classic", sourceIsLibrary)),
         });
         onRunStarted?.Invoke(runId);
 

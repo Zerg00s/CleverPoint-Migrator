@@ -54,6 +54,8 @@ public class SpConnection
                     Rest.GetFormDigestAsync(SiteUrl).GetAwaiter().GetResult();
             }
             e.WebRequestExecutor.RequestHeaders["User-Agent"] = SpRestClient.UserAgent;
+            if (SpRestClient.RequestLanguage is { Length: > 0 } language)
+                e.WebRequestExecutor.RequestHeaders["Accept-Language"] = language;
         };
         return ctx;
     }

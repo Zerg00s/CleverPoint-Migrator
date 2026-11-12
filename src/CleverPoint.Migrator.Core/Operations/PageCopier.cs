@@ -43,8 +43,12 @@ public class PageCopier
         using var sourceCtx = _source.CreateContext();
         using var targetCtx = _target.CreateContext();
 
-        var sourceList = sourceCtx.Web.Lists.GetByTitle("Site Pages");
-        var targetList = targetCtx.Web.Lists.GetByTitle("Site Pages");
+        // By template, not by title: the library is "Site Pages" only on English sites
+        // ("Websiteseiten", "Pages du site", ...).
+        var sourceList = await ListLocator.TryFindByTemplateAsync(sourceCtx, ListLocator.SitePagesTemplate)
+            ?? throw new InvalidOperationException($"No Site Pages library was found at {_source.SiteUrl}.");
+        var targetList = await ListLocator.TryFindByTemplateAsync(targetCtx, ListLocator.SitePagesTemplate)
+            ?? throw new InvalidOperationException($"No Site Pages library was found at {_target.SiteUrl}.");
         sourceCtx.Load(sourceCtx.Web, w => w.ServerRelativeUrl, w => w.Url);
         targetCtx.Load(targetCtx.Web, w => w.ServerRelativeUrl, w => w.Url);
         sourceCtx.Load(sourceList.RootFolder, f => f.ServerRelativeUrl);

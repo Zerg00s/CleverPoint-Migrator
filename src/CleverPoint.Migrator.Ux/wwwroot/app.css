@@ -71,6 +71,10 @@ h1, h2, h3, h4, h5, h6, p {
 .throughput-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--neutral-foreground-hint, #888); flex-wrap: wrap; }
 .throughput-row .tp-metric { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .throughput-row .tp-sep { opacity: .5; }
+/* Live phase line shown under the toolbar while a verification runs (Activity + Run detail). */
+.verify-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 6px 10px; border-radius: 6px; font-size: 12px; color: var(--neutral-foreground-rest); background: color-mix(in srgb, var(--cp-accent) 8%, transparent); }
+.verify-row .tp-metric { font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-failed-text { color: #d9534f; opacity: 1; font-weight: 600; }
 .tp-throttle { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
     color: #8a5a00; background: color-mix(in srgb, #f0a500 22%, transparent); border: 1px solid color-mix(in srgb, #f0a500 45%, transparent); }
 .tp-throttle-sm { padding: 1px 7px; font-size: 11px; }

@@ -73,14 +73,18 @@ public partial class SchemaCopier
                 v => v.RowLimit, v => v.Paged, v => v.ViewQuery, v => v.ViewFields, v => v.CustomFormatter));
         await _sourceCtx.ExecuteWithRetryAsync();
 
-        // Find or create the target list.
+        // Find or create the target list. By root folder path when the caller knows it, since display
+        // titles of built-in lists change with the site and user language.
         var targetWeb = _targetCtx.Web;
-        var targetLists = targetWeb.Lists;
+        var targetLists = targetWeb.Lists;   // lookup columns are rewired against these further down
         _targetCtx.Load(targetLists, ls => ls.Include(l => l.Title, l => l.Id));
         await _targetCtx.ExecuteWithRetryAsync();
-
-        var existing = targetLists.AsEnumerable().FirstOrDefault(l =>
-            l.Title.Equals(options.TargetListTitle, StringComparison.OrdinalIgnoreCase));
+        var existing = await ListLocator.TryFindAsync(_targetCtx, options.TargetListTitle, options.TargetListServerRelativeUrl);
+        if (existing != null)
+        {
+            _targetCtx.Load(existing, l => l.Title, l => l.Id);
+            await _targetCtx.ExecuteWithRetryAsync();
+        }
 
         // Content-only mode: the target schema is sacred. Resolve the list,
         // build READ-ONLY lookup maps from fields that exist on both sides,
@@ -91,7 +95,7 @@ public partial class SchemaCopier
                 throw new InvalidOperationException(
                     $"Content-only copy: target list '{options.TargetListTitle}' does not exist. " +
                     "Create it first or run a structure + content copy.");
-            _targetCtx.Load(existing, l => l.RootFolder.ServerRelativeUrl,
+            _targetCtx.Load(existing, l => l.Id, l => l.RootFolder.ServerRelativeUrl,
                 l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString, f => f.SchemaXml));
             await _targetCtx.ExecuteWithRetryAsync();
             foreach (var sourceField in sourceList.Fields)
@@ -135,7 +139,7 @@ public partial class SchemaCopier
         }
 
         // Load target fields for the merge.
-        _targetCtx.Load(targetList, l => l.Fields.Include(f => f.InternalName), l => l.RootFolder.ServerRelativeUrl);
+        _targetCtx.Load(targetList, l => l.Id, l => l.Fields.Include(f => f.InternalName), l => l.RootFolder.ServerRelativeUrl);
         await _targetCtx.ExecuteWithRetryAsync();
         var targetFieldNames = new HashSet<string>(
             targetList.Fields.AsEnumerable().Select(f => f.InternalName), StringComparer.OrdinalIgnoreCase);

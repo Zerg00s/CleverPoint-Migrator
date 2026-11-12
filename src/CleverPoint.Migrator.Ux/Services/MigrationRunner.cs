@@ -232,6 +232,10 @@ public class MigrationRunner
             if (t.Log.Count > MaxLogKept) t.Log.RemoveRange(0, t.Log.Count - MaxLogKept);
         }
         t.LogCount++;
+        // Live failed/warning counts so the Activity view can surface failures mid-run (the
+        // final CopyResult overwrites both when the run ends).
+        if (rec.Status == ItemCopyStatus.Failed) t.Failed++;
+        else if (rec.Status == ItemCopyStatus.Warning) t.Warnings++;
         // Count only content rows toward progress (skip schema/progress rows like
         // Field, View, List, Site column, Progress) so Processed lines up with Total.
         if (rec.ItemType is "Item" or "File" or "Folder" or "OneNote")

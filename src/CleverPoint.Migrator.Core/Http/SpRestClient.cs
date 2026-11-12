@@ -179,6 +179,14 @@ public class SpRestClient
         }
     }
 
+    /// <summary>
+    /// Test hook, null in the shipped app. When set, every REST and CSOM request asks SharePoint for this
+    /// display language (e.g. "de-DE"), which is what a signed-in user with that profile language gets
+    /// without asking. SharePoint then reports built-in list titles translated ("Documents" becomes
+    /// "Dokumente"), so the language tests can reproduce what such a user sees.
+    /// </summary>
+    public static string? RequestLanguage { get; set; }
+
     private async Task<HttpRequestMessage> BuildRequestAsync(HttpMethod method, string url, Dictionary<string, string>? extraHeaders)
     {
         var host = new Uri(url).Host;
@@ -198,6 +206,8 @@ public class SpRestClient
         }
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json") { Parameters = { new NameValueHeaderValue("odata", "nometadata") } });
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+        if (RequestLanguage is { Length: > 0 } language)
+            request.Headers.TryAddWithoutValidation("Accept-Language", language);
         if (extraHeaders != null)
             foreach (var (k, v) in extraHeaders)
                 request.Headers.TryAddWithoutValidation(k, v);

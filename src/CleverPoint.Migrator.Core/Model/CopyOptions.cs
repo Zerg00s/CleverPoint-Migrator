@@ -23,6 +23,18 @@ public class CopyOptions
     /// <summary>URL leaf for a newly created target list (e.g. "Lists/MyCopy" or "MyCopyLib").</summary>
     public string? TargetListUrl { get; set; }
 
+    /// <summary>
+    /// Server-relative root folder of the SOURCE list (e.g. "/sites/hr/Freigegebene Dokumente"). When set
+    /// the list is found by this path, which is the same in every language, and the title is only a
+    /// fallback. Display titles of built-in lists are translated per site and per user, so they are not
+    /// a safe key (see ListLocator).
+    /// </summary>
+    public string? SourceListServerRelativeUrl { get; set; }
+
+    /// <summary>Server-relative root folder of an EXISTING target list to copy into. Same purpose as
+    /// <see cref="SourceListServerRelativeUrl"/>. Leave null when the target list is to be created.</summary>
+    public string? TargetListServerRelativeUrl { get; set; }
+
     /// <summary>Optional subfolder INSIDE the target list to copy into (relative to the
     /// list root, e.g. "Archive/2024"). Empty/null copies into the list root. Used when
     /// the user drops onto a specific folder in the target pane.</summary>
@@ -192,6 +204,8 @@ public class CopyOptions
         DateField = DateField,
         TargetListTitle = TargetListTitle,
         TargetListUrl = TargetListUrl,
+        SourceListServerRelativeUrl = SourceListServerRelativeUrl,
+        TargetListServerRelativeUrl = TargetListServerRelativeUrl,
         TargetSubfolderRelative = TargetSubfolderRelative,
         CopyViews = CopyViews,
         CopyListSettings = CopyListSettings,

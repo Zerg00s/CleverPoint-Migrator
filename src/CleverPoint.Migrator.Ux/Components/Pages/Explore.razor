@@ -118,11 +118,13 @@
         }
         Pending.Reset(Drag.SourceSite, _target.SiteUrl);
         Pending.TargetListTitle = _target.CurrentList.Title;
+        Pending.TargetListPath = _target.CurrentList.ServerRelativeUrl;
         Pending.TargetSubfolderRelative = _target.CurrentSubfolderRelative;   // drop into the open target folder
         Pending.ContentOnly = true;
         Pending.Jobs.Add(new PendingJob
         {
             SourceListTitle = Drag.SourceListTitle,
+            SourceListPath = Drag.SourceListPath,
             IsLibrary = Drag.IsLibrary,
             SourceFolder = Drag.SourceFolder,   // dropped items lay out relative to the dragged-from folder
             SelectedPaths = Drag.Paths.ToList(),
@@ -154,7 +156,7 @@
         if (ticked.Count > 0)
         {
             foreach (var l in ticked)
-                Pending.Jobs.Add(new PendingJob { SourceListTitle = l.Title, IsLibrary = l.IsLibrary });
+                Pending.Jobs.Add(new PendingJob { SourceListTitle = l.Title, SourceListPath = l.ServerRelativeUrl, IsLibrary = l.IsLibrary });
         }
         else if (_source.CurrentList is not null)
         {
@@ -166,6 +168,7 @@
             if (_target.CurrentList is not null)
             {
                 Pending.TargetListTitle = _target.CurrentList.Title;
+                Pending.TargetListPath = _target.CurrentList.ServerRelativeUrl;
                 Pending.TargetSubfolderRelative = _target.CurrentSubfolderRelative;   // into the open target folder
                 Pending.ContentOnly = true;
             }
@@ -177,6 +180,7 @@
             Pending.Jobs.Add(new PendingJob
             {
                 SourceListTitle = _source.CurrentList.Title,
+                SourceListPath = _source.CurrentList.ServerRelativeUrl,
                 IsLibrary = _source.CurrentListIsLibrary,
                 // The folder open on the left is the base the copy lays out from -- for a whole-folder copy
                 // (nothing ticked) AND for ticked items, so ticking "Doc" inside "A/B" lands "Doc" directly

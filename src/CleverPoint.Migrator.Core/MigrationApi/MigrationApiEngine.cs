@@ -38,7 +38,7 @@ public class MigrationApiEngine
         using var targetCtx = _target.CreateContext();
 
         // ---- Source + target structure ----
-        var sourceList = sourceCtx.Web.Lists.GetByTitle(sourceListTitle);
+        var sourceList = await Operations.ListLocator.FindAsync(sourceCtx, sourceListTitle, options.SourceListServerRelativeUrl);
         var users = new UserResolver(sourceCtx, targetCtx, null, options.UnresolvedUserFallback);
         await users.PrimeSourceUsersAsync();
 

@@ -16,6 +16,9 @@ public class PendingMigration
     /// selection into an already-open target library.</summary>
     public string? TargetListTitle { get; set; }
     public string? TargetListUrl { get; set; }
+    /// <summary>Server-relative root folder of the open target list. The engine finds the list by this
+    /// rather than by title, because built-in list titles are translated per site and per user.</summary>
+    public string? TargetListPath { get; set; }
     public bool ContentOnly { get; set; }
 
     /// <summary>Subfolder INSIDE the target list to drop into (relative to the list
@@ -27,13 +30,20 @@ public class PendingMigration
     /// skipped and only the unfinished remainder is copied.</summary>
     public long? ResumeFromRunId { get; set; }
 
+    /// <summary>When set ("Run again" from history, "Copy task" from Activity), the wizard
+    /// opens with these settings instead of the app defaults: engine, copy mode, existing-item
+    /// mode, date filter, versions and the preserve/attachments/permissions checkboxes.</summary>
+    public RunScope? RestoredSettings { get; set; }
+
     public void Reset(string source, string target)
     {
+        RestoredSettings = null;
         SourceSite = source;
         TargetSite = target;
         Jobs.Clear();
         TargetListTitle = null;
         TargetListUrl = null;
+        TargetListPath = null;
         ContentOnly = false;
         TargetSubfolderRelative = null;
         ResumeFromRunId = null;
@@ -44,6 +54,8 @@ public class PendingMigration
 public class PendingJob
 {
     public string SourceListTitle { get; set; } = "";
+    /// <summary>Server-relative root folder of the source list (language-independent key), when known.</summary>
+    public string? SourceListPath { get; set; }
     public bool IsLibrary { get; set; }
 
     /// <summary>

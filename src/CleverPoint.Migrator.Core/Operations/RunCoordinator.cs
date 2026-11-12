@@ -64,7 +64,8 @@ public static class RunCoordinator
                 .Select(r => r.SourcePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var corruptPaths = healing.RepairCorruptFiles && migratedSourceRefs.Count > 0
-                ? await FindCorruptFilesAsync(source, target, sourceListTitle, options.TargetListTitle, healing, migratedSourceRefs, onProgress)
+                ? await FindCorruptFilesAsync(source, target, sourceListTitle, options.TargetListTitle, healing, migratedSourceRefs, onProgress,
+                    options.SourceListServerRelativeUrl, options.TargetListServerRelativeUrl)
                 : new List<(string SourceRef, string TargetRef)>();
 
             if (failedPaths.Count == 0 && corruptPaths.Count == 0)
@@ -125,12 +126,13 @@ public static class RunCoordinator
     /// <summary>Target files that are missing, 0-byte, or far smaller than their source.</summary>
     public static async Task<List<(string SourceRef, string TargetRef)>> FindCorruptFilesAsync(
         SpConnection source, SpConnection target, string sourceListTitle, string targetListTitle,
-        HealingOptions healing, IReadOnlySet<string> migratedSourceRefs, Action<string>? onProgress = null)
+        HealingOptions healing, IReadOnlySet<string> migratedSourceRefs, Action<string>? onProgress = null,
+        string? sourceListServerRelativeUrl = null, string? targetListServerRelativeUrl = null)
     {
         using var sourceCtx = source.CreateContext();
         using var targetCtx = target.CreateContext();
-        var sourceSizes = await LoadFileSizesAsync(sourceCtx, sourceListTitle);
-        var targetSizes = await LoadFileSizesAsync(targetCtx, targetListTitle);
+        var sourceSizes = await LoadFileSizesAsync(sourceCtx, sourceListTitle, sourceListServerRelativeUrl);
+        var targetSizes = await LoadFileSizesAsync(targetCtx, targetListTitle, targetListServerRelativeUrl);
 
         var corrupt = new List<(string, string)>();
         foreach (var (rel, (sourceRef, sourceSize)) in sourceSizes)
@@ -149,9 +151,10 @@ public static class RunCoordinator
         return corrupt;
     }
 
-    private static async Task<Dictionary<string, (string Ref, long Size)>> LoadFileSizesAsync(ClientContext ctx, string listTitle)
+    private static async Task<Dictionary<string, (string Ref, long Size)>> LoadFileSizesAsync(
+        ClientContext ctx, string listTitle, string? listServerRelativeUrl = null)
     {
-        var list = ctx.Web.Lists.GetByTitle(listTitle);
+        var list = await ListLocator.FindAsync(ctx, listTitle, listServerRelativeUrl);
         ctx.Load(list.RootFolder, f => f.ServerRelativeUrl);
         await ctx.ExecuteWithRetryAsync();
         var root = list.RootFolder.ServerRelativeUrl;
@@ -179,7 +182,7 @@ public static class RunCoordinator
     private static async Task<HashSet<string>> AllSourcePathsAsync(SpConnection source, string listTitle, CopyOptions options)
     {
         using var ctx = source.CreateContext();
-        var sizes = await LoadFileSizesAsync(ctx, listTitle);
+        var sizes = await LoadFileSizesAsync(ctx, listTitle, options.SourceListServerRelativeUrl);
         return new HashSet<string>(sizes.Values.Select(v => v.Item1), StringComparer.OrdinalIgnoreCase);
     }
 

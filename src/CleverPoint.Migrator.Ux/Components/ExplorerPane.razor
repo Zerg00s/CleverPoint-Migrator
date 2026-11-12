@@ -372,7 +372,7 @@
             paths = new(); ids = new() { entry.ItemId }; folders = 0;
         }
         Drag.Begin(_site!, CurrentList.Title, CurrentList.IsLibrary, paths, ids, folders,
-            IsInSubfolder ? CurrentFolderServerRelativeUrl : null);
+            IsInSubfolder ? CurrentFolderServerRelativeUrl : null, CurrentList.ServerRelativeUrl);
     }
 
     private void OnDragEnd() => Drag.End();

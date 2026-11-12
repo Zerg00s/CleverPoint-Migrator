@@ -23,7 +23,7 @@ public static class CopyEngine
         using var sourceCtx = source.CreateContext();
         using var targetCtx = target.CreateContext();
 
-        var sourceList = sourceCtx.Web.Lists.GetByTitle(sourceListTitle);
+        var sourceList = await ListLocator.FindAsync(sourceCtx, sourceListTitle, options.SourceListServerRelativeUrl);
         sourceCtx.Load(sourceList, l => l.BaseType, l => l.Title, l => l.BaseTemplate,
             l => l.Fields.Include(f => f.InternalName, f => f.TypeAsString));
         await sourceCtx.ExecuteWithRetryAsync();

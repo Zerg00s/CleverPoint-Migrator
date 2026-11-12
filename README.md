@@ -85,5 +85,5 @@ dotnet run --project src\CleverPoint.Migrator.Ux
 We properly sign each release with a certificate. To do this, you need to run the following command in PowerShell:
 
 ```powershell
-.\Sign-App.ps1 -Version 1.0.14 -Release
+.\Sign-App.ps1 -Version 1.0.17 -Release
 ```

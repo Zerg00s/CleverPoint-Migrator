@@ -129,6 +129,10 @@ public static class Program
             ["parallel"] = Scenarios.ParallelCopyTest.RunAsync,
             ["pf-race"] = Scenarios.ParallelFolderRaceTest.RunAsync,
             ["update-version"] = Scenarios.UpdateVersionTest.RunAsync,
+            ["lang-provision"] = Scenarios.LanguageMatrixTest.ProvisionAsync,
+            ["lang-probe"] = Scenarios.LanguageMatrixTest.ProbeAsync,
+            ["lang-copy"] = Scenarios.LanguageMatrixTest.CopyAsync,
+            ["lang-headers"] = Scenarios.LanguageMatrixTest.HeaderProbeAsync,
         };
 
         var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();

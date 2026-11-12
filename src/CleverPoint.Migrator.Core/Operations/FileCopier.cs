@@ -195,7 +195,10 @@ public class FileCopier
                     catch (Exception ex) { result.Add("Folder", rel, $"{targetRoot}/{rel}", ItemCopyStatus.Failed, ex.Message); }
                 }
             }
-            await CopyFilesParallelAsync(files, sourceRoot, targetRoot, copyFields, options, result, degree);
+            // Workers reach the target list by id: a display title is not a stable key (see ListLocator).
+            _targetCtx.Load(targetList, l => l.Id);
+            await _targetCtx.ExecuteWithRetryAsync();
+            await CopyFilesParallelAsync(files, sourceRoot, targetRoot, copyFields, options, result, degree, targetList.Id);
         }
         else
         {
@@ -335,16 +338,18 @@ public class FileCopier
     /// written under locks; the REST client's per-host throttle is shared, so 429s still back off.
     /// </summary>
     private async Task CopyFilesParallelAsync(List<ListItem> files, string sourceRoot, string targetRoot,
-        List<(string InternalName, string TypeAsString)> copyFields, CopyOptions options, CopyResult result, int degree)
+        List<(string InternalName, string TypeAsString)> copyFields, CopyOptions options, CopyResult result, int degree,
+        Guid targetListId)
     {
         var queue = new ConcurrentQueue<string>(files.Select(i => (string)i["FileRef"]));
         var workers = Enumerable.Range(0, Math.Min(degree, files.Count))
-            .Select(_ => RunTransferWorkerAsync(queue, sourceRoot, targetRoot, copyFields, options, result));
+            .Select(_ => RunTransferWorkerAsync(queue, sourceRoot, targetRoot, copyFields, options, result, targetListId));
         await Task.WhenAll(workers);
     }
 
     private async Task RunTransferWorkerAsync(ConcurrentQueue<string> queue, string sourceRoot, string targetRoot,
-        List<(string InternalName, string TypeAsString)> copyFields, CopyOptions options, CopyResult result)
+        List<(string InternalName, string TypeAsString)> copyFields, CopyOptions options, CopyResult result,
+        Guid targetListId)
     {
         using var sctx = _source!.CreateContext();
         using var tctx = _target!.CreateContext();
@@ -359,7 +364,7 @@ public class FileCopier
         worker._hashLock = _hashLock;
 
         // Prime taxonomy columns on the worker's own target list (no-op when there are none).
-        var wList = tctx.Web.Lists.GetByTitle(options.TargetListTitle);
+        var wList = tctx.Web.Lists.GetById(targetListId);
         tctx.Load(wList, l => l.Title);
         await tctx.ExecuteWithRetryAsync();
         await worker._itemCopier.PrimeTargetTaxonomyFieldsAsync(wList, copyFields);

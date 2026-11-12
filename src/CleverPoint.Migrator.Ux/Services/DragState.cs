@@ -10,6 +10,8 @@ public class DragState
     public bool Active { get; private set; }
     public string SourceSite { get; private set; } = "";
     public string SourceListTitle { get; private set; } = "";
+    /// <summary>Server-relative root folder of the dragged-from list (language-independent key).</summary>
+    public string? SourceListPath { get; private set; }
     public bool IsLibrary { get; private set; }
     public List<string> Paths { get; private set; } = new();
     public List<int> ItemIds { get; private set; } = new();
@@ -27,8 +29,9 @@ public class DragState
     public event Action? Changed;
 
     public void Begin(string site, string list, bool isLibrary, List<string> paths, List<int> ids, int folderCount,
-        string? sourceFolder = null)
+        string? sourceFolder = null, string? sourceListPath = null)
     {
+        SourceListPath = sourceListPath;
         SourceSite = site;
         SourceListTitle = list;
         IsLibrary = isLibrary;
