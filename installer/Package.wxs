@@ -50,5 +50,14 @@
                      Name="installed" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
+    <!-- The command line (cpm.exe) ships in the app folder. Put that folder on the user's PATH so
+         terminals, scripts and AI agents can run "cpm" by name. Per-user, appended last, and
+         removed again on uninstall. -->
+    <Component Directory="INSTALLFOLDER" Guid="C7D1E2F3-2222-4333-8444-555566667777">
+      <Environment Id="CpmOnUserPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="no" Permanent="no" />
+      <RegistryValue Root="HKCU" Key="Software\CleverPoint Migrator"
+                     Name="onPath" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
   </Package>
 </Wix>

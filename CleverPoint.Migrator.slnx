@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/CleverPoint.Migrator.App/CleverPoint.Migrator.App.csproj" />
+    <Project Path="src/CleverPoint.Migrator.Cli/CleverPoint.Migrator.Cli.csproj" />
     <Project Path="src/CleverPoint.Migrator.Core/CleverPoint.Migrator.Core.csproj" />
   </Folder>
   <Folder Name="/tools/">

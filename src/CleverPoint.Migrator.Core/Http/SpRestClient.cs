@@ -214,7 +214,8 @@ public class SpRestClient
         return request;
     }
 
-    private readonly Dictionary<string, (string Digest, DateTime ExpiresUtc)> _digests = new(StringComparer.OrdinalIgnoreCase);
+    // Concurrent: one client serves several sites at once when a report scans them in parallel.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Digest, DateTime ExpiresUtc)> _digests = new(StringComparer.OrdinalIgnoreCase);
 
     private async Task<string> GetDigestAsync(string requestUrl)
     {

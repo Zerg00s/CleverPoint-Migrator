@@ -15,7 +15,27 @@
     <!-- Keep publish output (its own wwwroot/_content) out of subsequent source scans. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);publish\**;publish/**</DefaultItemExcludes>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- A release passes its number (-p:Version=X.Y.Z, Sign-App.ps1). Without one this is a build from
+         source: StampDevVersion below gives it the number of the last release, marked "-dev". -->
+    <VersionGiven Condition="'$(Version)' != ''">true</VersionGiven>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
+
+  <!-- The last release is the nearest "vX.Y.Z" tag behind the commit being built. Without git, or
+       without tags, the version stays at the SDK's default and nothing fails. -->
+  <Target Name="StampDevVersion" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo" Condition="'$(VersionGiven)' != 'true'">
+    <Exec Command="git describe --tags --abbrev=0 --match &quot;v[0-9]*&quot;" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          IgnoreExitCode="true" ContinueOnError="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="LastReleaseTag" />
+      <Output TaskParameter="ExitCode" PropertyName="LastReleaseExit" />
+    </Exec>
+    <PropertyGroup Condition="'$(LastReleaseExit)' == '0' And $([System.Text.RegularExpressions.Regex]::IsMatch('$(LastReleaseTag)', '^v\d+\.\d+\.\d+$'))">
+      <Version>$(LastReleaseTag.Substring(1))</Version>
+      <AssemblyVersion>$(Version).0</AssemblyVersion>
+      <FileVersion>$(Version).0</FileVersion>
+      <InformationalVersion>$(Version)-dev</InformationalVersion>
+    </PropertyGroup>
+  </Target>
 
   <ItemGroup>
     <None Include="wwwroot/favicon.ico" Link="favicon.ico" CopyToOutputDirectory="PreserveNewest" Condition="Exists('wwwroot/favicon.ico')" />
@@ -35,7 +55,22 @@
          assembly; it's a different TFM and launched as a separate process). -->
     <ProjectReference Include="..\CleverPoint.Migrator.SignInHelper\CleverPoint.Migrator.SignInHelper.csproj"
                       ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" Private="false" />
+    <!-- Build the command line (cpm) alongside us; BundleCommandLine copies it next to our exe. -->
+    <ProjectReference Include="..\CleverPoint.Migrator.Cli\CleverPoint.Migrator.Cli.csproj"
+                      ReferenceOutputAssembly="false" Private="false" OutputItemType="_CpmAssembly" />
   </ItemGroup>
+
+  <!-- A plain build gets cpm next to the app, where the app and the agent skill expect it. It shares
+       this folder's Core and package assemblies. A release publishes cpm itself (Sign-App.ps1). -->
+  <Target Name="BundleCommandLine" AfterTargets="Build" Condition="'$(_IsPublishing)' != 'true'">
+    <PropertyGroup>
+      <_CpmDir>@(_CpmAssembly->'%(RootDir)%(Directory)')</_CpmDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_CpmFiles Include="$(_CpmDir)cpm*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_CpmFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" />
+  </Target>
 
   <!-- Bundle the sign-in helper's full output (exe + WebView2 native loader) into
        SignInHelper\ next to our exe, where BrowserSignIn looks for it first. -->

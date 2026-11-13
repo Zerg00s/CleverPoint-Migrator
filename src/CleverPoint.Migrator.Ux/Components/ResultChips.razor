@@ -1,0 +1,22 @@
+@namespace CleverPoint.Migrator.Ux.Components
+
+@*
+    What a run did, as four counts with an icon and a color each: copied, skipped, warnings, failed.
+    A count of zero is dimmed, so the eye goes to what happened. With Labels the word is written out
+    as well (the run's own page); without, the word is the tooltip (rows of a table).
+*@
+
+<span class="result-chips @(Labels ? "labelled" : "")">
+    <span class="result-chip copied @(Copied == 0 ? "zero" : "")" title="@($"{Copied:N0} copied")">@Copied.ToString("N0")@(Labels ? " copied" : "")</span>
+    <span class="result-chip skipped @(Skipped == 0 ? "zero" : "")" title="@($"{Skipped:N0} skipped")">@Skipped.ToString("N0")@(Labels ? " skipped" : "")</span>
+    <span class="result-chip warned @(Warnings == 0 ? "zero" : "")" title="@($"{Warnings:N0} warnings")">@Warnings.ToString("N0")@(Labels ? (Warnings == 1 ? " warning" : " warnings") : "")</span>
+    <span class="result-chip failed @(Failed == 0 ? "zero" : "")" title="@($"{Failed:N0} failed")">@Failed.ToString("N0")@(Labels ? " failed" : "")</span>
+</span>
+
+@code {
+    [Parameter] public int Copied { get; set; }
+    [Parameter] public int Skipped { get; set; }
+    [Parameter] public int Warnings { get; set; }
+    [Parameter] public int Failed { get; set; }
+    [Parameter] public bool Labels { get; set; }
+}

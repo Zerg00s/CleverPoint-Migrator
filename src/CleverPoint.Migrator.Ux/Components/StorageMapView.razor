@@ -1,0 +1,499 @@
+@namespace CleverPoint.Migrator.Ux.Components
+@using CleverPoint.Migrator.Core.Reports
+@inject IJSRuntime JS
+
+@*
+    Storage at a glance, in three linked parts:
+    - a list of everything as a tree, largest first, with each line's share of what it is in;
+    - the kinds of file and what each takes, which doubles as the key to the colors;
+    - the map, where every box has an area in proportion to its storage and the color of its kind.
+    Click a box and the list opens at that file or folder. Click a line and the map frames it.
+    Double-click either to look at that part alone; the trail at the top leads back out.
+*@
+
+<div class="smap">
+    <div class="smap-bar">
+        <div class="smap-crumbs">
+            @{ var trail = _view.Path(); }
+            @for (var i = 0; i < trail.Count; i++)
+            {
+                var node = trail[i];
+                if (i > 0) { <span class="smap-sep">›</span> }
+                if (i == trail.Count - 1) { <span class="smap-crumb here">@node.Name</span> }
+                else { <button type="button" class="smap-crumb" title="Back out to @node.Name" @onclick="() => Zoom(node)">@node.Name</button> }
+            }
+        </div>
+        <div class="smap-summary">
+            <div class="smap-figure"><span class="smap-number">@Friendly.Bytes(_view.Total)</span><span class="smap-caption">Total</span></div>
+            @if (_hasVersions)
+            {
+                <div class="smap-figure"><span class="smap-number current">@Friendly.Bytes(_view.Current)</span><span class="smap-caption">Current versions</span></div>
+                <div class="smap-figure"><span class="smap-number versions">@Friendly.Bytes(_view.Versions)</span><span class="smap-caption">Older versions · @_view.VersionShare.ToString("P0")</span></div>
+            }
+            <div class="smap-figure"><span class="smap-number">@_view.Files.ToString("N0")</span><span class="smap-caption">Files</span></div>
+            @if (_byVersions)
+            {
+                <div class="smap-legend"><span>No older versions</span><span class="smap-scale"></span><span>Nothing but older versions</span></div>
+            }
+        </div>
+        @if (_hasVersions)
+        {
+            <div class="smap-modes" title="What the colors of the map mean">
+                <button type="button" class="smap-mode @(_byVersions ? "" : "on")" @onclick="() => _byVersions = false">@(ByKind ? "Kind of file" : "Location")</button>
+                <button type="button" class="smap-mode @(_byVersions ? "on" : "")" @onclick="() => _byVersions = true">Older versions</button>
+            </div>
+        }
+    </div>
+
+    <div class="smap-top @(ByKind ? "with-kinds" : "")">
+        <div class="smap-tree @(_hasVersions ? "with-versions" : "")">
+            <div class="smap-tree-head">
+                <span>Name</span>
+                <span>Share of what it is in</span>
+                <span class="num">Size</span>
+                @if (_hasVersions) { <span class="num">Older versions</span> }
+                <span class="num">Files</span>
+            </div>
+            <div class="smap-tree-body">
+                @foreach (var line in _rows)
+                {
+                    var row = line;
+                    if (row.Node is null)
+                    {
+                        <div class="smap-tree-row more"><span style="padding-left:@(row.Depth * 14 + 40)px">@row.Note</span></div>
+                        continue;
+                    }
+                    var n = row.Node;
+                    <div class="smap-tree-row @(n == _selected ? "selected" : _selectedPath.Contains(n) ? "on-path" : "")" @key="n"
+                         id="@(n == _selected ? _selectedId : null)" @onclick="() => Select(n, reveal: false)" @ondblclick="() => Zoom(n)"
+                         @oncontextmenu="e => Menu(e, n, fromMap: false)" @oncontextmenu:preventDefault="true">
+                        <span class="smap-tree-name" style="padding-left:@(row.Depth * 14)px">
+                            @if (n.CanOpen)
+                            {
+                                <button type="button" class="smap-twist" title="@(_expanded.Contains(n) ? "Close" : "Open")"
+                                        @onclick="() => Toggle(n)" @onclick:stopPropagation="true" @ondblclick:stopPropagation="true">
+                                    <svg class="smap-chevron @(_expanded.Contains(n) ? "open" : "")" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 2.5 11 8l-5.5 5.5" /></svg>
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="smap-twist"></span>
+                            }
+                            <img class="smap-icon" src="@Icon(n)" alt="" />
+                            <span class="smap-tree-text" title="@n.Name">@n.Name</span>
+                        </span>
+                        <span class="smap-share">
+                            <span class="smap-share-track" style="margin-left:@(Math.Min(row.Depth, 9) * 6)px"><span class="smap-share-fill @(ByKind ? KindClass(n) : "")" style="width:@Percent(n.Total, row.Of)"></span></span>
+                            <span class="smap-share-pct">@Share(n.Total, row.Of)</span>
+                        </span>
+                        <span class="num">@Friendly.Bytes(n.Total)</span>
+                        @if (_hasVersions)
+                        {
+                            <span class="num">@(n.Versions > 0 ? $"{Friendly.Bytes(n.Versions)} · {n.VersionShare:P0}" : "")</span>
+                        }
+                        <span class="num">@(n.Kind == "file" ? "" : n.Files.ToString("N0"))</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        @if (ByKind)
+        {
+            <div class="smap-kinds">
+                <div class="smap-kinds-head">
+                    <span>Kind of file</span>
+                    <span class="num">Size</span>
+                    <span class="num">Share</span>
+                    <span class="num">Files</span>
+                </div>
+                <div class="smap-kinds-body">
+                    @foreach (var entry in _legend)
+                    {
+                        var k = entry;
+                        <button type="button" class="smap-kind-row @(_highlight == k.Kind ? "on" : "")" @key="k.Kind"
+                                title="@(_highlight == k.Kind ? "Show every kind again" : $"Show only {k.Name} on the map")" @onclick="() => Highlight(k.Kind)">
+                            <span class="smap-kind-name"><span class="smap-swatch @KindClass(k.Kind)"></span><img class="smap-icon" src="@KindIcon(k.Kind)" alt="" />@k.Name</span>
+                            <span class="num">@Friendly.Bytes(k.Total)</span>
+                            <span class="num">@Share(k.Total, _view.Total)</span>
+                            <span class="num">@k.Files.ToString("N0")</span>
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (_selected is not null)
+    {
+        <div class="smap-selected">
+            <img class="smap-icon" src="@Icon(_selected)" alt="" />
+            <span class="smap-selected-name" title="@Where(_selected)">@Where(_selected)</span>
+            <span class="smap-selected-size">@Friendly.Bytes(_selected.Total)</span>
+            @if (_hasVersions && _selected.Versions > 0)
+            {
+                <span class="hint" style="margin:0; white-space:nowrap;">@Friendly.Bytes(_selected.Versions) in older versions (@_selected.VersionShare.ToString("P0"))</span>
+            }
+            <FluentSpacer />
+            @if (_selected.CanOpen && _selected != _view)
+            {
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size16.ZoomIn())" OnClick="@(() => Zoom(_selected!))">Show only this</FluentButton>
+            }
+            @if (!string.IsNullOrEmpty(_selected.Url))
+            {
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size16.Open())" OnClick="@(() => Browser.Open(_selected.Url!))">Open in SharePoint</FluentButton>
+            }
+        </div>
+    }
+
+    @if (_drawn.Count == 0)
+    {
+        <div class="smap-empty"><span class="hint">Nothing here takes any storage.</span></div>
+    }
+    else
+    {
+        <div class="smap-canvas @(_highlight is not null ? "highlighting" : "")">
+            @foreach (var rect in _drawn)
+            {
+                var r = rect;
+                <div class="smap-rect @(r.Container ? "container" : "leaf") @RectClass(r)" @key="r.Node"
+                     style="left:@Pct(r.X, CanvasWidth);top:@Pct(r.Y, CanvasHeight);width:@Pct(r.Width, CanvasWidth);height:@Pct(r.Height, CanvasHeight);@RectColor(r)"
+                     title="@Tip(r.Node)" @onclick="() => Select(r.Node, reveal: true)" @ondblclick="() => ZoomToward(r.Node)"
+                     @oncontextmenu="e => Menu(e, r.Node, fromMap: true)" @oncontextmenu:preventDefault="true">
+                    @if (r.Width >= 54 && r.Height >= 15)
+                    {
+                        <span class="smap-label">@r.Node.Name</span>
+                        @if (!r.Container && r.Height >= 34 && r.Width >= 64)
+                        {
+                            <span class="smap-size">@Friendly.Bytes(r.Node.Total)</span>
+                        }
+                    }
+                </div>
+            }
+            @if (_outline is { } o)
+            {
+                <div class="smap-outline" style="left:@Pct(o.X, CanvasWidth);top:@Pct(o.Y, CanvasHeight);width:@Pct(o.Width, CanvasWidth);height:@Pct(o.Height, CanvasHeight);"></div>
+            }
+        </div>
+        <span class="hint smap-how">Click a box to find it in the list. Double-click a box or a line to look at that part alone. Right-click to open it in SharePoint.</span>
+    }
+</div>
+<ContextMenu @ref="_menu" />
+
+@code {
+    /// <summary>The top of the map.</summary>
+    [Parameter, EditorRequired] public MapNode Root { get; set; } = new();
+    /// <summary>Whether the nodes say what kind of file they are. Then the map is colored by kind and the kinds are listed beside the tree.</summary>
+    [Parameter] public bool ByKind { get; set; }
+
+    // The map is laid out on a canvas of this size and drawn in percentages of it, so it scales with the window.
+    private const double CanvasWidth = 1300;
+    private const double CanvasHeight = 520;
+    /// <summary>How many of a node's children the tree lists; the rest are one line.</summary>
+    private const int ChildrenShown = 200;
+
+    // Without kinds, one hue per top-level box, far enough apart to tell neighbors from each other.
+    private static readonly int[] Hues = { 174, 212, 268, 325, 24, 46, 138, 196, 244, 296, 350, 96 };
+
+    private sealed record Row(MapNode? Node, int Depth, long Of, string Note = "");
+    private sealed record KindLine(string Kind, string Name, long Total, long Files);
+
+    private readonly string _selectedId = "smap-sel-" + Guid.NewGuid().ToString("N")[..8];
+    private MapNode _root = new();
+    private MapNode _view = new();
+    private MapNode? _selected;
+    private HashSet<MapNode> _selectedPath = new();
+    private readonly HashSet<MapNode> _expanded = new();
+    private List<Row> _rows = new();
+    private List<KindLine> _legend = new();
+    private List<MapRect> _drawn = new();
+    private Dictionary<MapNode, MapRect> _placed = new();
+    private MapRect? _outline;
+    private string? _highlight;
+    private bool _byVersions;
+    private bool _hasVersions;
+    private bool _reveal;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_root, Root)) return;
+        // A report that is still running hands over a fresh map every few seconds. What was open,
+        // selected and looked at is found again in the new one by its place in the tree.
+        var view = Trail(_view);
+        var selected = _selected is null ? null : Trail(_selected);
+        var open = _expanded.Select(Trail).ToList();
+        var first = _root.Children.Count == 0 && _root.Total == 0;
+
+        _root = Root;
+        _hasVersions = HasVersions(Root, 0);
+        _expanded.Clear();
+        _expanded.Add(Root);
+        if (first)
+        {
+            // A map with a single box at the top would open on one big rectangle; start inside it.
+            var start = Root;
+            while (start.Children.Count == 1 && start.Children[0].CanOpen)
+            {
+                start = start.Children[0];
+                _expanded.Add(start);
+            }
+            _selected = null;
+            _view = start;
+        }
+        else
+        {
+            foreach (var path in open)
+                if (Find(path) is { } node) _expanded.Add(node);
+            _selected = selected is null ? null : Find(selected);
+            _view = Find(view) ?? Root;
+        }
+        MarkPath();
+        Lay();
+        BuildRows();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_reveal) return;
+        _reveal = false;
+        try { await JS.InvokeVoidAsync("cpScrollTo", _selectedId); }
+        catch (Exception) { /* the list simply stays where it is */ }
+    }
+
+    private static bool HasVersions(MapNode node, int depth) =>
+        node.Versions > 0 || (depth < 3 && node.Children.Any(c => HasVersions(c, depth + 1)));
+
+    /// <summary>A node's place in the tree as the names that lead to it, below the top.</summary>
+    private static List<string> Trail(MapNode node) => node.Path().Skip(1).Select(n => n.Name).ToList();
+
+    private MapNode? Find(List<string> names)
+    {
+        var node = _root;
+        foreach (var name in names)
+        {
+            var next = node.Children.FirstOrDefault(c => c.Name == name);
+            if (next is null) return null;
+            node = next;
+        }
+        return node;
+    }
+
+    // ---- what is looked at ---------------------------------------------------------------------
+
+    /// <summary>Lays the map out for the node being looked at, and adds up its kinds of file.</summary>
+    private void Lay()
+    {
+        var rects = StorageMap.Layout(_view, CanvasWidth, CanvasHeight);
+        _placed = new Dictionary<MapNode, MapRect>(rects.Count);
+        foreach (var rect in rects) _placed[rect.Node] = rect;
+        // Below the top level a box that shows its contents is covered by them and need not be drawn.
+        _drawn = rects.Where(r => !r.Container || r.Level == 1).OrderBy(r => r.Container ? 0 : 1).ToList();
+
+        var sums = new Dictionary<string, (long Total, long Files)>(StringComparer.OrdinalIgnoreCase);
+        if (ByKind) Tally(_view, sums);
+        _legend = sums.Where(s => s.Value.Total > 0).OrderByDescending(s => s.Value.Total)
+            .Select(s => new KindLine(s.Key, s.Key.Length > 0 ? s.Key : "Not known", s.Value.Total, s.Value.Files)).ToList();
+        if (_highlight is not null && !_legend.Any(l => l.Kind == _highlight)) _highlight = null;
+        Frame();
+    }
+
+    private static void Tally(MapNode node, Dictionary<string, (long Total, long Files)> sums)
+    {
+        if (node.Children.Count == 0)
+        {
+            var kind = node.FileKind ?? "";
+            var sum = sums.GetValueOrDefault(kind);
+            sums[kind] = (sum.Total + node.Total, sum.Files + node.Files);
+            return;
+        }
+        foreach (var child in node.Children) Tally(child, sums);
+    }
+
+    /// <summary>The frame around what is selected: its own box, or the smallest box drawn that holds it.</summary>
+    private void Frame()
+    {
+        _outline = null;
+        for (var node = _selected; node is not null && node != _view; node = node.Parent)
+            if (_placed.TryGetValue(node, out var rect))
+            {
+                _outline = rect;
+                return;
+            }
+    }
+
+    private void MarkPath()
+    {
+        _selectedPath = new HashSet<MapNode>();
+        for (var node = _selected?.Parent; node is not null; node = node.Parent) _selectedPath.Add(node);
+    }
+
+    /// <summary>The lines of the tree: every node whose parents are all open, largest first.</summary>
+    private void BuildRows()
+    {
+        var rows = new List<Row>();
+        void Add(MapNode node, int depth, long of)
+        {
+            rows.Add(new Row(node, depth, of));
+            if (!_expanded.Contains(node)) return;
+            var children = node.Children.Where(c => c.Total > 0).OrderByDescending(c => c.Total).ToList();
+            var shown = 0;
+            long restBytes = 0;
+            var rest = 0;
+            foreach (var child in children)
+            {
+                // Past the limit only what leads to the selection is still listed.
+                if (shown < ChildrenShown || child == _selected || _selectedPath.Contains(child))
+                {
+                    Add(child, depth + 1, node.Total);
+                    shown++;
+                }
+                else
+                {
+                    rest++;
+                    restBytes += child.Total;
+                }
+            }
+            if (rest > 0) rows.Add(new Row(null, depth + 1, node.Total, $"and {rest:N0} smaller, {Friendly.Bytes(restBytes)} together"));
+        }
+        Add(_root, 0, _root.Total);
+        _rows = rows;
+    }
+
+    // ---- what a click does ---------------------------------------------------------------------
+
+    /// <summary>Selects a node. From the map, the tree also opens down to it and scrolls it into view.</summary>
+    private void Select(MapNode node, bool reveal)
+    {
+        _selected = node;
+        MarkPath();
+        if (reveal)
+        {
+            foreach (var parent in _selectedPath) _expanded.Add(parent);
+            _reveal = true;
+        }
+        BuildRows();
+        Frame();
+    }
+
+    private void Toggle(MapNode node)
+    {
+        if (!_expanded.Remove(node)) _expanded.Add(node);
+        BuildRows();
+    }
+
+    /// <summary>Looks at one node alone: the map shows only what is in it.</summary>
+    private void Zoom(MapNode node)
+    {
+        if (!node.CanOpen)
+        {
+            if (node.Parent is null) return;
+            node = node.Parent;
+        }
+        _view = node;
+        Lay();
+    }
+
+    /// <summary>From the map: one level in, toward the box that was double-clicked.</summary>
+    private void ZoomToward(MapNode node)
+    {
+        var step = node;
+        while (step.Parent is not null && step.Parent != _view) step = step.Parent;
+        if (step.CanOpen) Zoom(step);
+    }
+
+    private void Highlight(string kind) => _highlight = _highlight == kind ? null : kind;
+
+    private ContextMenu? _menu;
+
+    /// <summary>A right-click selects what was clicked and offers to open it in SharePoint.</summary>
+    private void Menu(MouseEventArgs at, MapNode node, bool fromMap)
+    {
+        Select(node, reveal: fromMap);
+        var items = new List<ContextMenu.Item>();
+        if (!string.IsNullOrEmpty(node.Url))
+        {
+            items.Add(new ContextMenu.Item(node.Kind == "file" ? "Open the file in SharePoint" : "Open in SharePoint", () => Browser.Open(node.Url!)));
+            if (node.Kind == "file" && !string.IsNullOrEmpty(node.Parent?.Url))
+                items.Add(new ContextMenu.Item("Open its folder", () => Browser.Open(node.Parent!.Url!)));
+            items.Add(new ContextMenu.Item("Copy the link", async () => { try { await JS.InvokeVoidAsync("cpCopy", node.Url); } catch (Exception) { } }));
+        }
+        if (node.CanOpen && node != _view) items.Add(new ContextMenu.Item("Show only this", () => Zoom(node)));
+        _menu?.Show(at, items);
+    }
+
+    // ---- how things look -----------------------------------------------------------------------
+
+    private static string KindOf(MapNode node) => node.FileKind ?? node.MainKind ?? "";
+
+    private static string KindClass(MapNode node) => KindClass(KindOf(node));
+
+    private static string KindClass(string kind)
+    {
+        var index = FileKinds.IndexOf(kind);
+        return index >= 0 ? "k" + index : kind == StorageMap.SystemKind ? "ksys" : "kmix";
+    }
+
+    private string RectClass(MapRect rect)
+    {
+        var kind = !rect.Container && ByKind && !_byVersions ? KindClass(rect.Node) : "";
+        var dim = _highlight is not null && !rect.Container && KindOf(rect.Node) != _highlight ? " dim" : "";
+        return kind + dim;
+    }
+
+    /// <summary>The color of a box when it is not the color of its kind: by older versions, or by where it is.</summary>
+    private string RectColor(MapRect rect)
+    {
+        if (rect.Container) return "";
+        // Boxes that share a parent get slightly different shades, so that neighbors can be told apart.
+        var shade = rect.Node.Name.Sum(c => c) % 4 * 2;
+        if (_byVersions)
+        {
+            // Green for no versions, through amber at half, to red for nothing but versions.
+            var share = rect.Node.VersionShare;
+            var hue = share <= 0.5 ? 150 - (150 - 42) * (share / 0.5) : 42 - (42 - 2) * ((share - 0.5) / 0.5);
+            return $"background-color:hsl({hue:0} 58% {36 + shade}%);";
+        }
+        return ByKind ? "" : $"background-color:hsl({Hues[rect.Group % Hues.Length]} 50% {34 + shade}%);";
+    }
+
+    private string Tip(MapNode node)
+    {
+        var text = $"{node.Name}\n{Friendly.Bytes(node.Total)}";
+        if (ByKind && KindOf(node) is { Length: > 0 } kind) text += node.FileKind is null ? $"\nMostly {kind}" : $"\n{kind}";
+        if (_hasVersions && node.Versions > 0) text += $"\n{Friendly.Bytes(node.Versions)} in older versions ({node.VersionShare:P0})";
+        if (node.Kind != "file") text += $"\n{node.Files:N0} files";
+        return text;
+    }
+
+    /// <summary>Where a node is, from the top down: "Site › Library › Folder › File".</summary>
+    private static string Where(MapNode node) => string.Join(" › ", node.Path().Skip(1).Select(n => n.Name).DefaultIfEmpty(node.Name));
+
+    private static string Icon(MapNode node) => node.Kind switch
+    {
+        "file" or "type" => FileIcons.ForExtension(node.Extension, 20),
+        "library" => FileIcons.Url("documentsfolder", 20),
+        "folder" => FileIcons.Url("folder", 20),
+        "list" => FileIcons.Url("splist", 20),
+        "kind" or "others" => KindIcon(node.FileKind ?? ""),
+        "kinds" => FileIcons.Url("multiple", 20),
+        _ => FileIcons.Url("spo", 20),
+    };
+
+    private static string KindIcon(string kind) => FileIcons.Url(kind switch
+    {
+        FileKinds.Pdf => "pdf",
+        FileKinds.Office => "docx",
+        FileKinds.OneNote => "onetoc",
+        FileKinds.Images => "photo",
+        FileKinds.Video => "video",
+        FileKinds.Audio => "audio",
+        FileKinds.Archives => "zip",
+        FileKinds.Email => "email",
+        FileKinds.Other => "genericfile",
+        StorageMap.SystemKind => "sysfile",
+        _ => "multiple",
+    }, 20);
+
+    private static string Share(long part, long whole) => whole > 0 ? (part / (double)whole).ToString("P1") : "";
+    private static string Pct(double value, double of) => (value / of * 100).ToString("0.###", CultureInfo.InvariantCulture) + "%";
+    private static string Percent(long part, long whole) => (whole > 0 ? Math.Clamp(part * 100.0 / whole, 0, 100) : 0).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+}

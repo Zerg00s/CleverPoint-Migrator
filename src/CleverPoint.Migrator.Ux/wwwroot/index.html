@@ -35,6 +35,36 @@
     <script src="cp-grid.js"></script>
     <!-- Footer page-zoom (browser-like +/-/reset). -->
     <script>window.cpSetZoom = function (z) { document.documentElement.style.zoom = z; };</script>
+    <script>
+        // The browser inside the app offers things typed before in any text box ("Saved info"). In an app
+        // that is noise: a site address is no help when looking for a report. Every text box is told not
+        // to. The boxes of the Fluent components live in their own shadow trees, so those are walked too,
+        // and a box is also caught at the moment it gets the focus, wherever it is.
+        (function () {
+            function quiet(box) {
+                if (box && (box.tagName === 'INPUT' || box.tagName === 'TEXTAREA') && box.getAttribute('autocomplete') !== 'off') {
+                    box.setAttribute('autocomplete', 'off');
+                    box.setAttribute('aria-autocomplete', 'none');
+                }
+            }
+            function sweep(root) {
+                root.querySelectorAll('input, textarea').forEach(quiet);
+                root.querySelectorAll('*').forEach(function (el) { if (el.shadowRoot) sweep(el.shadowRoot); });
+            }
+            var pending = false;
+            function later() {
+                if (pending) return;
+                pending = true;
+                setTimeout(function () { pending = false; sweep(document); }, 150);
+            }
+            document.addEventListener('focusin', function (e) { quiet(e.composedPath ? e.composedPath()[0] : e.target); }, true);
+            document.addEventListener('pointerdown', function (e) { quiet(e.composedPath ? e.composedPath()[0] : e.target); }, true);
+            new MutationObserver(later).observe(document.documentElement, { childList: true, subtree: true });
+            later();
+        })();
+    </script>
+    <script>window.cpCopy = function (text) { return navigator.clipboard.writeText(text); };</script>
+    <script>window.cpScrollTo = function (id) { var e = document.getElementById(id); if (e) e.scrollIntoView({ block: 'nearest' }); };</script>
 </body>
 
 </html>

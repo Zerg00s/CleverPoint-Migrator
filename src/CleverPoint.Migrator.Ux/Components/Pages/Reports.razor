@@ -1,0 +1,151 @@
+@page "/reports"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@using CleverPoint.Migrator.Core.History
+@using CleverPoint.Migrator.Core.Reports
+@inject NavigationManager Nav
+@inject ReportHost Host
+@implements IDisposable
+
+<div class="page-head report-head">
+    <div>
+        <h1>Reports</h1>
+        <p>What is in a tenant or a set of sites.</p>
+    </div>
+    <FluentSearch @bind-Value="_find" Immediate="true" ImmediateDelay="150" Placeholder="Find a report…" Style="width:300px;" />
+</div>
+
+@if (Found.Count == 0)
+{
+    <div style="padding:28px 4px;"><span class="hint">No report matches "@_find.Trim()".</span></div>
+}
+@foreach (var group in Found.GroupBy(r => r.Group))
+{
+    <div class="section-title" style="margin-top:18px;">@group.Key</div>
+    <div class="report-tiles">
+        @foreach (var report in group)
+        {
+            var r = report;
+            <div class="tile report-tile" role="button" @onclick="@(() => Nav.NavigateTo($"/reports/new/{r.Id}"))">
+                <div class="tile-title">@r.Title</div>
+                <div class="tile-desc" title="@r.Summary">@ReportCatalog.ShortSummary(r)</div>
+                <div class="report-tags">
+                    <span class="report-tag">@ScopeLabel(r)</span>
+                    @if (r.NeedsTenantAdmin) { <span class="report-tag">Needs tenant admin</span> }
+                    @if (r.ChangesData) { <span class="report-tag warn">Changes sites</span> }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<div class="section-title" style="margin-top:28px;">Report runs</div>
+<FluentCard>
+    @if (_runs.Count == 0)
+    {
+        <div style="padding:28px 16px; text-align:center;">
+            <span class="hint">No report has been run yet.</span>
+        </div>
+    }
+    else
+    {
+        <FluentToolbar Style="width:100%;">
+            <FluentSearch @bind-Value="_filter" Immediate="true" ImmediateDelay="200" Placeholder="Filter by name or report…" />
+            <MultiFilter Options="_statuses" Selected="_statusFilter" Changed="StateHasChanged" AllLabel="All statuses" Style="min-width:200px;" />
+            <FluentSpacer />
+            <span class="hint">@Shown.Count of @_runs.Count runs</span>
+        </FluentToolbar>
+        <div class="cp-grid cp-scroll runs-grid" style="max-height: 420px; margin-top:12px;">
+            <FluentDataGrid Items="@Shown.AsQueryable()" ResizableColumns="true" GenerateHeader="GenerateHeaderOption.Sticky"
+                            GridTemplateColumns="2fr 1.2fr 1.3fr 1.2fr 1fr 0.8fr" ShowHover="true" Style="width:100%;"
+                            RowClass="@(_ => "click-row")"
+                            OnRowClick="@((FluentDataGridRow<ReportRun> row) => { if (row.Item is not null) Nav.NavigateTo($"/report/{row.Item.Id}"); return Task.CompletedTask; })">
+                <TemplateColumn Title="Name"><span>@context.Name</span></TemplateColumn>
+                <TemplateColumn Title="Report"><span>@(ReportCatalog.Find(context.Report)?.Title ?? context.Report)</span></TemplateColumn>
+                <TemplateColumn Title="Status"><span class="status-pill @StatusClass(context.Status)">@ReportExport.StatusText(context.Status)</span></TemplateColumn>
+                <TemplateColumn Title="Started"><span>@(context.StartedUtc?.ToLocalTime().ToString("g") ?? "")</span></TemplateColumn>
+                <TemplateColumn Title="Sites"><span>@SitesText(context)</span></TemplateColumn>
+                <TemplateColumn Title="Rows"><span>@context.Rows.ToString("N0")</span></TemplateColumn>
+            </FluentDataGrid>
+        </div>
+    }
+</FluentCard>
+
+@code {
+    private List<ReportRun> _runs = new();
+    private string _filter = "";
+    private readonly HashSet<string> _statusFilter = new();
+    private readonly string[] _statuses = { "Completed", "Completed with issues", "Running", "Queued", "Cancelled", "Interrupted", "Failed" };
+    private Timer? _timer;
+
+    private string _find = "";
+
+    /// <summary>The reports whose name, description or group has every word typed in the search box.</summary>
+    private List<ReportDefinition> Found
+    {
+        get
+        {
+            var words = _find.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return ReportCatalog.All
+                .Where(r => words.All(w => r.Title.Contains(w, StringComparison.OrdinalIgnoreCase) || r.Summary.Contains(w, StringComparison.OrdinalIgnoreCase)
+                                           || r.Id.Contains(w, StringComparison.OrdinalIgnoreCase) || r.Group.Contains(w, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+        }
+    }
+
+    private List<ReportRun> Shown => _runs
+        .Where(r => _statusFilter.Count == 0 || _statusFilter.Contains(ReportExport.StatusText(r.Status)))
+        .Where(r => string.IsNullOrWhiteSpace(_filter) || r.Name.Contains(_filter.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || r.Report.Contains(_filter.Trim(), StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override void OnInitialized()
+    {
+        _runs = ReportHost.Runs();
+        Host.Changed += OnChanged;
+        // Runs started from the command line change without telling this app, so the list is re-read while anything is active.
+        _timer = new Timer(_ =>
+        {
+            if (!_runs.Any(r => !r.IsFinished)) return;
+            _runs = ReportHost.Runs();
+            InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private void OnChanged()
+    {
+        _runs = ReportHost.Runs();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Host.Changed -= OnChanged;
+        _timer?.Dispose();
+    }
+
+    private static string ScopeLabel(ReportDefinition report) => report.Scope switch
+    {
+        ReportScope.Tenant => "Whole tenant",
+        ReportScope.SitePairs => "Source and target sites",
+        _ => "Any number of sites",
+    };
+
+    private static string SitesText(ReportRun run)
+    {
+        if (ReportCatalog.Find(run.Report)?.Scope == ReportScope.Tenant) return "Tenant";
+        if (run.SitesTotal == 0) return "";
+        var text = $"{run.SitesDone:N0} of {run.SitesTotal:N0}";
+        return run.SitesFailed > 0 ? $"{text}, {run.SitesFailed:N0} failed" : text;
+    }
+
+    public static string StatusClass(string status) => status switch
+    {
+        "Failed" => "st-failed",
+        "CompletedWithIssues" => "st-issues",
+        "Interrupted" => "st-interrupted",
+        "Cancelled" => "st-cancelled",
+        "Queued" => "st-queued",
+        "Running" => "st-running",
+        _ => "st-ok",
+    };
+}

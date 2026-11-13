@@ -57,6 +57,21 @@ public class CopyOptions
     public bool CopyPermissions { get; set; }
 
     /// <summary>
+    /// Permissions-only run: nothing is created, copied or changed except permissions. Every list,
+    /// folder, file and item that has its own permissions on the source gets the same permissions on its
+    /// counterpart, which must already exist on the target. Files and folders pair by path; list items
+    /// pair through <see cref="UpsertItemMap"/> (the item pairs recorded by the copy that created them).
+    /// </summary>
+    public bool PermissionsOnly { get; set; }
+
+    /// <summary>
+    /// Permissions-only run: also restore inheritance on target objects that have their own permissions
+    /// while their source counterpart inherits. Off by default because it removes permissions that were
+    /// set on the target by hand.
+    /// </summary>
+    public bool ResetTargetWhereSourceInherits { get; set; }
+
+    /// <summary>
     /// How many files to transfer concurrently within one library copy. 1 = sequential (the
     /// safe default). Higher values copy files in parallel through per-worker connections,
     /// sharing the throttle budget. Forced to 1 when CopyPermissions is on (permission
@@ -212,6 +227,8 @@ public class CopyOptions
         MergeSchema = MergeSchema,
         PreserveAuthorsAndDates = PreserveAuthorsAndDates,
         CopyPermissions = CopyPermissions,
+        PermissionsOnly = PermissionsOnly,
+        ResetTargetWhereSourceInherits = ResetTargetWhereSourceInherits,
         ParallelFileTransfers = ParallelFileTransfers,
         UnresolvedUserFallback = UnresolvedUserFallback,
         TermMap = TermMap == null ? null : new Dictionary<Guid, Guid>(TermMap),

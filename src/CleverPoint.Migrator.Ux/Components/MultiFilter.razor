@@ -1,0 +1,59 @@
+@namespace CleverPoint.Migrator.Ux.Components
+
+@*
+    A dropdown filter that takes several values at once. Nothing ticked means no filter ("All").
+    Looks like the Fluent select it replaces; the list stays open while values are ticked.
+*@
+
+<div class="multi-filter" style="@Style">
+    <button type="button" class="multi-filter-button" aria-haspopup="listbox" aria-expanded="@_open" @onclick="() => _open = !_open">
+        <span class="multi-filter-text">@Summary</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.2 4.5 6 8.3l3.8-3.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </button>
+    @if (_open)
+    {
+        <div class="multi-filter-backdrop" @onclick="() => _open = false"></div>
+        <div class="multi-filter-panel" role="listbox" aria-multiselectable="true">
+            @foreach (var option in Options)
+            {
+                var o = option;
+                <label class="multi-filter-option">
+                    <input type="checkbox" checked="@Selected.Contains(o)" @onchange="e => Toggle(o, e.Value is true)" />
+                    <span>@o</span>
+                </label>
+            }
+            <button type="button" class="multi-filter-clear" disabled="@(Selected.Count == 0)" @onclick="Clear">Show all</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<string> Options { get; set; } = Array.Empty<string>();
+    /// <summary>The ticked values. Empty means everything is shown.</summary>
+    [Parameter, EditorRequired] public HashSet<string> Selected { get; set; } = new();
+    /// <summary>Raised after every tick, so the page can re-filter.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public string AllLabel { get; set; } = "All";
+    [Parameter] public string? Style { get; set; }
+
+    private bool _open;
+
+    private string Summary => Selected.Count switch
+    {
+        0 => AllLabel,
+        <= 2 => string.Join(", ", Options.Where(Selected.Contains)),
+        _ => $"{Selected.Count} selected",
+    };
+
+    private async Task Toggle(string option, bool on)
+    {
+        if (on) Selected.Add(option); else Selected.Remove(option);
+        await Changed.InvokeAsync();
+    }
+
+    private async Task Clear()
+    {
+        Selected.Clear();
+        await Changed.InvokeAsync();
+    }
+}

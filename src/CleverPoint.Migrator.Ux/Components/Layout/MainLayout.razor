@@ -6,6 +6,7 @@
 @inject UxSettings Settings
 @inject NavigationManager Nav
 @inject MigrationRunner Runner
+@inject ReportHost ReportRuns
 @inject UpdateService Updates
 @inject IToastService Toasts
 @inject IJSRuntime JS
@@ -72,6 +73,13 @@
             <NavLink class="nav-item" href="history" ActiveClass="active" title="Run History">
                 <FluentIcon Value="@(new Icons.Regular.Size20.History())" /> <span>Run History</span>
             </NavLink>
+            <NavLink class="nav-item" href="reports" ActiveClass="active" title="Reports">
+                <FluentIcon Value="@(new Icons.Regular.Size20.DocumentTable())" /> <span>Reports</span>
+                @if (ReportRuns.ActiveCount > 0)
+                {
+                    <span class="nav-badge">@ReportRuns.ActiveCount</span>
+                }
+            </NavLink>
             <NavLink class="nav-item" href="settings" ActiveClass="active" title="Settings">
                 <FluentIcon Value="@(new Icons.Regular.Size20.Settings())" /> <span>Settings</span>
             </NavLink>
@@ -96,18 +104,26 @@
 
     <footer class="app-footer">
         <div class="footer-group">
-            <span class="footer-dot @(Runner.ActiveCount > 0 ? "busy" : "online")"></span>
+            @* What the app is doing in the background right now: copies and reports. *@
+            <span class="footer-dot @(Runner.ActiveCount + ReportRuns.ActiveCount > 0 ? "busy" : "online")"></span>
             @if (Runner.ActiveCount > 0)
             {
                 <span class="footer-link" role="button" @onclick="@(() => Nav.NavigateTo("/activity"))">
-                    @Runner.RunningCount running@(Runner.QueuedCount > 0 ? $", {Runner.QueuedCount} queued" : "")
+                    @(Runner.RunningCount == 1 ? "1 copy running" : $"{Runner.RunningCount} copies running")@(Runner.QueuedCount > 0 ? $", {Runner.QueuedCount} queued" : "")
                 </span>
             }
-            else
+            @if (ReportRuns.ActiveCount > 0)
             {
-                <span>Ready</span>
+                @if (Runner.ActiveCount > 0) { <span class="footer-sep">·</span> }
+                <span class="footer-link" role="button" @onclick="@(() => Nav.NavigateTo("/reports"))">
+                    @(ReportRuns.ActiveCount == 1 ? "1 report running" : $"{ReportRuns.ActiveCount} reports running")
+                </span>
             }
-            <span class="footer-sep">·</span><span>v@(AppVersion)</span>
+            @if (Runner.ActiveCount + ReportRuns.ActiveCount == 0)
+            {
+                <span title="No copy and no report is running.">Nothing running</span>
+            }
+            <span class="footer-sep">·</span><span title="@AppInfo.Explanation">v@(AppInfo.Label)</span>
         </div>
         <div class="footer-group footer-center">
             <span>CleverPoint Migrator</span>
@@ -133,12 +149,6 @@
     private bool _navCollapsed;
     private string _currentPath = "";
 
-    // From the assembly version stamped at publish time by Sign-App.ps1
-    // (-p:Version=X.Y.Z), so the footer always matches the released version.
-    private static readonly string AppVersion =
-        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
-            ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0";
-
     // Identity mapping is a cross-tenant tool, so only surface it once there are connections to
     // two or more distinct tenants (hosts).
     private bool HasMultipleTenants => Settings.Connections
@@ -160,6 +170,7 @@
         Status.OnChange += OnStatusChanged;
         Activity.OnChange += OnStatusChanged;
         Runner.Changed += OnStatusChanged;
+        ReportRuns.Changed += OnStatusChanged;
         Nav.LocationChanged += OnLocationChanged;
         _currentPath = Nav.Uri;
     }
@@ -168,6 +179,11 @@
     // there is one, nudge the user toward Settings > About. Never blocks or errors the UI.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender && StartPage.Route is { } route)
+        {
+            StartPage.Route = null;
+            Nav.NavigateTo(route);
+        }
         if (!firstRender || !Updates.IsAutoCheckDue()) return;
         try
         {
@@ -220,6 +236,7 @@
         Status.OnChange -= OnStatusChanged;
         Activity.OnChange -= OnStatusChanged;
         Runner.Changed -= OnStatusChanged;
+        ReportRuns.Changed -= OnStatusChanged;
         Nav.LocationChanged -= OnLocationChanged;
     }
 }

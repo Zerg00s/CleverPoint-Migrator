@@ -3,7 +3,7 @@ using CleverPoint.Migrator.Core.Model;
 using CleverPoint.Migrator.Core.Operations;
 using CleverPoint.Migrator.Core.Validation;
 
-namespace CleverPoint.Migrator.Ux.Services;
+namespace CleverPoint.Migrator.Core.Hosting;
 
 /// <summary>
 /// Runs a real migration through the Core engine and records it to the SQLite
@@ -14,6 +14,13 @@ public class UxMigrationService
 {
     private readonly UxSettings _settings;
     private readonly BrowserSignIn _browser;
+
+    /// <summary>
+    /// False for the command line and other unattended hosts: an expired sign-in then fails the run
+    /// with a sign-in-required error and never opens a browser.
+    /// </summary>
+    public bool AllowInteractiveSignIn { get; set; } = true;
+
     public UxMigrationService(UxSettings settings, BrowserSignIn browser)
     {
         _settings = settings;
@@ -35,14 +42,31 @@ public class UxMigrationService
     }
 
     /// <summary>
-    /// For a browser (cookie) connection whose captured session is missing or expired, opens
-    /// the sign-in dialog for that specific tenant and waits. Cert connections need nothing.
+    /// Makes sure a connection is signed in before work starts. A browser (cookie) connection whose
+    /// captured session is missing or expired opens the sign-in dialog for that specific tenant and
+    /// waits. A Microsoft sign-in connection renews silently and opens the browser only when the
+    /// cached sign-in can no longer be renewed. Cert connections need nothing.
     /// Throws a clear, tenant-named error if the user does not complete the sign-in.
     /// </summary>
-    private async Task EnsureBrowserSessionAsync(SavedConnection c, string siteUrl)
+    private async Task EnsureSignedInAsync(SavedConnection c, string siteUrl)
     {
-        if (c.AuthMode == "AppCertificate") return;
+        if (UxConnectionResolver.IsCert(c)) return;
+        if (UxConnectionResolver.IsDelegated(c))
+        {
+            if (!AllowInteractiveSignIn)
+            {
+                // Proves the cached sign-in still renews; throws a sign-in-required error otherwise.
+                if (!UxConnectionResolver.IsSignedIn(c))
+                    throw new Core.Auth.SignInRequiredException($"Not signed in to {HostOf(siteUrl)} ({c.Name}).");
+                await UxConnectionResolver.DelegatedProvider(c).GetTokenAsync(new Uri(siteUrl).Host);
+                return;
+            }
+            if (await UxConnectionResolver.EnsureDelegatedAsync(c, siteUrl)) _settings.Save();
+            return;
+        }
         if (_browser.HasSession(siteUrl)) return;               // still valid
+        if (!AllowInteractiveSignIn)
+            throw new Core.Auth.SignInRequiredException($"The browser sign-in for {HostOf(siteUrl)} ({c.Name}) has expired.");
         if (!_browser.Available)                                 // browser auth is Windows-only
             throw new InvalidOperationException($"Sign-in for {HostOf(siteUrl)} ({c.Name}) has expired and can only be renewed on Windows.");
         var (ok, msg) = await _browser.SignInAsync(siteUrl, fresh: false);
@@ -70,8 +94,8 @@ public class UxMigrationService
             ?? throw new InvalidOperationException($"No saved connection for the source {HostOf(run.SourceUrl)}.");
         var tConn = UxConnectionResolver.Find(_settings, run.TargetUrl)
             ?? throw new InvalidOperationException($"No saved connection for the target {HostOf(run.TargetUrl)}.");
-        await EnsureBrowserSessionAsync(sConn, run.SourceUrl);
-        await EnsureBrowserSessionAsync(tConn, run.TargetUrl);
+        await EnsureSignedInAsync(sConn, run.SourceUrl);
+        await EnsureSignedInAsync(tConn, run.TargetUrl);
         var source = UxConnectionResolver.Resolve(sConn, run.SourceUrl, _browser);
         var target = UxConnectionResolver.Resolve(tConn, run.TargetUrl, _browser);
 
@@ -91,7 +115,7 @@ public class UxMigrationService
         onProgress?.Invoke("Writing the report…");
         report.PreparedBy = "CleverPoint Migrator";
         report.ClientName = clientName;
-        report.ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
+        report.ToolVersion = (System.Reflection.Assembly.GetEntryAssembly() ?? System.Reflection.Assembly.GetExecutingAssembly()).GetName().Version is { } v
             ? $"{v.Major}.{v.Minor}.{v.Build}" : "";
 
         var path = LogExporter.DownloadsPath($"Verification - {run.SourceList} to {run.TargetList}", "csv");
@@ -104,21 +128,39 @@ public class UxMigrationService
         string sourceSite, string targetSite, string sourceListTitle, CopyOptions options,
         Action<ItemCopyRecord> onRecord, CancellationToken ct, string engine = "Classic", string? runName = null,
         Action<long>? onRunStarted = null, Action<string>? onPhase = null, Action<int>? onTotal = null,
-        Action<int>? onThrottle = null, bool sourceIsLibrary = false)
+        Action<int>? onThrottle = null, bool sourceIsLibrary = false,
+        string? jobId = null, IdentityMapping? mappingOverride = null)
     {
+        // A cancel can also arrive from another process (the command line), as a flag in the history
+        // database that the heartbeat below picks up.
+        using var cancelSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        ct = cancelSource.Token;
+        // The Migration API engine is fast but limited. When this copy asks for something it cannot do,
+        // the Classic engine does the work instead, and the run log says why. Doing less than was
+        // asked without saying so is never an option.
+        string? engineNote = null;
+        if (engine == "MigrationApi")
+        {
+            var reasons = Core.MigrationApi.MigrationApiEngine.ReasonsToUseClassic(options, sourceIsLibrary);
+            if (reasons.Count > 0)
+            {
+                engine = "Classic";
+                engineNote = "Using the Classic engine instead of the Migration API engine, because " + string.Join("; ", reasons) + ".";
+            }
+        }
         var sConn = UxConnectionResolver.Find(_settings, sourceSite)!;
         var tConn = UxConnectionResolver.Find(_settings, targetSite)!;
-        // If a browser (cookie) sign-in has expired, force the sign-in dialog for THAT tenant
-        // before the copy starts, so the run doesn't just fail. The helper window is titled
-        // "Sign in - <host>", so it is clear which tenant is being re-authenticated.
-        await EnsureBrowserSessionAsync(sConn, sourceSite);
-        await EnsureBrowserSessionAsync(tConn, targetSite);
+        // If a sign-in has expired, ask for it again for THAT tenant before the copy starts, so
+        // the run doesn't just fail. The browser helper window is titled "Sign in - <host>", so it
+        // is clear which tenant is being re-authenticated.
+        await EnsureSignedInAsync(sConn, sourceSite);
+        await EnsureSignedInAsync(tConn, targetSite);
         var source = UxConnectionResolver.Resolve(sConn, sourceSite, _browser);
         var target = UxConnectionResolver.Resolve(tConn, targetSite, _browser);
 
         // Apply a saved source->target identity mapping (users, groups, orphan fallback) if one
         // exists for this tenant pair. The engine remaps Author/Editor and user/group fields.
-        var mapping = new UxMappingStore().Load(sourceSite, targetSite);
+        var mapping = mappingOverride ?? new UxMappingStore().Load(sourceSite, targetSite);
         Dictionary<string, string>? userMap = mapping.Users.Count > 0 ? mapping.Users : null;
         Dictionary<string, string>? groupMap = mapping.Groups.Count > 0 ? mapping.Groups : null;
         if (string.IsNullOrEmpty(options.UnresolvedUserFallback) && !string.IsNullOrEmpty(mapping.OrphanFallbackLogin))
@@ -141,6 +183,7 @@ public class UxMigrationService
             Name = string.IsNullOrWhiteSpace(runName) ? $"{sourceListTitle} -> {options.TargetListTitle}" : runName,
             SourceUrl = sourceSite, SourceList = sourceListTitle,
             TargetUrl = targetSite, TargetList = options.TargetListTitle,
+            JobId = jobId,
             Engine = engine == "MigrationApi" ? "MigrationApi" : "Classic",
             // Remember the exact source scope so the run can be re-opened in the
             // explorer later (folder + the picked files/folders/list items).
@@ -152,6 +195,18 @@ public class UxMigrationService
 
         var result = new CopyResult();
         var gate = new object();
+        // Every few seconds: tell other processes this run is alive, publish the planned total for
+        // their progress display, and stop when one of them asked for a cancel.
+        using var heartbeat = new Timer(_ =>
+        {
+            try
+            {
+                bool cancel;
+                lock (gate) cancel = store.Heartbeat(runId, result.PlannedItems);
+                if (cancel) cancelSource.Cancel();
+            }
+            catch { /* a busy database or a finished run must not take the run down */ }
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10));
         result.RecordAdded += rec =>
         {
             lock (gate) store.RecordItem(runId, rec);
@@ -160,6 +215,8 @@ public class UxMigrationService
             if (onTotal != null && result.PlannedItems > 0) onTotal(result.PlannedItems);
             onRecord(rec);
         };
+
+        if (engineNote != null) result.Add("Run", sourceListTitle, options.TargetListTitle, ItemCopyStatus.Info, engineNote);
 
         // Reuse the source->target item id map from prior runs so a re-copy of a
         // generic LIST updates/skips existing items (per ExistingMode) instead of
@@ -188,7 +245,7 @@ public class UxMigrationService
                     onPhase?.Invoke(msg);
                     result.Add("Progress", msg, "", ItemCopyStatus.Info);
                 };
-                var apiResult = await Task.Run(() => apiEngine.CopyLibraryAsync(sourceListTitle, options), ct);
+                var apiResult = await Task.Run(() => apiEngine.CopyLibraryAsync(sourceListTitle, options, userMap, ct), ct);
                 foreach (var rec in apiResult.Records)
                     result.Add(rec.ItemType, rec.SourcePath, rec.TargetPath, rec.Status, rec.Message);
                 if (result.Failed > 0) status = "CompletedWithIssues";
@@ -218,10 +275,16 @@ public class UxMigrationService
                 source.Rest.OnThrottle -= throttleHandler;
                 if (!ReferenceEquals(target.Rest, source.Rest)) target.Rest.OnThrottle -= throttleHandler;
             }
-            // Persist new id mappings so the next copy of this list can update in place.
-            if (result.ItemMappings.Count > 0)
-                store.SaveItemMap(pairKey, result.ItemMappings);
-            store.FinishRun(runId, result, status);
+            // Stop the heartbeat before the last writes; it shares this connection.
+            heartbeat.Change(Timeout.Infinite, Timeout.Infinite);
+            lock (gate)
+            {
+                try { store.Heartbeat(runId, result.PlannedItems); } catch { /* best-effort final total */ }
+                // Persist new id mappings so the next copy of this list can update in place.
+                if (result.ItemMappings.Count > 0)
+                    store.SaveItemMap(pairKey, result.ItemMappings);
+                store.FinishRun(runId, result, status);
+            }
         }
         return (result, status);
     }

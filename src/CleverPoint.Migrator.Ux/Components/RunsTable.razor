@@ -6,8 +6,7 @@
     <FluentToolbar Style="width:100%;">
         <FluentSearch @bind-Value="_filter" @bind-Value:after="Apply" Immediate="true" ImmediateDelay="250"
                       Placeholder="Filter by name, site, list…" />
-        <FluentSelect TOption="string" @bind-Value="_statusFilter" @bind-Value:after="Apply"
-                      Items="@_statuses" OptionText="@(s => s)" OptionValue="@(s => s)" Style="min-width:200px;" />
+        <MultiFilter Options="_statuses" Selected="_statusFilter" Changed="Apply" AllLabel="All statuses" Style="min-width:200px;" />
         <FluentSpacer />
         <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" OnClick="Reload">Refresh</FluentButton>
     </FluentToolbar>
@@ -51,8 +50,12 @@
                 </TemplateColumn>
                 <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" Sortable="true" />
                 <PropertyColumn Property="@(r => r.FinishedUtc.HasValue ? r.FinishedUtc.Value.ToLocalTime().ToString("g") : "")" Title="Finished" />
-                <PropertyColumn Property="@(r => Duration(r))" Title="Duration" />
-                <PropertyColumn Property="@(r => $"{r.Copied} copied · {r.Skipped} skipped · {r.Warnings} warn · {r.Failed} failed")" Title="Result" />
+                <TemplateColumn Title="Duration">
+                    <span class="duration">@Duration(context)</span>
+                </TemplateColumn>
+                <TemplateColumn Title="Result">
+                    <ResultChips Copied="context.Copied" Skipped="context.Skipped" Warnings="context.Warnings" Failed="context.Failed" />
+                </TemplateColumn>
             </FluentDataGrid>
         </div>
     }
@@ -65,8 +68,8 @@
     private List<Core.History.MigrationRun> _all = new();
     private List<Core.History.MigrationRun> _view = new();
     private string _filter = "";
-    private string _statusFilter = "All statuses";
-    private readonly string[] _statuses = { "All statuses", "Completed", "Completed with issues", "Interrupted", "Failed", "Running" };
+    private readonly HashSet<string> _statusFilter = new();     // empty = all
+    private readonly string[] _statuses = { "Completed", "Completed with issues", "Interrupted", "Cancelled", "Failed", "Running" };
     private readonly int[] _pageSizes = { 25, 50, 100, 250, 500, 1000 };
     private string _perPage = "50";
     private PaginationState _pagination = new() { ItemsPerPage = 50 };
@@ -101,16 +104,14 @@
                           || r.SourceList.Contains(f, StringComparison.OrdinalIgnoreCase)
                           || r.TargetList.Contains(f, StringComparison.OrdinalIgnoreCase));
         }
-        if (_statusFilter != "All statuses")
-            q = q.Where(r => Pretty(r.Status) == _statusFilter);
+        if (_statusFilter.Count > 0)
+            q = q.Where(r => _statusFilter.Contains(Pretty(r.Status)));
         _view = q.ToList();
     }
 
     private static string Duration(Core.History.MigrationRun r)
     {
-        if (r.FinishedUtc is not { } f) return "";
-        var d = f - r.StartedUtc;
-        return d.TotalHours >= 1 ? $"{(int)d.TotalHours}:{d.Minutes:00}:{d.Seconds:00}" : $"{d.Minutes}:{d.Seconds:00}";
+        return r.FinishedUtc is { } finished ? Friendly.Duration(finished - r.StartedUtc) : "";
     }
 
     private static string Pretty(string status) => status == "CompletedWithIssues" ? "Completed with issues" : status;
@@ -121,6 +122,8 @@
         "Failed" => "st-failed",
         "CompletedWithIssues" => "st-issues",
         "Interrupted" => "st-interrupted",
+        "Cancelled" => "st-cancelled",
+        "Queued" => "st-queued",
         "Running" => "st-running",
         _ => "st-ok",
     };

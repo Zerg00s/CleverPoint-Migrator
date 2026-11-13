@@ -1,7 +1,7 @@
 using System.Text.Json;
 using CleverPoint.Migrator.Core.Operations;
 
-namespace CleverPoint.Migrator.Ux.Services;
+namespace CleverPoint.Migrator.Core.Hosting;
 
 /// <summary>
 /// One saved source->target identity mapping: user logins/emails and group names remapped

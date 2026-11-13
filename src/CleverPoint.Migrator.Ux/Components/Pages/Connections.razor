@@ -20,10 +20,10 @@ else
 {
     <div class="conn-table cp-grid">
         <FluentDataGrid Items="@Settings.Connections.AsQueryable()" ResizableColumns="true"
-                        GridTemplateColumns="1.2fr 1fr 2.4fr 1.4fr 210px" ShowHover="true" Style="width:100%;">
+                        GridTemplateColumns="minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 2.4fr) minmax(0, 1.6fr) 240px" ShowHover="true" Style="width:100%;">
             <PropertyColumn Property="@(c => c.Name)" Title="Name" />
-            <TemplateColumn Title="Sign-in">@(context.AuthMode == "AppCertificate" ? "App + certificate" : "Browser")</TemplateColumn>
-            <PropertyColumn Property="@(c => c.SiteUrl)" Title="Site" />
+            <TemplateColumn Title="Sign-in">@SignInLabel(context)</TemplateColumn>
+            <TemplateColumn Title="Site"><span class="conn-site" title="@context.SiteUrl">@context.SiteUrl</span></TemplateColumn>
             <TemplateColumn Title="Status">
                 <span class="conn-status"><span class="conn-dot @StatusClass(context)"></span> <span>@StatusText(context)</span></span>
             </TemplateColumn>
@@ -39,6 +39,16 @@ else
                                       IconStart="@(IsConnected(context) ? (Icon)new Icons.Regular.Size20.ArrowClockwise() : new Icons.Regular.Size20.PlugConnected())">
                             @(IsConnected(context) ? "Reconnect" : "Connect")
                         </FluentButton>
+                        @if (UxConnectionResolver.IsDelegated(context))
+                        {
+                            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.ArrowDownload())"
+                                          Title="Export this connection for another computer (contains no secret)" @onclick="@(() => Export(context))" />
+                            @if (UxConnectionResolver.IsSignedIn(context))
+                            {
+                                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.SignOut())"
+                                              Title="Sign out on this computer" @onclick="@(() => SignOut(context))" />
+                            }
+                        }
                         <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Delete())"
                                       Title="Remove" @onclick="@(() => Remove(context))" />
                     }
@@ -93,6 +103,23 @@ else
                 var (ok, msg) = await UxConnectionResolver.TestAsync(c);
                 Toasts.ShowToast(ok ? ToastIntent.Success : ToastIntent.Error, msg);
             }
+            else if (UxConnectionResolver.IsDelegated(c))
+            {
+                // Renews silently when it can; the system browser opens only when it has to.
+                UxConnectionResolver.Invalidate(c);
+                try
+                {
+                    await UxConnectionResolver.EnsureDelegatedAsync(c, c.SiteUrl);
+                    var (ok, msg) = await UxConnectionResolver.TestAsync(c);
+                    Toasts.ShowToast(ok ? ToastIntent.Success : ToastIntent.Error, ok ? $"{msg} Signed in as {c.AccountUpn}." : msg);
+                }
+                catch (Exception ex)
+                {
+                    c.LastStatus = "Failed: " + ex.Message;
+                    c.LastVerifiedUtc = DateTime.UtcNow;
+                    Toasts.ShowToast(ToastIntent.Warning, ex.Message);
+                }
+            }
             else
             {
                 var fresh = SignIn.HasSession(c.SiteUrl);
@@ -113,14 +140,49 @@ else
         Toasts.ShowInfo($"Removed '{c.Name}'.");
     }
 
+    private async Task SignOut(SavedConnection c)
+    {
+        var who = c.AccountUpn;
+        await UxConnectionResolver.SignOutAsync(c);
+        Settings.Save();
+        Toasts.ShowInfo($"Signed out {who} on this computer.");
+    }
+
+    /// <summary>
+    /// Writes what another computer needs to use the same tenant app: site, tenant ID and app ID.
+    /// A Microsoft sign-in app has no secret, so this file is safe to send.
+    /// </summary>
+    private void Export(SavedConnection c)
+    {
+        try
+        {
+            var path = LogExporter.DownloadsPath($"CleverPoint connection - {new Uri(c.SiteUrl).Host}", "json");
+            File.WriteAllText(path, ConnectionFile.Serialize(c));
+            Toasts.ShowSuccess($"Saved {path}. Import it on the other computer under Add connection.");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not export: {ex.Message}");
+        }
+    }
+
+    private static string SignInLabel(SavedConnection c) =>
+        UxConnectionResolver.IsCert(c) ? "App + certificate"
+        : UxConnectionResolver.IsDelegated(c) ? "Microsoft sign-in"
+        : "Browser";
+
     private bool IsConnected(SavedConnection c) =>
-        c.AuthMode == "AppCertificate"
-            ? c.LastStatus.StartsWith("Connected", StringComparison.OrdinalIgnoreCase)
-            : SignIn.HasSession(c.SiteUrl);
+        UxConnectionResolver.IsCert(c) ? c.LastStatus.StartsWith("Connected", StringComparison.OrdinalIgnoreCase)
+        : UxConnectionResolver.IsDelegated(c)
+            ? UxConnectionResolver.IsSignedIn(c) && c.LastStatus.StartsWith("Connected", StringComparison.OrdinalIgnoreCase)
+        : SignIn.HasSession(c.SiteUrl);
 
     private string StatusText(SavedConnection c)
     {
-        if (IsConnected(c)) return c.AuthMode == "AppCertificate" ? c.LastStatus : "Connected";
+        if (IsConnected(c))
+            return UxConnectionResolver.IsCert(c) ? c.LastStatus
+                : UxConnectionResolver.IsDelegated(c) ? $"Connected as {c.AccountUpn}"
+                : "Connected";
         if (!string.IsNullOrEmpty(c.LastStatus) && c.LastStatus.StartsWith("Failed", StringComparison.OrdinalIgnoreCase)) return c.LastStatus;
         return "Not connected";
     }

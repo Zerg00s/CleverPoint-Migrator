@@ -116,7 +116,7 @@
                         }
                         else
                         {
-                            <span class="hint">@t.Copied copied · @t.Failed failed</span>
+                            <ResultChips Copied="t.Copied" Skipped="t.Skipped" Warnings="t.Warnings" Failed="t.Failed" />
                         }
                         <span class="status-pill @StateClass(t.State)">@StateLabel(t.State)</span>
                     </div>
@@ -170,12 +170,15 @@
                           @onclick="@(() => OpenCopyTask(_selected))" Title="Open this copy task's settings (the New Copy Task screen)">Copy task</FluentButton>
             <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())"
                           @onclick="@(() => OpenInExplorer(_selected))" Title="Open the explorer at this copy's source and target">Explorer</FluentButton>
-            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
-                          @onclick="@(() => Verify(_selected, false))" Disabled="@(_verifying || _selected.HistoryRunId == 0)"
-                          Title="Compare source and target and produce a CSV verification report">@(_verifying ? "Verifying…" : "Verify & report")</FluentButton>
-            <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.DocumentSearch())"
-                          @onclick="@(() => Verify(_selected, true))" Disabled="@(_verifying || _selected.HistoryRunId == 0)"
-                          Title="Also hash file contents (SHA-256, slower)">Deep verify</FluentButton>
+            @* One button, two depths. Both compare source with target and write the same report. *@
+            <FluentButton Id="activityVerifyBtn" Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
+                          IconEnd="@(new Icons.Regular.Size16.ChevronDown())"
+                          @onclick="@(() => _verifyOpen = !_verifyOpen)" Disabled="@(_verifying || _selected.HistoryRunId == 0)"
+                          Title="Compare the source with the target and write a verification report">@(_verifying ? "Verifying…" : "Verify")</FluentButton>
+            <FluentMenu Anchor="activityVerifyBtn" @bind-Open="_verifyOpen">
+                <FluentMenuItem OnClick="@(() => Verify(_selected, false))">Quick check: counts, dates, authors and fields</FluentMenuItem>
+                <FluentMenuItem OnClick="@(() => Verify(_selected, true))">Full check: also compare file contents (slower)</FluentMenuItem>
+            </FluentMenu>
             <FluentButton Id="activityExportBtn" Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowDownload())"
                           @onclick="@(() => _exportOpen = !_exportOpen)" Disabled="@(_selected.Log.Count == 0)">Export</FluentButton>
             <FluentMenu Anchor="activityExportBtn" @bind-Open="_exportOpen">
@@ -187,7 +190,7 @@
         {
             <div class="verify-row">
                 <FluentProgressRing Style="width:16px;height:16px;" />
-                <span class="tp-metric">@(_verifyDeep ? "Deep verify" : "Verify")@(string.IsNullOrEmpty(_verifyStatus) ? "…" : $": {_verifyStatus}")</span>
+                <span class="tp-metric">@(_verifyDeep ? "Full check" : "Quick check")@(string.IsNullOrEmpty(_verifyStatus) ? "…" : $": {_verifyStatus}")</span>
                 <FluentSpacer />
                 <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size16.DismissCircle())"
                               Disabled="@(_verifyCts is null || _verifyCts.IsCancellationRequested)"
@@ -374,7 +377,7 @@
 
     private void OpenInHistory(CopyTask t) => Nav.NavigateTo("/history");
 
-    private bool _exportOpen;
+    private bool _exportOpen, _verifyOpen;
     private string? _exportedPath;
 
     // Export this task's log (CSV or XLSX) to Downloads, then offer to open it.
@@ -566,7 +569,8 @@
         CopyTaskState.Completed => "st-ok",
         CopyTaskState.CompletedWithIssues => "st-issues",
         CopyTaskState.Failed => "st-failed",
-        _ => "st-interrupted",
+        CopyTaskState.Queued => "st-queued",
+        _ => "st-cancelled",
     };
 
     private static string ItemStatusClass(Core.Model.ItemCopyStatus s) => s switch
@@ -575,7 +579,7 @@
         Core.Model.ItemCopyStatus.Warning => "st-issues",
         Core.Model.ItemCopyStatus.Failed => "st-failed",
         Core.Model.ItemCopyStatus.Info => "st-info",
-        _ => "st-interrupted",
+        _ => "st-skipped",
     };
 
     // A verify keeps running after navigation (the CSV still lands in Downloads and the

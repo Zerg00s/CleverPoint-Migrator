@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace CleverPoint.Migrator.Ux.Services;
+namespace CleverPoint.Migrator.Core.Hosting;
 
 /// <summary>A saved tenant connection. Mirrors the WinForms app's shape so the
 /// same settings.json works in both front-ends.</summary>
@@ -8,9 +8,13 @@ public class SavedConnection
 {
     public string Name { get; set; } = "";
     public string SiteUrl { get; set; } = "";
-    public string AuthMode { get; set; } = "Browser";   // Browser | AppCertificate
+    public string AuthMode { get; set; } = "Browser";   // Browser | AppDelegated | AppCertificate
     public string TenantId { get; set; } = "";
     public string AppId { get; set; } = "";
+    /// <summary>AppDelegated: who is signed in, for display. Empty when signed out.</summary>
+    public string AccountUpn { get; set; } = "";
+    /// <summary>AppDelegated: the signed-in account's key in the token cache. Empty when signed out.</summary>
+    public string HomeAccountId { get; set; } = "";
     public string CertPfxPath { get; set; } = "";
     public string CertPasswordProtected { get; set; } = "";
     public string LastStatus { get; set; } = "";
@@ -50,6 +54,9 @@ public class UxSettings
     {
         get
         {
+            // CPM_HOME points the app and the command line at another folder, for tests and for
+            // keeping a second set of connections apart.
+            if (Environment.GetEnvironmentVariable("CPM_HOME") is { Length: > 0 } home) return Path.GetFullPath(home);
             // Windows: %AppData%\CleverPoint Migrator (same as the WinForms app).
             // Linux/WSL: ~/.config/CleverPoint Migrator.
             var baseDir = OperatingSystem.IsWindows()
@@ -62,13 +69,35 @@ public class UxSettings
     public static string SettingsPath => Path.Combine(Folder, "settings.json");
     public static string HistoryDbPath => Path.Combine(Folder, "history.db");
     public static string CacheFolder => Path.Combine(Folder, "cache");
+    /// <summary>Sign-in tokens of "Microsoft sign-in" connections. Encrypted for the current Windows user.</summary>
+    public static string TokenCachePath => Path.Combine(Folder, "msal.cache");
+    /// <summary>Certificates created by the unattended-app setup.</summary>
+    public static string CertificateFolder => Path.Combine(Folder, "certificates");
 
     // Loaded snapshot reused by the singleton; reloaded on demand.
     private bool _loaded;
 
+    // What the settings file looked like when this instance last read or wrote it.
+    private (DateTime Written, long Length) _seen;
+
+    private static (DateTime, long) Stamp()
+    {
+        try
+        {
+            var file = new FileInfo(SettingsPath);
+            return file.Exists ? (file.LastWriteTimeUtc, file.Length) : default;
+        }
+        catch { return default; }
+    }
+
+    /// <summary>
+    /// Loads the settings once, and again whenever another process has changed the file since. The
+    /// desktop app and the command line share this file: without the second part, a connection added
+    /// by one would be wiped out the next time the other saved its older copy.
+    /// </summary>
     public void EnsureLoaded()
     {
-        if (_loaded) return;
+        if (_loaded && Stamp() == _seen) return;
         Reload();
         _loaded = true;
     }
@@ -77,6 +106,7 @@ public class UxSettings
     {
         try
         {
+            _seen = Stamp();
             if (File.Exists(SettingsPath))
             {
                 var loaded = JsonSerializer.Deserialize<UxSettings>(File.ReadAllText(SettingsPath));
@@ -112,7 +142,17 @@ public class UxSettings
                 }
             }
         }
-        catch { /* first run / unreadable: keep defaults */ }
+        catch
+        {
+            // Unreadable (edited by hand, or cut off mid-write): carry on with defaults, but keep the
+            // file. The next Save would otherwise replace every saved connection with nothing.
+            try
+            {
+                if (File.Exists(SettingsPath))
+                    File.Copy(SettingsPath, Path.Combine(Folder, $"settings.unreadable-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json"), overwrite: true);
+            }
+            catch { /* the backup is best-effort */ }
+        }
     }
 
     public void Save()
@@ -121,6 +161,7 @@ public class UxSettings
         {
             Directory.CreateDirectory(Folder);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, Json));
+            _seen = Stamp();
         }
         catch { /* best-effort */ }
     }

@@ -33,12 +33,32 @@ public static class Program
         Source = new SpConnection("https://gocleverpointcom.sharepoint.com/sites/DemoLargeSite", new CertTokenProvider(sourceCreds));
         Target = new SpConnection("https://cleverpointlab.sharepoint.com", new CertTokenProvider(targetCreds));
 
+        // CP_AUTH=delegated reruns any scenario as the signed-in user through the tenant's sign-in app
+        // (see DelegatedAuthTests), to prove the delegated permissions are enough. A tenant with no
+        // sign-in app recorded keeps its certificate connection.
+        if (string.Equals(Environment.GetEnvironmentVariable("CP_AUTH"), "delegated", StringComparison.OrdinalIgnoreCase))
+        {
+            if (await Scenarios.DelegatedAuthTests.ProviderForAsync(Source.Host) is { } sourceUser)
+            {
+                Source = new SpConnection(Source.SiteUrl, sourceUser);
+                Console.WriteLine("Source: delegated sign-in");
+            }
+            if (await Scenarios.DelegatedAuthTests.ProviderForAsync(Target.Host) is { } targetUser)
+            {
+                Target = new SpConnection(Target.SiteUrl, targetUser);
+                Console.WriteLine("Target: delegated sign-in");
+            }
+        }
+
         Source.Rest.OnThrottle += (url, wait, attempt) =>
             Console.WriteLine($"  [throttle] {wait}s wait (attempt {attempt}) on {url}");
 
         var scenarios = new Dictionary<string, Func<Task>>(StringComparer.OrdinalIgnoreCase)
         {
             ["auth"] = Scenarios.AuthSmokeTest.RunAsync,
+            ["app-setup"] = Scenarios.DelegatedAuthTests.AppSetupAsync,
+            ["app-unattended"] = Scenarios.DelegatedAuthTests.AppUnattendedAsync,
+            ["auth-delegated"] = Scenarios.DelegatedAuthTests.AuthDelegatedAsync,
             ["provision"] = Scenarios.SameSiteCopyTests.ProvisionAsync,
             ["copy-list"] = Scenarios.SameSiteCopyTests.CopyListAsync,
             ["copy-selected"] = Scenarios.SameSiteCopyTests.CopySelectedItemsAsync,
@@ -66,6 +86,15 @@ public static class Program
             ["resume"] = Scenarios.DeltaResumeTests.ResumeAsync,
             ["ctypes"] = Scenarios.ContentTypeTests.RunAsync,
             ["perms"] = Scenarios.PermissionTests.RunAsync,
+            ["cli-cleanup"] = Scenarios.CliCleanup.RunAsync,
+            ["report-actions"] = Scenarios.ReportActionTests.RunAsync,
+            ["storage-probe"] = Scenarios.StorageProbe.RunAsync,
+            ["catalog-probe"] = Scenarios.StorageProbe.CatalogsAsync,
+            ["map-scale"] = Scenarios.StorageProbe.MapScaleAsync,
+            ["version-probe"] = Scenarios.StorageProbe.VersionLimitsAsync,
+            ["list-probe"] = Scenarios.StorageProbe.ListSizesAsync,
+            ["perms-only"] = Scenarios.PermissionSyncTests.PermissionsOnlyAsync,
+            ["perms-lib"] = Scenarios.PermissionSyncTests.LibraryCopyWithPermissionsAsync,
             ["usermap"] = Scenarios.UserMappingTests.RunAsync,
             ["xt-api"] = Scenarios.CrossTenantApiTest.RunAsync,
             ["compare"] = Scenarios.CompareReportTest.RunAsync,
@@ -135,7 +164,9 @@ public static class Program
             ["lang-headers"] = Scenarios.LanguageMatrixTest.HeaderProbeAsync,
         };
 
-        var toRun = args.Length > 0 ? args : scenarios.Keys.ToArray();
+        // The sign-in scenarios open a browser and wait for a person, so a run of everything skips them.
+        var interactive = new[] { "app-setup", "app-unattended", "auth-delegated", "cli-cleanup" };
+        var toRun = args.Length > 0 ? args : scenarios.Keys.Except(interactive, StringComparer.OrdinalIgnoreCase).ToArray();
         foreach (var name in toRun)
         {
             if (!scenarios.TryGetValue(name, out var run))

@@ -1,0 +1,228 @@
+@namespace CleverPoint.Migrator.Ux.Components
+@using CleverPoint.Migrator.Core.Auth
+@using CleverPoint.Migrator.Core.Csom
+@inject IJSRuntime JS
+@implements IDisposable
+
+@*
+    Sets up the tenant's app registration from inside the Add connection dialog.
+    Unattended = false: the sign-in app (delegated, no secret).
+    Unattended = true:  the app-only app with a certificate for this machine.
+*@
+
+<div class="setup-panel">
+    @if (!_running)
+    {
+        <div class="btn-row">
+            <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ShieldKeyhole())" @onclick="RunAsync">
+                Sign in to Microsoft 365
+            </FluentButton>
+        </div>
+    }
+    else
+    {
+        <div class="btn-row">
+            <FluentProgressRing Style="width:20px;height:20px;" />
+            <span>Working in your browser…</span>
+            <FluentButton Appearance="Appearance.Neutral" @onclick="Cancel">Cancel</FluentButton>
+        </div>
+        <p class="hint">On the first page, leave "Consent on behalf of your organization" unticked.</p>
+    }
+
+    @if (_lines.Count > 0)
+    {
+        <ul class="setup-log">
+            @foreach (var line in _lines)
+            {
+                <li>@line</li>
+            }
+        </ul>
+    }
+    @if (_error is not null)
+    {
+        <p class="setup-error">@_error</p>
+    }
+    @if (_consentLink is not null)
+    {
+        @* The app exists; only an administrator's approval is missing. Someone who cannot approve
+           sends the link on and adds the connection now, and it starts working once approved. *@
+        <div class="callout" style="margin-top:12px;">
+            <FluentIcon Value="@(new Icons.Regular.Size20.ShieldCheckmark())" Color="Color.Accent" />
+            <div style="flex:1 1 auto; min-width:0;">
+                <div class="callout-title">The app needs an administrator's approval</div>
+                <p>Not an administrator? Send them this link. They can open it in any browser.</p>
+                <div class="btn-row">
+                    <FluentTextField ReadOnly="true" Value="@_consentLink" Style="flex:1 1 auto; min-width:0;" />
+                    <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Copy())" @onclick="CopyLink">
+                        @(_copied ? "Copied" : "Copy link")
+                    </FluentButton>
+                </div>
+                <div class="btn-row" style="margin-top:10px;">
+                    <FluentButton Appearance="Appearance.Neutral" @onclick="AddPendingAsync">Add the connection now</FluentButton>
+                    <span class="hint" style="margin:0;">It starts working once the app is approved.</span>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The site the connection is for; its host decides which tenant is set up.</summary>
+    [Parameter] public string SiteUrl { get; set; } = "";
+    [Parameter] public bool Unattended { get; set; }
+    /// <summary>Raised when the sign-in app is ready: tenant ID and app (client) ID.</summary>
+    [Parameter] public EventCallback<SignInAppResult> OnSignInAppReady { get; set; }
+    /// <summary>Raised when the unattended app and this machine's certificate are ready.</summary>
+    [Parameter] public EventCallback<UnattendedAppResult> OnUnattendedAppReady { get; set; }
+    /// <summary>Raised after the app is ready and approved, so the dialog can add the connection.</summary>
+    [Parameter] public EventCallback OnDone { get; set; }
+
+    private readonly List<string> _lines = new();
+    private bool _running;
+    private string? _error;
+    private string? _consentLink;
+    private bool _copied, _skipWait;
+    // The app-only app waiting for approval: its certificate is already made and must not be lost.
+    private UnattendedAppResult? _pendingUnattended;
+    private CancellationTokenSource? _cts;
+
+    /// <summary>Shows the approval link for an app that is already known (pasted or imported ID).</summary>
+    public void ShowConsentLink(string tenantId, string appId)
+    {
+        _consentLink = EntraAppProvisioner.BuildAdminConsentUrl(tenantId, appId);
+        StateHasChanged();
+    }
+
+    private async Task RunAsync()
+    {
+        _lines.Clear();
+        _error = null;
+        _consentLink = null;
+        _pendingUnattended = null;
+        _copied = _skipWait = false;
+        var addPending = false;
+        if (!Uri.TryCreate(SiteUrl?.Trim(), UriKind.Absolute, out var site) || site.Scheme != Uri.UriSchemeHttps)
+        {
+            _error = "Enter the site URL first, for example https://contoso.sharepoint.com/sites/Team.";
+            return;
+        }
+
+        _running = true;
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        var provisioner = new EntraAppProvisioner();
+        provisioner.OnProgress += line => InvokeAsync(() => { _lines.Add(line); StateHasChanged(); });
+        try
+        {
+            await provisioner.SignInAdminAsync(site.Host, ct);
+            if (Unattended)
+            {
+                var app = await provisioner.EnsureUnattendedAppAsync(UxSettings.CertificateFolder, ct);
+                _pendingUnattended = app;
+                _consentLink = EntraAppProvisioner.BuildAdminConsentUrl(app.TenantId, app.AppId);
+                StateHasChanged();
+                await provisioner.GrantAdminConsentAsync(app.TenantId, app.AppId, app.Created, ct);
+                await WaitForSharePointAsync(app, site.AbsoluteUri.TrimEnd('/'), ct);
+                _consentLink = null;
+                _pendingUnattended = null;
+                _lines.Add("Done.");
+                await OnUnattendedAppReady.InvokeAsync(app);
+                await OnDone.InvokeAsync();
+            }
+            else
+            {
+                var app = await provisioner.EnsureSignInAppAsync(ct);
+                // Known from here on, so a failed or declined approval can still be finished by link.
+                _consentLink = EntraAppProvisioner.BuildAdminConsentUrl(app.TenantId, app.AppId);
+                await OnSignInAppReady.InvokeAsync(app);
+                StateHasChanged();
+                await provisioner.GrantAdminConsentAsync(app.TenantId, app.AppId, app.Created, ct);
+                _consentLink = null;
+                _lines.Add("Done.");
+                await OnDone.InvokeAsync();
+            }
+        }
+        catch (OperationCanceledException) when (_skipWait && _consentLink is not null)
+        {
+            addPending = true;      // "Add the connection now" was chosen while waiting for the approval
+        }
+        catch (OperationCanceledException)
+        {
+            _error = "Cancelled. Nothing is left half-done: running the setup again continues where it stopped.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _running = false;
+            _cts?.Dispose();
+            _cts = null;
+            StateHasChanged();
+        }
+        if (addPending) await FinishPendingAsync();
+    }
+
+    /// <summary>Adds the connection although the approval has not happened yet.</summary>
+    private async Task AddPendingAsync()
+    {
+        if (_running)
+        {
+            // Stop waiting on the approval page; RunAsync finishes the job when the wait unwinds.
+            _skipWait = true;
+            _cts?.Cancel();
+            return;
+        }
+        await FinishPendingAsync();
+    }
+
+    private async Task FinishPendingAsync()
+    {
+        if (Unattended)
+        {
+            if (_pendingUnattended is null) return;
+            await OnUnattendedAppReady.InvokeAsync(_pendingUnattended);
+        }
+        await OnDone.InvokeAsync();
+    }
+
+    /// <summary>A new app-only grant takes up to a minute or two to reach SharePoint. Wait so the first Connect works.</summary>
+    private async Task WaitForSharePointAsync(UnattendedAppResult app, string siteUrl, CancellationToken ct)
+    {
+        _lines.Add("Waiting for SharePoint to accept the new app…");
+        StateHasChanged();
+        using var tokens = new CertTokenProvider(new AppCredentials
+        {
+            TenantId = app.TenantId, AppId = app.AppId, CertPfxPath = app.PfxPath, CertPassword = app.PfxPassword,
+        });
+        var conn = new SpConnection(siteUrl, tokens);
+        for (var attempt = 0; attempt < 18; attempt++)
+        {
+            try
+            {
+                using var _ = await conn.Rest.GetJsonAsync($"{conn.SiteUrl}/_api/web?$select=Title");
+                return;
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), ct);
+            }
+        }
+        _lines.Add("SharePoint has not accepted the app yet. Add the connection anyway and use Connect again in a few minutes.");
+    }
+
+    private void Cancel() => _cts?.Cancel();
+
+    private async Task CopyLink()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _consentLink);
+            _copied = true;
+        }
+        catch { /* the link stays selectable in the text field */ }
+    }
+
+    public void Dispose() => _cts?.Cancel();
+}

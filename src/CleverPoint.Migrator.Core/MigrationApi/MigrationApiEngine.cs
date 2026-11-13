@@ -31,15 +31,73 @@ public class MigrationApiEngine
         _target = target;
     }
 
-    public async Task<CopyResult> CopyLibraryAsync(string sourceListTitle, CopyOptions options)
+    private CancellationToken _cancel;
+
+    /// <summary>
+    /// Why a copy cannot go through this engine, in words for the run log and the wizard; empty when it
+    /// can. Callers that let the user pick an engine use this to switch to the Classic engine instead
+    /// of quietly doing less than was asked.
+    /// </summary>
+    public static List<string> ReasonsToUseClassic(CopyOptions options, bool sourceIsLibrary)
     {
+        var reasons = new List<string>();
+        if (!sourceIsLibrary) reasons.Add("it only copies libraries, and this is a list");
+        if (options.PermissionsOnly) reasons.Add("it cannot apply permissions");
+        if (!string.IsNullOrWhiteSpace(options.TargetSubfolderRelative)) reasons.Add("it cannot copy into a folder of the target library");
+        if (options.ExistingMode != ExistingItemMode.Overwrite)
+            reasons.Add($"it cannot {(options.ExistingMode == ExistingItemMode.Skip ? "skip files that already exist" : "compare dates to copy only newer files")}");
+        if (options.MaxVersions > 1) reasons.Add($"it copies only the latest version, and {options.MaxVersions} were asked for");
+        if (!options.PreserveAuthorsAndDates) reasons.Add("it always keeps the source's authors and dates");
+        if (options.CopyPermissions) reasons.Add("it does not copy permissions");
+        if (options.ResumeSkipPaths is { Count: > 0 }) reasons.Add("it cannot resume where an earlier run stopped");
+        return reasons;
+    }
+
+    /// <summary>
+    /// Safety net for a caller that runs this engine directly with settings it cannot honor: each one
+    /// becomes a warning on the run. The app and the command line never get here with such settings;
+    /// they switch to the Classic engine first (<see cref="ReasonsToUseClassic"/>).
+    /// </summary>
+    public static List<string> UnsupportedSettings(CopyOptions options)
+    {
+        var notices = new List<string>();
+        if (options.ExistingMode != ExistingItemMode.Overwrite)
+            notices.Add($"Migration API engine: \"{(options.ExistingMode == ExistingItemMode.Skip ? "Skip" : "Copy if newer")}\" is NOT applied. " +
+                        "Files that already exist on the target are imported again. Use the Classic engine to skip or compare.");
+        if (options.MaxVersions > 1)
+            notices.Add($"Migration API engine: only the latest version of each file is copied, not the {options.MaxVersions} versions asked for. Use the Classic engine for version history.");
+        if (!options.PreserveAuthorsAndDates)
+            notices.Add("Migration API engine: authors and dates are always carried over from the source; turning that off is not possible here.");
+        if (options.CopyPermissions)
+            notices.Add("Migration API engine: permissions are NOT copied. Use the Classic engine, or run a permissions-only job afterwards.");
+        if (options.ResumeSkipPaths is { Count: > 0 })
+            notices.Add("Migration API engine: a resume copies everything again; it cannot skip what an earlier run finished.");
+        return notices;
+    }
+
+    /// <param name="userMap">Manual source-to-target account mapping (the identity mapping), applied before matching by sign-in name and email.</param>
+    /// <param name="cancellationToken">
+    /// Stops the copy between files and between polls. Import jobs already handed to SharePoint are
+    /// asked to stop as well; what they had imported by then stays on the target.
+    /// </param>
+    public async Task<CopyResult> CopyLibraryAsync(string sourceListTitle, CopyOptions options,
+        Dictionary<string, string>? userMap = null, CancellationToken cancellationToken = default)
+    {
+        _cancel = cancellationToken;
         var result = new CopyResult();
+        // Say out loud what this engine will not do with the settings it was given, before any work.
+        // A setting that is quietly ignored is worse than one that is refused.
+        if (!string.IsNullOrWhiteSpace(options.TargetSubfolderRelative))
+            throw new InvalidOperationException(
+                "The Migration API engine cannot copy into a folder of the target library. Use the Classic engine for this copy.");
+        foreach (var notice in UnsupportedSettings(options))
+            result.Add("Run", sourceListTitle, options.TargetListTitle, ItemCopyStatus.Warning, notice);
         using var sourceCtx = _source.CreateContext();
         using var targetCtx = _target.CreateContext();
 
         // ---- Source + target structure ----
         var sourceList = await Operations.ListLocator.FindAsync(sourceCtx, sourceListTitle, options.SourceListServerRelativeUrl);
-        var users = new UserResolver(sourceCtx, targetCtx, null, options.UnresolvedUserFallback);
+        var users = new UserResolver(sourceCtx, targetCtx, userMap, options.UnresolvedUserFallback);
         await users.PrimeSourceUsersAsync();
 
         // Managed metadata before the schema: the target term store is a different object cross-tenant, so
@@ -70,6 +128,7 @@ public class MigrationApiEngine
         targetCtx.Load(targetList, l => l.Id, l => l.RootFolder.UniqueId, l => l.RootFolder.ServerRelativeUrl);
         await targetCtx.ExecuteWithRetryAsync();
 
+        _cancel.ThrowIfCancellationRequested();
         OnProgress?.Invoke("reading the source library… (this can take a while for very large libraries)");
         var itemCopier = new ItemCopier(sourceCtx, targetCtx, users);
         var copyFields = await itemCopier.GetCopyFieldsAsync(sourceList, targetList);
@@ -77,7 +136,9 @@ public class MigrationApiEngine
         OnProgress?.Invoke($"loaded {allItems.Count:N0} item(s); resolving users and preparing packages…");
         await users.PreResolveAsync(ItemCopier.CollectUserIds(allItems, copyFields));
 
-        var sourceRoot = sourceList.RootFolder.ServerRelativeUrl;
+        // The same layout base as the Classic engine: copying from inside a folder puts that folder's
+        // contents at the top of the target, without the folders above it.
+        var sourceRoot = options.PathBase(sourceList.RootFolder.ServerRelativeUrl).TrimEnd('/');
         var listLeaf = targetList.RootFolder.ServerRelativeUrl[(targetCtx.Web.ServerRelativeUrl.TrimEnd('/').Length + 1)..];
         var textFieldNames = copyFields.Where(f => f.TypeAsString is "Text" or "Note" or "Choice")
             .Select(f => f.InternalName).ToList();
@@ -202,6 +263,7 @@ public class MigrationApiEngine
             var packagedInChunk = 0;
             foreach (var item in chunkFiles)
             {
+                _cancel.ThrowIfCancellationRequested();
                 var fileRef = (string)item["FileRef"];
                 var rel = fileRef[(sourceRoot.Length + 1)..];
                 var blobName = $"{Guid.NewGuid()}.dat";
@@ -302,6 +364,7 @@ public class MigrationApiEngine
         var laterJobs = new List<Guid>();
         while (fileQueue.Count > 0)
         {
+            _cancel.ThrowIfCancellationRequested();
             var builder = NewBuilder();
             var chunkFiles = new List<ListItem>();
             while (fileQueue.Count > 0 && chunkFiles.Count < maxItems)
@@ -418,7 +481,27 @@ public class MigrationApiEngine
         var lastActivity = DateTime.UtcNow;
         while (waiting.Count > 0 && DateTime.UtcNow - lastActivity < maxIdle)
         {
-            await Task.Delay(TimeSpan.FromSeconds(8));
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(8), _cancel);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelled while SharePoint is still importing: ask it to drop the jobs it has not
+                // finished, then let the cancellation continue. Best-effort, a job that just ended
+                // cannot be deleted and that is fine.
+                foreach (var jobId in waiting)
+                {
+                    try
+                    {
+                        targetCtx.Site.DeleteMigrationJob(jobId);
+                        await targetCtx.ExecuteWithRetryAsync();
+                    }
+                    catch (Exception) { /* already finished or gone */ }
+                }
+                OnProgress?.Invoke($"cancelled: asked SharePoint to stop {waiting.Count} import job(s)");
+                throw;
+            }
             foreach (var (text, msgId, popReceipt) in await _azure.GetQueueMessagesAsync(queueUri))
             {
                 lastActivity = DateTime.UtcNow;   // any message counts as progress

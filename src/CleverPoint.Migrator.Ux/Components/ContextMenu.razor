@@ -1,0 +1,48 @@
+@namespace CleverPoint.Migrator.Ux.Components
+
+@*
+    A small menu at the pointer, for a right-click. The page keeps what to show (Show) and hands over
+    the entries; choosing one runs it and closes the menu, and so does a click anywhere else.
+*@
+
+@if (_open)
+{
+    <div class="ctx-backdrop" @onclick="Close" @oncontextmenu="Close" @oncontextmenu:preventDefault="true"></div>
+    <div class="ctx-menu" style="left:min(@(_x)px, calc(100vw - 250px)); top:min(@(_y)px, calc(100vh - @(_items.Count * 32 + 24)px));">
+        @foreach (var entry in _items)
+        {
+            var item = entry;
+            <button type="button" class="ctx-item" @onclick="() => Choose(item)">@item.Label</button>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>One line of the menu and what it does.</summary>
+    public sealed record Item(string Label, Func<Task> Run)
+    {
+        public Item(string label, Action run) : this(label, () => { run(); return Task.CompletedTask; }) { }
+    }
+
+    private bool _open;
+    private double _x, _y;
+    private List<Item> _items = new();
+
+    /// <summary>Opens the menu where the pointer is. Without entries nothing opens.</summary>
+    public void Show(MouseEventArgs at, IEnumerable<Item> items)
+    {
+        _items = items.ToList();
+        _open = _items.Count > 0;
+        _x = at.ClientX;
+        _y = at.ClientY;
+        StateHasChanged();
+    }
+
+    private void Close() => _open = false;
+
+    private async Task Choose(Item item)
+    {
+        _open = false;
+        await item.Run();
+    }
+}

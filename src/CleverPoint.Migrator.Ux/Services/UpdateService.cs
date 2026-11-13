@@ -22,9 +22,7 @@ public class UpdateService
     private readonly UxSettings _settings;
     public UpdateService(UxSettings settings) => _settings = settings;
 
-    public static string CurrentVersion =>
-        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
-            ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0.0";
+    public static string CurrentVersion => AppInfo.Version;
 
     private static HttpClient CreateClient()
     {

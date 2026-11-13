@@ -39,6 +39,11 @@ internal class Program
         if (!SingleInstance.Acquire())
             return; // already running; its window has been brought to the foreground
 
+        // "--open /reports" starts the app on that page instead of Home, so a script or the command line
+        // can send someone straight to a result.
+        var open = Array.IndexOf(args, "--open");
+        if (open >= 0 && open + 1 < args.Length && args[open + 1].StartsWith('/')) StartPage.Route = args[open + 1];
+
         var builder = PhotinoBlazorAppBuilder.CreateDefault(args);
 
         builder.Services.AddLogging();
@@ -56,6 +61,7 @@ internal class Program
         builder.Services.AddSingleton<DragState>();
         builder.Services.AddSingleton<ExplorerState>();
         builder.Services.AddSingleton<MigrationRunner>();
+        builder.Services.AddSingleton<ReportHost>();
         builder.Services.AddSingleton<UxMappingStore>();
         builder.Services.AddSingleton<UpdateService>();
 
@@ -66,6 +72,14 @@ internal class Program
         // A run still "Running" in history can only be a leftover from a session that
         // closed mid-copy, so reconcile it to Interrupted on startup.
         (app.Services.GetService(typeof(HistoryService)) as HistoryService)?.ReconcileOrphanedRuns();
+
+        // After an update, bring the agent skill copies this app installed up to date. Only copies
+        // nobody edited are touched, and nothing is installed anywhere new. Off the UI thread:
+        // looking inside WSL can take a few seconds.
+        _ = Task.Run(() =>
+        {
+            try { AgentSkill.Refresh(); } catch { /* never a reason to disturb startup */ }
+        });
 
         app.MainWindow
             .SetTitle("CleverPoint Migrator")
@@ -103,9 +117,23 @@ internal class Program
         // We ask the MigrationRunner (the real live state) rather than
         // ActivityService, whose IsBusy flag is never set anywhere.
         var runner = app.Services.GetService(typeof(MigrationRunner)) as MigrationRunner;
+        var reports = app.Services.GetService(typeof(ReportHost)) as ReportHost;
         app.MainWindow.WindowClosing += (_, _) =>
         {
             var active = runner?.ActiveCount ?? 0;
+            var reporting = reports?.ActiveCount ?? 0;
+            if (active == 0 && reporting > 0)
+            {
+                // A report loses nothing by being stopped: the sites it has scanned are kept and it can be continued.
+                var answer = app.MainWindow.ShowMessage(
+                    "Report in progress",
+                    (reporting == 1 ? "A report is still running." : $"{reporting} reports are still running.")
+                    + " Close the app and stop? What has been scanned so far is kept, and the report can be continued later.",
+                    PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Warning);
+                if (answer != PhotinoDialogResult.Yes) return true;
+                reports?.CancelAll();
+                return false;
+            }
             if (active == 0) return false;
             var result = app.MainWindow.ShowMessage(
                 "Migration in progress",
@@ -115,6 +143,7 @@ internal class Program
                 PhotinoDialogButtons.YesNo, PhotinoDialogIcon.Warning);
             if (result != PhotinoDialogResult.Yes) return true;   // No: keep the app open
             runner?.CancelAll();   // Yes: signal every worker to stop before the process exits
+            reports?.CancelAll();
             return false;          // allow the close
         };
 

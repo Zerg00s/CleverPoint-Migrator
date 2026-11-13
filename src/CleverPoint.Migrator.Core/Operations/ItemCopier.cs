@@ -544,6 +544,8 @@ public class ItemCopier
         async Task<List<ListItem>> ScanAsync(string? scope, string? pathPrefix)
         {
         var items = new List<ListItem>();
+        // Folders left out by an ID selection. One of them may still hold a picked item.
+        var unpickedFolders = new List<ListItem>();
         var query = new CamlQuery
         {
             ViewXml = $"<View Scope='RecursiveAll'><RowLimit Paged='TRUE'>{options.PageSize}</RowLimit></View>",
@@ -589,7 +591,10 @@ public class ItemCopier
                 // Unselected items are not logged as skips - thousands of
                 // "not selected" rows would bury the real log.
                 if (options.ItemIds.Count > 0 && !options.ItemIds.Contains(item.Id))
+                {
+                    if (item.FileSystemObjectType == FileSystemObjectType.Folder) unpickedFolders.Add(item);
                     continue;
+                }
 
                 // Surgical path selection (explorer multi-select of files and
                 // folders): a listed file copies, a listed folder copies with
@@ -635,6 +640,18 @@ public class ItemCopier
             query.ListItemCollectionPosition = page.ListItemCollectionPosition;
         } while (query.ListItemCollectionPosition != null);
 
+        // An item picked by ID keeps its place in the list. The folders above it were not picked, but
+        // they have to exist on the target for the item to be created there; without them the copy of
+        // that item failed with "There is no file with URL .../<folder>".
+        if (unpickedFolders.Count > 0)
+        {
+            var picked = items.Select(i => (string)i["FileRef"]).ToList();
+            foreach (var folder in unpickedFolders)
+            {
+                var inside = (string)folder["FileRef"] + "/";
+                if (picked.Any(p => p.StartsWith(inside, StringComparison.OrdinalIgnoreCase))) items.Add(folder);
+            }
+        }
         return items;
         }
     }

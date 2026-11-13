@@ -87,9 +87,130 @@ connections use a small WebView2 popup helper. Build it once so the app can find
 dotnet build src\CleverPoint.Migrator.SignInHelper
 ```
 
-App + certificate connections need no helper (they authenticate silently). On
-Linux/WSL the helper can't run (WebView2 is Windows-only), so use app + certificate
-there.
+App + certificate and Microsoft sign-in connections need no helper. On Linux/WSL the
+helper can't run (WebView2 is Windows-only), so use one of those there.
+
+## Command line (cpm)
+
+`src/CleverPoint.Migrator.Cli` builds `cpm`, a console front-end over the same engine. The
+services it shares with the desktop app (settings, connections, run service, site browser,
+job file model, agent skill installer) live in `Core/Hosting`. `Sign-App.ps1` publishes it
+into the app's publish folder and signs it; the MSI puts that folder on the user's PATH.
+
+```bash
+dotnet build src/CleverPoint.Migrator.Cli
+src/CleverPoint.Migrator.Cli/bin/Debug/net8.0/cpm --help
+src/CleverPoint.Migrator.Cli/bin/Debug/net8.0/cpm agent guide
+```
+
+- `CPM_HOME` (or `--home <folder>`) points the app and the command line at another settings
+  folder, which keeps tests away from real connections and history.
+- A job runs in its own detached process (`cpm job exec <id>`, hidden from help) and logs to
+  `logs/job-<id>.log` in the settings folder. `cpm job exec <id> --foreground` runs it in the
+  current console for debugging.
+- Several processes now share `history.db`. A run records its owner process and a heartbeat;
+  `HistoryStore.MarkOrphanedAsInterrupted` only touches runs whose owner is gone. Cancelling
+  from another process is a flag the owner reads with its heartbeat.
+- Commands, help text and the agent guide all come from the command table in the `Commands`
+  folder, and the job schema from the Description attributes in `Core/Hosting/JobSpec.cs`.
+  Add a command or a job setting there and the documentation follows.
+- The agent skill text is `AgentSkill.Content` in Core. Bump `AgentSkill.Version` when it changes.
+
+### Reports
+
+`Core/Reports` is the report engine, shared by `cpm report ...` and the app's Reports page.
+
+- A report is one class deriving from `ReportDefinition` (in `Reports/Definitions`), listed in
+  `ReportCatalog.All`. It declares its ID, scope (tenant, sites or site pairs), settings and tables,
+  and implements `RunAsync(ReportContext)`, which scans one site and calls `context.Write(table, row)`
+  and `context.Count(name)`. The catalog, the command-line help, the agent guide and the app's
+  cards are generated from these classes. Tests for a new report go in the `report` group below.
+- `ReportRunner.ExecuteAsync` runs a queued report: several sites at once, one site's failure
+  recorded and skipped, a heartbeat and a cancel flag in `history.db` (`report_runs` table), and
+  resume. The command line runs it in a detached process (`cpm report exec <id>`, hidden); the
+  app runs it in-process through `Ux/Services/ReportHost.cs`.
+- `ReportStore` keeps a run's rows in `{settings}/reports/<runId>/`: one NDJSON file per table,
+  `sites.ndjson` with how each site ended, `targets.json` with the sites of the run. A site's rows
+  are staged and only appended to the tables when the site finishes, so a failed or interrupted
+  site leaves nothing behind and resume cannot duplicate rows.
+- `TenantSites` lists a tenant through its admin site: the admin site's own list of sites for
+  site collections, tenant CSOM for OneDrives. No Microsoft Graph anywhere.
+- `Core/Hosting/XlsxWriter.cs` writes multi-sheet Excel workbooks row by row without a library.
+- `Reports/StorageMap.cs` builds the tree behind the storage map from a run's tables and lays it
+  out as a squarified treemap; `Ux/Components/StorageMapView.razor` draws it. The storage report's
+  version numbers come from the `SMTotalSize` and `SMTotalFileStreamSize` fields that ride along
+  with each row of a library view (`dotnet run -- storage-probe` shows the raw values).
+- `Reports/VersionLimits.cs` reads version history limits at the three levels they exist: tenant
+  (admin site, `SPO.Tenant`), site (`site/VersionPolicyForNewLibrariesTemplate`, where a limit of -1
+  means "tenant default") and library (`VersionPolicies` on the list). Changing them and queuing
+  trim jobs goes through the admin site with tenant CSOM (`Definitions/VersionReports.cs`), because
+  SharePoint refuses the site-level job calls for an app-only connection. `dotnet run -- version-probe`
+  shows the raw answers.
+- `Reports/FileKinds.cs` sorts extensions into nine kinds of file. The list is short on purpose:
+  each kind has a color on the map (`--k0` to `--k8` in `app.css`, in the order of `FileKinds.All`),
+  and more colors than that cannot be told apart. The storage report's `folderKinds` table is what
+  lets the map color the files of a folder that have no box of their own.
+- The desktop app takes `--open <route>` to start on a page, for example `--open /report/<runId>`.
+- `FileWalker` reads a whole library a page at a time (threshold-safe), `RestBatch` sends up to 50
+  GETs in one `$batch` request, `Operations/UniquePermissionScanner` finds items with their own
+  permissions (the permissions-only copy uses it too).
+- An action is a `ReportDefinition` with `ChangesData`. It must do nothing but read unless
+  `context.Apply` is true, and write the same table in both cases ("Would ..." versus what it did).
+  `cpm report apply <previewRunId>` and the Apply button start the real run from a finished preview.
+  `dotnet run -- report-actions` in the TestRunner runs fix-notebooks and nav-sync for real, on a
+  library it creates and on a language test subsite, and puts things back.
+
+### Command line tests
+
+`tools/cli-tests/cli_tests.py` drives the built `cpm` the way a script or an agent does and checks
+the JSON and the exit code of every call. It runs in a throwaway settings folder, so real
+connections and history are never touched. Python 3 only, no packages.
+
+```bash
+dotnet build src/CleverPoint.Migrator.Cli
+python3 tools/cli-tests/cli_tests.py                # everything (about 20 minutes)
+python3 tools/cli-tests/cli_tests.py cli agent      # no network, under a minute
+python3 tools/cli-tests/cli_tests.py --cpm C:\path\to\cpm.exe conn site
+```
+
+| Group | Covers | Needs |
+|---|---|---|
+| `cli` | parsing, help, exit codes, reading and validating job files, an old history database | nothing |
+| `agent` | the agent guide and the skill installer, in a fake home folder | nothing |
+| `conn` | adding, testing, exporting, importing and removing connections; sign-in errors | the `Secrets` folder |
+| `site` | lists, folders, users, the mapping template | the `Secrets` folder |
+| `job` | real jobs: every mode, selections, identity mapping, both engines, another tenant | the `Secrets` folder |
+| `life` | timeouts, cancel, a killed background process, concurrent readers and writers | the `Secrets` folder |
+| `report` | the report catalog and file format; then every report on the sandbox, all sites of the tenant in one run, failing sites, cancel, a killed process, resume, export | nothing for the first half, the `Secrets` folder for the rest |
+
+Run one suite at a time. The engine scenarios, `job` and `life` create and delete lists in the test
+subsite; a report that scans the site at that moment sees them come and go and its exact-count
+checks fail.
+
+The `job` and `life` groups write lists named `CliT-...` to the sandbox test subsite and the lab tenant. Remove
+them with `dotnet run -- cli-cleanup` in the TestRunner folder. The script runs on Windows as
+well; point `--cpm` at a Windows build.
+
+## Microsoft sign-in (tenant app)
+
+`Core/Auth/DelegatedTokenProvider.cs` signs the user in through the tenant's own app
+registration with MSAL.NET (`Microsoft.Identity.Client` and
+`Microsoft.Identity.Client.Extensions.Msal`, referenced by Core). It uses the system
+browser and a loopback redirect, so it works on every platform. The token cache is
+`msal.cache` in the settings folder, encrypted with DPAPI on Windows. On Linux/WSL it is
+an unprotected file, which is acceptable for development only.
+
+`Core/Auth/EntraAppProvisioner.cs` registers the app and opens the admin consent page.
+The interactive test scenarios are not part of a run of everything; start them by name,
+from Windows so the browser opens on the desktop:
+
+```
+cd tools\CleverPoint.Migrator.TestRunner
+dotnet run -- app-setup         # find or create the sign-in app, ask for consent
+dotnet run -- auth-delegated    # sign in, REST + CSOM, silent renewal from the cache
+dotnet run -- app-unattended    # the app-only app with a certificate
+set CP_AUTH=delegated           # then any scenario runs as the signed-in user
+```
 
 ## Seeding mock run history (for UI testing)
 

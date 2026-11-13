@@ -66,14 +66,17 @@ else
                 {
                     <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())" @onclick="RunAgain">Run again</FluentButton>
                 }
-                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
-                              @onclick="@(() => Verify(false))" Disabled="@_verifying"
-                              Title="Compare counts + metadata, then produce a client-ready verification report">
-                    @(_verifying ? "Verifying…" : "Verify & report")
+                @* One button, two depths. Both compare source with target and write the same report. *@
+                <FluentButton Id="verifyRunBtn" Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.DocumentCheckmark())"
+                              IconEnd="@(new Icons.Regular.Size16.ChevronDown())"
+                              @onclick="@(() => _verifyOpen = !_verifyOpen)" Disabled="@_verifying"
+                              Title="Compare the source with the target and write a verification report">
+                    @(_verifying ? "Verifying…" : "Verify")
                 </FluentButton>
-                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.DocumentSearch())"
-                              @onclick="@(() => Verify(true))" Disabled="@_verifying"
-                              Title="Also hash file contents (SHA-256, slower) for a deeper verification">Deep verify</FluentButton>
+                <FluentMenu Anchor="verifyRunBtn" @bind-Open="_verifyOpen">
+                    <FluentMenuItem OnClick="@(() => Verify(false))">Quick check: counts, dates, authors and fields</FluentMenuItem>
+                    <FluentMenuItem OnClick="@(() => Verify(true))">Full check: also compare file contents (slower)</FluentMenuItem>
+                </FluentMenu>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.FolderOpen())" @onclick="RestoreInExplorer"
                               Title="Open the explorer at this run's source and target site, library and folder">Return to session</FluentButton>
                 <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())"
@@ -84,7 +87,7 @@ else
         {
             <div class="verify-row">
                 <FluentProgressRing Style="width:16px;height:16px;" />
-                <span class="tp-metric">@(_verifyDeep ? "Deep verify" : "Verify")@(string.IsNullOrEmpty(_verifyStatus) ? "…" : $": {_verifyStatus}")</span>
+                <span class="tp-metric">@(_verifyDeep ? "Full check" : "Quick check")@(string.IsNullOrEmpty(_verifyStatus) ? "…" : $": {_verifyStatus}")</span>
                 <FluentSpacer />
                 <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size16.DismissCircle())"
                               Disabled="@(_verifyCts is null || _verifyCts.IsCancellationRequested)"
@@ -109,10 +112,8 @@ else
         }
 
         <div class="run-counts">
-            <span class="count ok">@ItemsCopied items copied</span>
-            <span class="count">@_items.Count(i => IsItem(i.ItemType) && i.Status == "Skipped") skipped</span>
-            <span class="count warn">@_run.Warnings warnings</span>
-            <span class="count fail">@_run.Failed failed</span>
+            <ResultChips Labels="true" Copied="ItemsCopied" Skipped="@_items.Count(i => IsItem(i.ItemType) && i.Status == "Skipped")"
+                         Warnings="_run.Warnings" Failed="_run.Failed" />
         </div>
     </FluentCard>
 
@@ -121,8 +122,7 @@ else
             <span class="section-title" style="margin:0;">Log · @_filteredItems.Count of @_items.Count items</span>
             <FluentSpacer />
             <FluentSearch @bind-Value="_logFilter" @bind-Value:after="ApplyLog" Immediate="true" ImmediateDelay="200" Placeholder="Filter the log…" />
-            <FluentSelect TOption="string" @bind-Value="_logStatus" @bind-Value:after="ApplyLog"
-                          Items="@_logStatuses" OptionText="@(s => s)" OptionValue="@(s => s)" Style="min-width:160px;" />
+            <MultiFilter Options="_logStatuses" Selected="_logStatus" Changed="ApplyLog" AllLabel="All statuses" Style="min-width:170px;" />
             <FluentButton Id="exportLogBtn" Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.ArrowDownload())"
                           @onclick="@(() => _exportOpen = !_exportOpen)" Disabled="@(_items.Count == 0)">Export</FluentButton>
             <FluentMenu Anchor="exportLogBtn" @bind-Open="_exportOpen">
@@ -223,10 +223,10 @@ else
     private List<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> _items = new();
     private List<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> _filteredItems = new();
     private string _logFilter = "";
-    private string _logStatus = "All";
-    private readonly string[] _logStatuses = { "All", "Copied", "Skipped", "Warning", "Failed" };
+    private readonly HashSet<string> _logStatus = new();     // empty = all
+    private readonly string[] _logStatuses = { "Copied", "Skipped", "Warning", "Failed", "Info" };
 
-    private bool _exportOpen;
+    private bool _exportOpen, _verifyOpen;
     private string? _exportedPath;
     private bool _metaOpen;   // Details section starts collapsed.
 
@@ -334,8 +334,8 @@ else
                           || (i.Message?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
                           || i.ItemType.Contains(f, StringComparison.OrdinalIgnoreCase));
         }
-        if (_logStatus != "All")
-            q = q.Where(i => i.Status == _logStatus);
+        if (_logStatus.Count > 0)
+            q = q.Where(i => _logStatus.Contains(i.Status));
         _filteredItems = q.ToList();
     }
 
@@ -456,9 +456,7 @@ else
 
     private static string Duration(Core.History.MigrationRun r)
     {
-        if (r.FinishedUtc is not { } f) return "running…";
-        var d = f - r.StartedUtc;
-        return d.TotalHours >= 1 ? $"{(int)d.TotalHours}:{d.Minutes:00}:{d.Seconds:00}" : $"{d.Minutes}:{d.Seconds:00}";
+        return r.FinishedUtc is { } finished ? Friendly.Duration(finished - r.StartedUtc) : "running…";
     }
 
     private static string Pretty(string status) => status == "CompletedWithIssues" ? "Completed with issues" : status;
@@ -468,6 +466,8 @@ else
         "Failed" => "st-failed",
         "CompletedWithIssues" => "st-issues",
         "Interrupted" => "st-interrupted",
+        "Cancelled" => "st-cancelled",
+        "Queued" => "st-queued",
         "Running" => "st-running",
         _ => "st-ok",
     };
@@ -476,7 +476,7 @@ else
     {
         "Failed" => "st-failed",
         "Warning" => "st-issues",
-        "Skipped" => "st-interrupted",
+        "Skipped" => "st-skipped",
         "Info" => "st-info",
         _ => "st-ok",
     };

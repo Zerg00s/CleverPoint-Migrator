@@ -41,3 +41,6 @@ notes/
 
 # Captured browser sessions / local app state
 sessions.dat
+
+# Python
+__pycache__/

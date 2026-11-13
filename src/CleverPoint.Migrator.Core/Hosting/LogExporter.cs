@@ -1,7 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 
-namespace CleverPoint.Migrator.Ux.Services;
+namespace CleverPoint.Migrator.Core.Hosting;
 
 /// <summary>
 /// Writes a tabular log to CSV or XLSX. XLSX is built by hand as an Open Packaging

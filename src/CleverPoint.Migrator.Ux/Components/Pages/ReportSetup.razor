@@ -1,0 +1,546 @@
+@page "/reports/new/{ReportId}"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@using System.Text.Json
+@using CleverPoint.Migrator.Core.History
+@using CleverPoint.Migrator.Core.Reports
+@inject NavigationManager Nav
+@inject ReportHost Host
+@inject UxSettings Settings
+@inject IToastService Toasts
+
+@if (_report is null)
+{
+    <div class="page-head"><h1>Reports</h1><p>There is no report called "@ReportId".</p></div>
+    <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => Nav.NavigateTo("/reports"))">Back to reports</FluentButton>
+    return;
+}
+
+<div class="page-head">
+    <h1>@_report.Title</h1>
+    <p title="@_report.Summary">@ReportCatalog.ShortSummary(_report)</p>
+</div>
+
+<FluentCard>
+    @if (_tenants.Count == 0)
+    {
+        <div class="callout warning">
+            <FluentIcon Value="@(new Icons.Regular.Size20.Warning())" Color="Color.Custom" CustomColor="var(--cp-warn-text)" />
+            <div>
+                <div class="callout-title">No connections yet</div>
+                <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => Nav.NavigateTo("/connections?add=1"))">Add a connection</FluentButton>
+            </div>
+        </div>
+    }
+    else if (_report.Scope == ReportScope.Tenant)
+    {
+        <div class="section-title">Tenant</div>
+        <div class="field" style="max-width:460px;">
+            <FluentSelect TOption="string" @bind-Value="_tenant" Items="@_tenants" OptionText="@(t => new Uri(t).Host)" OptionValue="@(t => t)" Style="width:100%;" />
+            <span class="hint">Needs an administrator or certificate connection.</span>
+        </div>
+    }
+    else if (_report.Scope == ReportScope.Sites)
+    {
+        <div class="section-title">Sites</div>
+        <div class="field" style="max-width:460px; margin-bottom:14px;">
+            <FluentSelect TOption="string" @bind-Value="_source" Style="width:100%;">
+                <FluentOption Value="paste">Site URLs</FluentOption>
+                <FluentOption Value="pick">Pick from the tenant</FluentOption>
+                <FluentOption Value="tenant">Every site of a tenant</FluentOption>
+                <FluentOption Value="run">From a Sites report</FluentOption>
+            </FluentSelect>
+        </div>
+
+        @if (_source == "paste")
+        {
+            <FluentTextArea @bind-Value="_urls" Placeholder="One site URL per line" Rows="6" Style="width:100%;" />
+            @if (_prefillNote.Length > 0) { <span class="hint" style="display:block; margin-top:6px;">@_prefillNote</span> }
+            <div class="btn-row" style="margin-top:8px;">
+                <span class="hint">Or from a file:</span>
+                <InputFile OnChange="LoadUrlFile" accept=".txt,.csv" title="A text or CSV file with one site URL per line (first column)" />
+            </div>
+        }
+        else if (_source == "tenant")
+        {
+            <div class="field-row">
+                <div class="field">
+                    <span class="field-label">Tenant</span>
+                    <FluentSelect TOption="string" @bind-Value="_tenant" Items="@_tenants" OptionText="@(t => new Uri(t).Host)" OptionValue="@(t => t)" Style="min-width:320px;" />
+                </div>
+                <div class="field">
+                    <span class="field-label">Type</span>
+                    <FluentSelect TOption="string" @bind-Value="_allType" Style="min-width:200px;">
+                        <FluentOption Value="sharepoint">SharePoint sites</FluentOption>
+                        <FluentOption Value="onedrive">OneDrives</FluentOption>
+                        <FluentOption Value="all">Both</FluentOption>
+                    </FluentSelect>
+                </div>
+                <div class="field">
+                    <span class="field-label">URL contains</span>
+                    <FluentTextField @bind-Value="_urlContains" Placeholder="Optional" Style="min-width:260px;" />
+                </div>
+            </div>
+            <span class="hint">Needs an administrator or certificate connection.</span>
+        }
+        else if (_source == "pick")
+        {
+            <div class="btn-row">
+                <FluentSelect TOption="string" @bind-Value="_tenant" Items="@_tenants" OptionText="@(t => new Uri(t).Host)" OptionValue="@(t => t)" Style="min-width:320px;" />
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowDownload())" OnClick="LoadTenantSites" Disabled="_loadingSites">
+                    @(_loadingSites ? "Listing…" : _pick.Count == 0 ? "List the sites" : "List again")
+                </FluentButton>
+                @if (_loadingSites) { <FluentProgressRing Style="width:18px;height:18px;" /> <span class="hint">@_loadStatus</span> }
+            </div>
+            @if (_pick.Count > 0)
+            {
+                <FluentToolbar Style="width:100%; margin-top:12px;">
+                    <FluentSearch @bind-Value="_pickFilter" Immediate="true" ImmediateDelay="200" Placeholder="Filter by URL, title or owner…" />
+                    <MultiFilter Options="_pickTypes" Selected="_pickTypeFilter" Changed="StateHasChanged" AllLabel="All types" Style="min-width:190px;" />
+                    <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => Tick(true))">Select all shown</FluentButton>
+                    <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => Tick(false))">Clear shown</FluentButton>
+                    <FluentSpacer />
+                    <span class="hint">@_pick.Count(p => p.Selected).ToString("N0") selected · @PickShown.Count.ToString("N0") shown of @_pick.Count.ToString("N0")</span>
+                </FluentToolbar>
+                <div class="cp-grid cp-scroll" style="height:340px; margin-top:8px;">
+                    <FluentDataGrid Items="@PickShown.AsQueryable()" Virtualize="true" ItemSize="32" GenerateHeader="GenerateHeaderOption.Sticky"
+                                    ResizableColumns="true" GridTemplateColumns="44px 2.4fr 1.6fr 1fr 1.2fr 0.8fr" ShowHover="true" Style="width:100%;">
+                        <TemplateColumn Title="">
+                            <FluentCheckbox @bind-Value="context.Selected" @bind-Value:after="StateHasChanged" />
+                        </TemplateColumn>
+                        <TemplateColumn Title="URL"><span>@context.Url</span></TemplateColumn>
+                        <TemplateColumn Title="Title"><span>@context.Title</span></TemplateColumn>
+                        <TemplateColumn Title="Type"><span>@context.Type</span></TemplateColumn>
+                        <TemplateColumn Title="Owner"><span>@context.Owner</span></TemplateColumn>
+                        <TemplateColumn Title="Storage"><span>@context.StorageText</span></TemplateColumn>
+                    </FluentDataGrid>
+                </div>
+            }
+        }
+        else if (_source == "run")
+        {
+            @if (_siteRuns.Count == 0)
+            {
+                <span class="hint">Run a Sites or OneDrives report first.</span>
+            }
+            else
+            {
+                <div class="field" style="max-width:560px;">
+                    <FluentSelect TOption="string" @bind-Value="_fromRun" Items="@_siteRuns.Select(r => r.Id)" OptionValue="@(id => id)"
+                                  OptionText="@(id => RunLabel(id))" Style="width:100%;" />
+                </div>
+            }
+        }
+    }
+    else
+    {
+        <div class="section-title">Site pairs</div>
+        <FluentTextArea @bind-Value="_pairs" Placeholder="One pair per line: source URL, target URL" Rows="6" Style="width:100%;" />
+        <div class="btn-row" style="margin-top:8px;">
+            <span class="hint">Or from a file:</span>
+            <InputFile OnChange="LoadPairsFile" accept=".txt,.csv" title="A CSV file with two columns: source URL, target URL" />
+        </div>
+    }
+
+    @if (_report.Options.Count > 0)
+    {
+        <div class="section-title" style="margin-top:22px;">Settings</div>
+        <div class="report-options">
+            @foreach (var option in _report.Options)
+            {
+                var o = option;
+                if (!Applies(o)) continue;
+                @if (o.Type == "bool")
+                {
+                    <FluentCheckbox Value="@(_options[o.Name] is true)" ValueChanged="@(v => _options[o.Name] = v)" Label="@ReportCatalog.OptionLabel(o)" title="@o.Help" />
+                }
+                else if (o.Type == "int")
+                {
+                    <div class="field" title="@o.Help">
+                        <span class="field-label">@ReportCatalog.OptionLabel(o) <span class="field-info" title="@o.Help">ⓘ</span></span>
+                        <FluentNumberField TValue="int" Value="@(_options[o.Name] is int n ? n : 0)" ValueChanged="@(v => _options[o.Name] = v)" Style="width:160px;" />
+                        @if (ReportCatalog.OptionNote(o) is { } note) { <span class="hint" style="margin:0; max-width:520px;">@note</span> }
+                    </div>
+                }
+                else if (o.Accounts)
+                {
+                    <div class="field" title="@o.Help">
+                        <span class="field-label">@ReportCatalog.OptionLabel(o) <span class="field-info" title="@o.Help">ⓘ</span></span>
+                        <PrincipalPicker Values="@AccountList(o.Name)" ValuesChanged="@(v => _options[o.Name] = v)" SiteUrl="@SearchSite" />
+                    </div>
+                }
+                else if (o.Choices is { Count: > 0 })
+                {
+                    <div class="field" title="@o.Help">
+                        <span class="field-label">@ReportCatalog.OptionLabel(o) <span class="field-info" title="@o.Help">ⓘ</span></span>
+                        <FluentSelect TOption="string" Items="@o.Choices" OptionText="@(c => c)" OptionValue="@(c => c)" Placeholder="Choose…"
+                                      Value="@(_options[o.Name] as string ?? "")" ValueChanged="@(v => _options[o.Name] = v)" Style="min-width:220px;" />
+                    </div>
+                }
+                else
+                {
+                    <div class="field" title="@o.Help">
+                        <span class="field-label">@ReportCatalog.OptionLabel(o) <span class="field-info" title="@o.Help">ⓘ</span></span>
+                        <FluentTextField Value="@(_options[o.Name] as string ?? "")" ValueChanged="@(v => _options[o.Name] = v)"
+                                         Placeholder="@(o.Type == "list" ? "Comma-separated" : "")" Style="min-width:320px;" />
+                    </div>
+                }
+            }
+        </div>
+    }
+
+    <div class="section-title" style="margin-top:22px;">Run</div>
+    <div class="field-row">
+        <div class="field">
+            <span class="field-label">Name</span>
+            <FluentTextField @bind-Value="_name" Style="min-width:320px;" />
+        </div>
+        @if (_report.Scope != ReportScope.Tenant)
+        {
+            <div class="field">
+                <span class="field-label">Parallel sites</span>
+                <FluentNumberField @bind-Value="_parallel" Min="1" Max="@ReportSpecs.MaxParallel.ToString()" Style="width:120px;" />
+            </div>
+        }
+    </div>
+
+    @if (_problems.Count > 0)
+    {
+        <div class="error-text" style="margin-top:14px;">
+            @foreach (var problem in _problems) { <div>@problem</div> }
+        </div>
+    }
+
+    @if (_report.ChangesData)
+    {
+        <span class="hint" style="display:block; margin-top:14px;">The first run is a preview and changes nothing.</span>
+    }
+
+    <div class="btn-row" style="margin-top:18px;">
+        <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Play())" OnClick="RunAsync" Disabled="@(_starting || _tenants.Count == 0)">
+            @(_starting ? "Starting…" : _report.ChangesData ? "Preview the changes" : "Run the report")
+        </FluentButton>
+        <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => Nav.NavigateTo("/reports"))">Cancel</FluentButton>
+    </div>
+</FluentCard>
+
+@code {
+    [Parameter] public string ReportId { get; set; } = "";
+
+    private sealed class PickSite
+    {
+        public string Url { get; init; } = "";
+        public string Title { get; init; } = "";
+        public string Type { get; init; } = "";
+        public string Owner { get; init; } = "";
+        public long StorageBytes { get; init; }
+        public bool Selected { get; set; }
+        public string StorageText => StorageBytes <= 0 ? "" : StorageBytes >= 1073741824 ? $"{StorageBytes / 1073741824.0:N1} GB" : $"{StorageBytes / 1048576.0:N0} MB";
+    }
+
+    private ReportDefinition? _report;
+    private List<string> _tenants = new();
+    private string _tenant = "";
+    private string _source = "paste";
+    private string _urls = "";
+    private string _pairs = "";
+    private string _allType = "sharepoint";
+    private string _urlContains = "";
+    private string _fromRun = "";
+    private string _name = "";
+    private int _parallel = 4;
+    private bool _starting, _loadingSites;
+    private string _preset = "";
+    private string _prefilled = "";
+    private string _prefillNote = "";
+
+    /// <summary>A setting that depends on another one is shown only while that other one has the value it depends on.</summary>
+    private bool Applies(ReportOption option)
+    {
+        if (option.When is not { } when || when.IndexOf('=') is var at && at < 0) return true;
+        return string.Equals(_options.GetValueOrDefault(when[..at]) as string, when[(at + 1)..], StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Coming from the results of a report ("?from=runId"): the sites that report found something on are
+    /// filled in, so the action starts where the finding was. For version limits those are the sites
+    /// with libraries that keep versions forever.
+    /// </summary>
+    private void Prefill()
+    {
+        var query = new Uri(Nav.Uri).Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Split('=', 2)).Where(p => p.Length == 2).ToDictionary(p => p[0], p => Uri.UnescapeDataString(p[1]), StringComparer.OrdinalIgnoreCase);
+        var from = query.GetValueOrDefault("from") ?? "";
+        var key = ReportId + "|" + from;
+        if (key == _prefilled)
+        {
+            // The settings were just put back to their defaults; the one this page was opened for comes back with them.
+            if (_prefillNote.Length > 0) _options["limits"] = "Automatic";
+            return;
+        }
+        _prefilled = key;
+        _prefillNote = "";
+        if (from.Length == 0 || ReportId != "set-version-limits" || ReportHost.Run(from) is not { } run) return;
+
+        var store = new ReportStore(run.Folder);
+        var (table, column) = run.Report == "version-limits" ? ("limits", "keptForever") : ("overview", "librariesKeepingVersionsForever");
+        var sites = new List<string>();
+        long libraries = 0;
+        foreach (var row in store.ReadRows(table))
+        {
+            if (!row.TryGetValue(column, out var count) || count.ValueKind != JsonValueKind.Number || count.GetInt64() <= 0) continue;
+            if (row.TryGetValue("site", out var site) && site.GetString() is { Length: > 0 } url) sites.Add(url);
+            libraries += count.GetInt64();
+        }
+        if (sites.Count == 0) return;
+        _source = "paste";
+        _urls = string.Join("\n", ReportSpecs.Distinct(sites));
+        _options["limits"] = "Automatic";
+        _prefillNote = $"{sites.Count:N0} {(sites.Count == 1 ? "site" : "sites")} from the report \"{run.Name}\": the ones where libraries keep versions forever ({libraries:N0} libraries). The preview lists every library.";
+    }
+    private string _loadStatus = "";
+    private List<ReportRun> _siteRuns = new();
+    private readonly Dictionary<string, object?> _options = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _problems = new();
+
+    private List<PickSite> _pick = new();
+    private string _pickFilter = "";
+    private readonly HashSet<string> _pickTypeFilter = new();
+    private string[] _pickTypes = Array.Empty<string>();
+
+    /// <summary>The accounts picked for a setting, as the list the picker edits.</summary>
+    private List<string> AccountList(string option)
+    {
+        if (_options.GetValueOrDefault(option) is List<string> list) return list;
+        var created = new List<string>();
+        _options[option] = created;
+        return created;
+    }
+
+    /// <summary>A site of the tenant the report is about, for searching its directory: the chosen tenant, or the first site given.</summary>
+    private string SearchSite
+    {
+        get
+        {
+            if (_report?.Scope == ReportScope.Tenant || _source is "tenant" or "pick") return _tenant;
+            var first = _urls.Split(new[] { '\n', '\r', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(u => ReportSpecs.SiteProblem(u) is null);
+            return first ?? _tenant;
+        }
+    }
+
+    private List<PickSite> PickShown => _pick
+        .Where(p => _pickTypeFilter.Count == 0 || _pickTypeFilter.Contains(p.Type))
+        .Where(p => string.IsNullOrWhiteSpace(_pickFilter) || p.Url.Contains(_pickFilter.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || p.Title.Contains(_pickFilter.Trim(), StringComparison.OrdinalIgnoreCase) || p.Owner.Contains(_pickFilter.Trim(), StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override void OnParametersSet()
+    {
+        _report = ReportCatalog.Find(ReportId);
+        if (_report is null) return;
+        Settings.EnsureLoaded();
+        // One entry per tenant: contoso, contoso-my and contoso-admin are the same tenant.
+        _tenants = Settings.Connections
+            .Where(c => Uri.TryCreate(c.SiteUrl, UriKind.Absolute, out _))
+            .Select(c => new Uri(ReportSpecs.AdminUrl(c.SiteUrl)).Host.Replace("-admin.", "."))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(host => "https://" + host)
+            .ToList();
+        if (_tenant.Length == 0) _tenant = _tenants.FirstOrDefault() ?? "";
+        _name = _report.Title;
+        // A report made for OneDrives starts on "every OneDrive of the tenant", which is how it is used.
+        if (_report.DefaultSiteType is { } kind && _preset != _report.Id)
+        {
+            _preset = _report.Id;
+            _source = "tenant";
+            _allType = kind;
+        }
+        _options.Clear();
+        foreach (var option in _report.Options) _options[option.Name] = option.Default;
+        _siteRuns = ReportHost.Runs(500).Where(r => r.Report is "sites" or "onedrives" && r.IsFinished && r.Rows > 0).ToList();
+        if (_fromRun.Length == 0) _fromRun = _siteRuns.FirstOrDefault()?.Id ?? "";
+        Prefill();
+    }
+
+    private string RunLabel(string id)
+    {
+        var run = _siteRuns.FirstOrDefault(r => r.Id == id);
+        return run is null ? id : $"{run.Name} · {run.StartedUtc?.ToLocalTime():g} · {run.Rows:N0} sites";
+    }
+
+    private async Task LoadUrlFile(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(20_000_000));
+            var found = new List<string>();
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                var first = ReportSpecs.SplitCsv(line).FirstOrDefault()?.Trim() ?? "";
+                if (first.Length > 0 && ReportSpecs.SiteProblem(first) is null) found.Add(first);
+            }
+            _urls = string.Join("\n", ReportSpecs.Distinct(found));
+            Toasts.ShowInfo($"{found.Count:N0} site URL(s) read from the file.");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowWarning($"Could not read that file: {ex.Message}");
+        }
+    }
+
+    private async Task LoadPairsFile(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(20_000_000));
+            _pairs = await reader.ReadToEndAsync();
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowWarning($"Could not read that file: {ex.Message}");
+        }
+    }
+
+    private async Task LoadTenantSites()
+    {
+        if (_tenant.Length == 0) return;
+        _loadingSites = true;
+        _loadStatus = "Signing in…";
+        StateHasChanged();
+        try
+        {
+            var admin = await Host.OpenAsync(ReportSpecs.AdminUrl(_tenant));
+            var sites = new List<PickSite>();
+            await Task.Run(() => TenantSites.ForEachSiteAsync(admin, item =>
+            {
+                var url = item.Str("SiteUrl");
+                var template = item.Str("TemplateName");
+                if (TenantSites.IsSystemSite(url, template) || TenantSites.IsOneDrive(url, template) || item.When("TimeDeleted") is not null) return;
+                sites.Add(new PickSite
+                {
+                    Url = url, Title = item.Str("Title"), Type = TenantSites.SiteType(url, template), Owner = item.Str("SiteOwnerEmail"),
+                    StorageBytes = item.Num("StorageUsed"),
+                });
+            }, status => { _loadStatus = status; InvokeAsync(StateHasChanged); }, CancellationToken.None));
+            _pick = sites.OrderBy(s => s.Url, StringComparer.OrdinalIgnoreCase).ToList();
+            _pickTypes = _pick.Select(p => p.Type).Distinct().OrderBy(t => t).ToArray();
+            _pickTypeFilter.Clear();
+            if (_pick.Count == 0) Toasts.ShowInfo("The tenant returned no sites.");
+        }
+        catch (Exception ex)
+        {
+            var (_, error) = ReportRunner.Classify(ex);
+            Toasts.ShowError($"Could not list the tenant's sites: {error} Listing a tenant needs a SharePoint administrator or an app + certificate connection.");
+        }
+        finally
+        {
+            _loadingSites = false;
+        }
+    }
+
+    private void Tick(bool on)
+    {
+        foreach (var site in PickShown) site.Selected = on;
+    }
+
+    private async Task RunAsync()
+    {
+        if (_report is null) return;
+        _problems = new List<string>();
+        var spec = new ReportSpec { Report = _report.Id, Name = _name.Trim(), Parallel = Math.Clamp(_parallel, 1, ReportSpecs.MaxParallel) };
+        foreach (var option in _report.Options)
+        {
+            var value = _options.GetValueOrDefault(option.Name);
+            if (option.Type == "list" && value is string text)
+                value = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            spec.Options[option.Name] = JsonSerializer.SerializeToElement(value);
+        }
+
+        var signInTo = new List<string>();
+        switch (_report.Scope)
+        {
+            case ReportScope.Tenant:
+                spec.Tenant = _tenant;
+                signInTo.Add(ReportSpecs.AdminUrl(_tenant));
+                break;
+            case ReportScope.SitePairs:
+                foreach (var line in _pairs.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var cells = ReportSpecs.SplitCsv(line);
+                    if (cells.Count >= 2 && ReportSpecs.SiteProblem(cells[0].Trim()) is null && ReportSpecs.SiteProblem(cells[1].Trim()) is null)
+                        spec.Pairs.Add(new ReportPair { Source = cells[0].Trim(), Target = cells[1].Trim() });
+                }
+                if (spec.Pairs.Count == 0) _problems.Add("Give at least one pair: a source URL and a target URL on one line, separated by a comma.");
+                signInTo.AddRange(spec.Pairs.SelectMany(p => new[] { p.Source, p.Target }));
+                break;
+            default:
+                if (_source == "paste")
+                {
+                    var lines = _urls.Split(new[] { '\n', '\r', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var bad = lines.Where(l => ReportSpecs.SiteProblem(l) is not null).ToList();
+                    if (bad.Count > 0) _problems.Add($"Not a site URL: {string.Join(", ", bad.Take(3))}{(bad.Count > 3 ? $" and {bad.Count - 3} more" : "")}");
+                    spec.Sites = lines.Where(l => ReportSpecs.SiteProblem(l) is null).ToList();
+                    if (spec.Sites.Count == 0 && bad.Count == 0) _problems.Add("Give at least one site URL.");
+                    signInTo.AddRange(spec.Sites);
+                }
+                else if (_source == "pick")
+                {
+                    spec.Sites = _pick.Where(p => p.Selected).Select(p => p.Url).ToList();
+                    if (spec.Sites.Count == 0) _problems.Add("List the tenant's sites and tick the ones to scan.");
+                    signInTo.AddRange(spec.Sites);
+                }
+                else if (_source == "tenant")
+                {
+                    spec.AllSites = new ReportAllSites { Tenant = _tenant, Type = _allType, UrlContains = string.IsNullOrWhiteSpace(_urlContains) ? null : _urlContains.Trim() };
+                    signInTo.Add(ReportSpecs.AdminUrl(_tenant));
+                }
+                else
+                {
+                    if (_fromRun.Length == 0) _problems.Add("Pick an earlier Sites report.");
+                    else
+                    {
+                        spec.FromReport = _fromRun;
+                        // The hosts of that run's sites: all of them need a sign-in before the report starts.
+                        if (_siteRuns.FirstOrDefault(r => r.Id == _fromRun) is { } run)
+                        {
+                            var store = new ReportStore(run.Folder);
+                            var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var table in store.RowCounts().Keys)
+                                foreach (var row in store.ReadRows(table))
+                                    if (row.TryGetValue("url", out var url) && url.ValueKind == JsonValueKind.String && Uri.TryCreate(url.GetString(), UriKind.Absolute, out var parsed)
+                                        && hosts.Add(parsed.Host))
+                                        signInTo.Add(url.GetString()!);
+                        }
+                    }
+                }
+                break;
+        }
+
+        if (_problems.Count == 0)
+            _problems = ReportSpecs.Validate(spec).Select(i => i.Message).ToList();
+        if (_problems.Count > 0) return;
+
+        _starting = true;
+        StateHasChanged();
+        try
+        {
+            (spec, _) = ReportRunner.Materialize(spec, null);
+            var (ok, message) = await Host.EnsureSignedInAsync(signInTo);
+            if (!ok)
+            {
+                _problems.Add(message);
+                return;
+            }
+            var id = Host.Start(spec, _report);
+            Nav.NavigateTo($"/report/{id}");
+        }
+        catch (Exception ex)
+        {
+            _problems.Add(ex.Message);
+        }
+        finally
+        {
+            _starting = false;
+        }
+    }
+}

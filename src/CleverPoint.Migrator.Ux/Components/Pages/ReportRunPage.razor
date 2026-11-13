@@ -1,0 +1,786 @@
+@page "/report/{RunId}"
+@namespace CleverPoint.Migrator.Ux.Components.Pages
+@using System.Text.Json
+@using CleverPoint.Migrator.Core.History
+@using CleverPoint.Migrator.Core.Reports
+@inject NavigationManager Nav
+@inject ReportHost Host
+@inject IToastService Toasts
+@implements IDisposable
+
+@if (_run is null)
+{
+    <div class="page-head"><h1>Report</h1><p>There is no report run "@RunId".</p></div>
+    <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => Nav.NavigateTo("/reports"))">Back to reports</FluentButton>
+    return;
+}
+
+<div class="page-head report-head">
+    <div>
+        <h1>@_run.Name</h1>
+        <div class="btn-row" style="margin-top:6px;">
+            <span class="status-pill @Reports.StatusClass(_run.Status)">@ReportExport.StatusText(_run.Status)</span>
+            <span class="hint">@(_report?.Title ?? _run.Report) · run @_run.Id@(_run.StartedUtc is { } started ? $" · started {started.ToLocalTime():g}" : "")</span>
+        </div>
+    </div>
+    <div class="btn-row">
+        @if (!_run.IsFinished)
+        {
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Stop())" OnClick="Cancel"
+                          Title="Stop the report. Sites already scanned are kept and it can be continued later.">Stop</FluentButton>
+        }
+        @if (_run.CanResume)
+        {
+            <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Play())" OnClick="Resume"
+                          Title="Scan what is not done yet: sites that failed, and the ones the run did not reach.">
+                @(_run.Status == "CompletedWithIssues" ? "Try the failed sites again" : "Continue")
+            </FluentButton>
+        }
+        <FluentButton Id="reportExportBtn" Appearance="@(_run.CanResume || !_run.IsFinished ? Appearance.Neutral : Appearance.Accent)"
+                      IconStart="@(new Icons.Regular.Size20.ArrowDownload())" IconEnd="@(new Icons.Regular.Size16.ChevronDown())"
+                      OnClick="@(() => _exportOpen = !_exportOpen)" Disabled="@(_totalRows == 0 || _exporting)">@(_exporting ? "Exporting…" : "Export")</FluentButton>
+        <FluentMenu Anchor="reportExportBtn" @bind-Open="_exportOpen">
+            <FluentMenuItem OnClick="@(() => Export("xlsx"))">Excel workbook (.xlsx)</FluentMenuItem>
+            <FluentMenuItem OnClick="@(() => Export("csv"))">CSV files (.csv)</FluentMenuItem>
+        </FluentMenu>
+        @if (ForeverLibraries > 0)
+        {
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.History())" Title="@ForeverTip"
+                          OnClick="@(() => Nav.NavigateTo($"/reports/new/set-version-limits?from={_run.Id}"))">Set version limits</FluentButton>
+        }
+        @if (_report is not null)
+        {
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Add())"
+                          OnClick="@(() => Nav.NavigateTo($"/reports/new/{_report.Id}"))">New run</FluentButton>
+        }
+        @if (_run.IsFinished)
+        {
+            <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.Delete())" OnClick="@(() => _confirmDelete = true)">Delete</FluentButton>
+        }
+        <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowLeft())" OnClick="@(() => Nav.NavigateTo("/reports"))">Back</FluentButton>
+    </div>
+</div>
+
+<FluentCard Style="padding:10px 16px;">
+<div class="report-summary">
+    @if (!_run.IsFinished)
+    {
+        <div class="verify-row">
+            <FluentProgressRing Style="width:16px;height:16px;" />
+            <span class="tp-metric">@ProgressText</span>
+        </div>
+        @if (!_tenantWide && _run.SitesTotal > 0)
+        {
+            <FluentProgress Min="0" Max="@_run.SitesTotal" Value="@(_run.SitesDone + _run.SitesFailed)" Style="margin-top:8px;" />
+        }
+    }
+    @if (_run.Error is { Length: > 0 })
+    {
+        <div class="error-text" style="margin-top:10px;">@_run.Error</div>
+    }
+    @if (_applied == false && _run.IsFinished)
+    {
+        <div class="callout warning" style="margin-top:14px; max-width:none;">
+            <FluentIcon Value="@(new Icons.Regular.Size20.Eye())" Color="Color.Custom" CustomColor="var(--cp-warn-text)" />
+            <div style="flex:1 1 auto;">
+                <div class="callout-title" style="margin-bottom:8px;">Preview. Nothing has been changed.</div>
+                <FluentButton Appearance="Appearance.Accent" OnClick="@(() => _confirmApply = true)"
+                              Disabled="@(_run.Status is not ("Completed" or "CompletedWithIssues"))">Apply these changes</FluentButton>
+            </div>
+        </div>
+    }
+    else if (_applied == true)
+    {
+        <div class="callout" style="margin-top:14px; max-width:none;">
+            <FluentIcon Value="@(new Icons.Regular.Size20.Checkmark())" Color="Color.Accent" />
+            <div><div class="callout-title">@(_run.IsFinished ? "This run made changes to the sites." : "This run is making changes to the sites.")</div></div>
+        </div>
+    }
+
+    <div class="report-stats">
+        @if (!_tenantWide)
+        {
+            <div class="report-stat"><span class="report-stat-value">@_run.SitesDone.ToString("N0")<span class="report-stat-of"> of @_run.SitesTotal.ToString("N0")</span></span><span class="report-stat-label">Sites scanned</span></div>
+            @if (_run.SitesFailed > 0)
+            {
+                <div class="report-stat"><span class="report-stat-value" style="color:var(--cp-fail-text);">@_run.SitesFailed.ToString("N0")</span><span class="report-stat-label">Sites not scanned</span></div>
+            }
+        }
+        @foreach (var (name, value) in _summary)
+        {
+            var flagged = ForeverLibraries > 0 && name is "librariesKeepingVersionsForever" or "keptForeverVersionBytes";
+            <div class="report-stat @(flagged ? "flag" : "")" title="@(flagged ? ForeverTip : null)"><span class="report-stat-value">@Number(name, value)</span><span class="report-stat-label">@Label(name)</span></div>
+        }
+    </div>
+</div>
+</FluentCard>
+
+<FluentCard style="margin-top:16px;">
+    <FluentToolbar Style="width:100%;">
+        <div class="report-tabs">
+            @if (_hasMap)
+            {
+                <button type="button" class="report-tab @(_tab == MapTab ? "active" : "")" @onclick="@(() => ShowTable(MapTab))">Map</button>
+            }
+            @if (_hasKinds)
+            {
+                <button type="button" class="report-tab @(_tab == KindsTab ? "active" : "")" @onclick="@(() => ShowTable(KindsTab))">File kinds</button>
+            }
+            @foreach (var table in _tables)
+            {
+                var t = table;
+                <button type="button" class="report-tab @(_tab == t.Name ? "active" : "")" @onclick="@(() => ShowTable(t.Name))">
+                    @t.Title <span class="report-tab-count">@_counts.GetValueOrDefault(t.Name).ToString("N0")</span>
+                </button>
+            }
+            @if (!_tenantWide)
+            {
+                <button type="button" class="report-tab @(_tab == SitesTab ? "active" : "")" @onclick="@(() => ShowTable(SitesTab))">
+                    Sites <span class="report-tab-count">@_sites.Count.ToString("N0")</span>
+                </button>
+            }
+        </div>
+        <FluentSpacer />
+        @if (_tab == SitesTab)
+        {
+            <MultiFilter Options="_siteStatuses" Selected="_siteStatusFilter" Changed="StateHasChanged" AllLabel="All outcomes" Style="min-width:190px;" />
+        }
+        @if (!IsMap(_tab))
+        {
+            <FluentSearch @bind-Value="_filter" @bind-Value:after="ApplyFilter" Immediate="true" ImmediateDelay="350" Placeholder="Filter…" />
+        }
+    </FluentToolbar>
+
+    @if (IsMap(_tab))
+    {
+        var shown = _tab == KindsTab ? _kinds : _map;
+        @if (shown is not null && shown.Total > 0)
+        {
+            <StorageMapView @key="_tab" Root="shown" ByKind="_hasKinds" />
+        }
+        else if (_mapLoading || !_run.IsFinished)
+        {
+            <div class="btn-row" style="padding:36px 8px;">
+                <FluentProgressRing Style="width:18px;height:18px;" />
+                <span class="hint" style="margin:0;">@(_run.IsFinished ? "Drawing the map…" : "The map appears as sites finish.")</span>
+            </div>
+        }
+        else
+        {
+            <div style="padding:36px 8px;"><span class="hint">Nothing in this run takes any storage.</span></div>
+        }
+    }
+    else if (_tab == SitesTab)
+    {
+        // Every total of the run is also kept per site. Each becomes a column, so the sites can be compared and sorted.
+        var counters = SiteCounters;
+        var sizeKey = counters.Contains("totalBytes") ? "totalBytes" : counters.Contains("storageBytes") ? "storageBytes" : null;
+        var versions = sizeKey == "totalBytes" && counters.Contains("versionBytes");
+        var widths = new List<int> { 360, 150 };
+        if (sizeKey is not null) widths.Add(190);
+        widths.AddRange(counters.Select(_ => 124));
+        if (versions) widths.Add(124);
+        if (_siteLimits.Count > 0) widths.Add(230);
+        widths.AddRange(new[] { 84, 84, 280 });
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 420px); min-height:240px; margin-top:12px;">
+            <FluentDataGrid @key="@("sites|" + string.Join(',', counters))" Items="@SitesShown.AsQueryable()" Virtualize="true" ItemSize="32"
+                            GenerateHeader="GenerateHeaderOption.Sticky" ResizableColumns="true" GridTemplateColumns="@string.Join(' ', widths.Select(w => w + "px"))"
+                            ShowHover="true" Style="@($"min-width:{widths.Sum()}px; width:100%;")">
+                <TemplateColumn Title="Site" Sortable="true" SortBy="@SiteByName">
+                    <span class="cell-fill" title="@context.Key" @oncontextmenu="e => SiteMenu(e, context)" @oncontextmenu:preventDefault="true">@context.Key</span>
+                </TemplateColumn>
+                <TemplateColumn Title="Outcome" Sortable="true" SortBy="@SiteByOutcome"><span class="status-pill @SiteClass(context.Status)">@ReportExport.SiteStatusText(context.Status)</span></TemplateColumn>
+                @if (sizeKey is not null)
+                {
+                    var whole = _summary.GetValueOrDefault(sizeKey);
+                    <TemplateColumn Title="Share of the total" Sortable="true" SortBy="@SiteBy(sizeKey)" IsDefaultSortColumn="true" InitialSortDirection="SortDirection.Descending">
+                        <span class="site-share" title="@($"{Friendly.Bytes(SiteCount(context, sizeKey))} of {Friendly.Bytes(whole)}")">
+                            <span class="site-share-track"><span class="site-share-fill" style="width:@SharePercent(SiteCount(context, sizeKey), whole)"></span></span>
+                            <span class="site-share-pct">@(whole > 0 ? (SiteCount(context, sizeKey) / (double)whole).ToString("P1") : "")</span>
+                        </span>
+                    </TemplateColumn>
+                }
+                @foreach (var counter in counters)
+                {
+                    var c = counter;
+                    <TemplateColumn Title="@Label(c)" Sortable="true" SortBy="@SiteBy(c)">
+                        <span title="@(IsBytes(c) ? $"{SiteCount(context, c):N0} bytes" : null)">@(context.Counts is null ? "" : Number(c, SiteCount(context, c)))</span>
+                    </TemplateColumn>
+                }
+                @if (versions)
+                {
+                    <TemplateColumn Title="Older versions" Sortable="true" SortBy="@SiteByVersionShare">
+                        <span>@(SiteCount(context, "totalBytes") > 0 ? (SiteCount(context, "versionBytes") / (double)SiteCount(context, "totalBytes")).ToString("P1") : "")</span>
+                    </TemplateColumn>
+                }
+                @if (_siteLimits.Count > 0)
+                {
+                    <TemplateColumn Title="Site version setting" Sortable="true" SortBy="@SiteByLimits">
+                        <span title="What new libraries of the site get. Each library's own limits are in the Folders tab.">@_siteLimits.GetValueOrDefault(context.Site.Length > 0 ? context.Site : context.Key)</span>
+                    </TemplateColumn>
+                }
+                <TemplateColumn Title="Rows" Sortable="true" SortBy="@SiteByRows"><span>@context.Rows.ToString("N0")</span></TemplateColumn>
+                <TemplateColumn Title="Took" Sortable="true" SortBy="@SiteByTime"><span class="duration">@Friendly.Duration(TimeSpan.FromSeconds(context.Seconds))</span></TemplateColumn>
+                <TemplateColumn Title="Reason"><span title="@context.Error">@context.Error</span></TemplateColumn>
+            </FluentDataGrid>
+        </div>
+    }
+    else if (_columns.Count > 0)
+    {
+        @if (_filterNote is not null) { <span class="hint" style="display:block; margin-top:8px;">@_filterNote</span> }
+        @if (_sortNote is not null) { <span class="hint" style="display:block; margin-top:8px;">@_sortNote</span> }
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 420px); min-height:240px; margin-top:12px;">
+            <FluentDataGrid @key="_gridKey" @ref="_grid" TGridItem="Dictionary<string, JsonElement>" ItemsProvider="_provider" Virtualize="true" ItemSize="32"
+                            GenerateHeader="GenerateHeaderOption.Sticky" ResizableColumns="true" GridTemplateColumns="@_gridTemplate"
+                            ShowHover="true" Style="@($"min-width:{_gridMinWidth}px; width:100%;")">
+                @foreach (var column in _columns)
+                {
+                    var c = column;
+                    <TemplateColumn Title="@Label(c.Name)" Sortable="true" IsDefaultSortColumn="@(c.Name == _defaultSort)"
+                                    InitialSortDirection="@(c.Type == ColumnType.Text ? SortDirection.Ascending : SortDirection.Descending)">
+                        <span class="cell-fill" title="@CellTip(context, c)" @oncontextmenu="e => RowMenu(e, context, c)" @oncontextmenu:preventDefault="true">@Cell(context, c)</span>
+                    </TemplateColumn>
+                }
+            </FluentDataGrid>
+        </div>
+    }
+</FluentCard>
+
+@if (_exportedFiles is not null)
+{
+    <div class="cp-modal-backdrop" @onclick="@(() => _exportedFiles = null)">
+        <div class="cp-modal" style="min-height:auto;" @onclick:stopPropagation="true">
+            <div class="cp-modal-head">
+                <h3 style="margin:0;">Export complete</h3>
+                <FluentSpacer />
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Icons.Regular.Size20.Dismiss())" Title="Close" OnClick="@(() => _exportedFiles = null)" />
+            </div>
+            <div class="cp-modal-body">
+                <span class="hint">Saved to:</span>
+                @foreach (var file in _exportedFiles) { <span class="v" style="word-break:break-all; user-select:text;">@file</span> }
+                @foreach (var note in _exportNotes) { <span class="hint">@note</span> }
+            </div>
+            <div class="cp-modal-foot">
+                <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => _exportedFiles = null)">Close</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Open())" OnClick="@(() => Browser.Open(_exportedFiles[0]))">Open file</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<ContextMenu @ref="_menu" />
+
+@if (_confirmApply)
+{
+    <div class="cp-modal-backdrop" @onclick="@(() => _confirmApply = false)">
+        <div class="cp-modal" style="min-height:auto;" @onclick:stopPropagation="true">
+            <div class="cp-modal-head"><h3 style="margin:0;">Apply these changes?</h3></div>
+            <div class="cp-modal-body">
+                <span>This changes the sites the preview covered.</span>
+                @if (_report?.ApplyWarning is { } warning)
+                {
+                    <span style="font-weight:600;">@warning</span>
+                }
+            </div>
+            <div class="cp-modal-foot">
+                <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => _confirmApply = false)">Not now</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" OnClick="ApplyChanges">Apply</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_confirmDelete)
+{
+    <div class="cp-modal-backdrop" @onclick="@(() => _confirmDelete = false)">
+        <div class="cp-modal" style="min-height:auto;" @onclick:stopPropagation="true">
+            <div class="cp-modal-head"><h3 style="margin:0;">Delete this report run?</h3></div>
+            <div class="cp-modal-body"><span>Its rows are removed from this computer. Files you exported stay where they are.</span></div>
+            <div class="cp-modal-foot">
+                <FluentButton Appearance="Appearance.Neutral" OnClick="@(() => _confirmDelete = false)">Keep it</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" OnClick="Delete">Delete</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string RunId { get; set; } = "";
+
+    private const string SitesTab = "\u0001sites";
+    private const string MapTab = "\u0001map";
+    private const string KindsTab = "\u0001kinds";
+    /// <summary>With a filter, at most this many matching rows are kept for the grid.</summary>
+    private const int FilterCap = 20_000;
+
+    private ReportRun? _run;
+    private ReportDefinition? _report;
+    private ReportStore? _store;
+    private bool _tenantWide;
+    private IReadOnlyList<ReportTable> _tables = Array.Empty<ReportTable>();
+    private IReadOnlyDictionary<string, long> _counts = new Dictionary<string, long>();
+    private Dictionary<string, long> _summary = new();
+    private List<SiteRecord> _sites = new();
+    private long _totalRows;
+    private string _tab = "";
+    private IReadOnlyList<ReportColumn> _columns = Array.Empty<ReportColumn>();
+    private string _gridTemplate = "";
+    private int _gridMinWidth;
+    private string _gridKey = "";
+    private FluentDataGrid<Dictionary<string, JsonElement>>? _grid;
+    private GridItemsProvider<Dictionary<string, JsonElement>>? _provider;
+    private string _filter = "";
+    private string? _filterNote;
+    private List<Dictionary<string, JsonElement>>? _filtered;
+    // A sorted table is read once per order and kept, up to the same cap as a filter.
+    private string _sortKey = "";
+    private Task<(List<Dictionary<string, JsonElement>> Rows, long Matching)>? _sortTask;
+    private string? _sortNote;
+    private string? _defaultSort;
+    private readonly HashSet<string> _siteStatusFilter = new();
+    private readonly string[] _siteStatuses = { "Scanned", "Access denied", "Locked", "Archived", "Not found", "Sign-in needed", "No connection", "Failed" };
+    private bool _exportOpen, _exporting, _confirmDelete, _confirmApply;
+    private bool? _applied;
+    private List<string>? _exportedFiles;
+    private List<string> _exportNotes = new();
+    private Timer? _timer;
+    private long _shownRows;
+    private bool _hasMap, _hasKinds, _mapLoading;
+    private Core.Reports.MapNode? _map, _kinds;
+
+    // A map of a large run takes a while to build. While the report runs it is rebuilt less often the longer it takes.
+    private DateTime _mapBuilt;
+    private TimeSpan _mapTook;
+    /// <summary>A table with more rows than this is not sorted until a column heading is clicked: sorting reads all of it.</summary>
+    private const long SortUnasked = 300_000;
+    private long _sortedRows;
+
+    // What the sites and the tenant say about version limits, in a sentence, for the storage report.
+    private string _limitsNote = "";
+    /// <summary>Each site's own version setting, by site address.</summary>
+    private Dictionary<string, string> _siteLimits = new(StringComparer.OrdinalIgnoreCase);
+    private long _limitsRows = -1;
+
+    /// <summary>In a storage run: how many libraries never delete a version for its age. That is worth a button of its own.</summary>
+    private long ForeverLibraries => _run?.Report == "storage" ? _summary.GetValueOrDefault("librariesKeepingVersionsForever") : 0;
+
+    private string ForeverTip =>
+        $"{ForeverLibraries:N0} {(ForeverLibraries == 1 ? "library keeps" : "libraries keep")} older versions forever, {Friendly.Bytes(_summary.GetValueOrDefault("keptForeverVersionBytes"))} of them. {_limitsNote}";
+
+    private static bool IsMap(string tab) => tab is MapTab or KindsTab;
+    private long _mapRows = -1;
+
+    /// <summary>The totals of the run, in the order they are shown at the top. Each site has its own part of every one.</summary>
+    private List<string> SiteCounters => _summary.Keys.Where(k => _sites.Any(s => s.Counts?.ContainsKey(k) == true)).ToList();
+
+    private static long SiteCount(SiteRecord site, string counter) => site.Counts is { } counts && counts.TryGetValue(counter, out var value) ? value : 0;
+
+    private static string SharePercent(long part, long whole) =>
+        (whole > 0 ? Math.Clamp(part * 100.0 / whole, 0, 100) : 0).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+
+    private static readonly GridSort<SiteRecord> SiteByName = GridSort<SiteRecord>.ByAscending(s => s.Key);
+    private static readonly GridSort<SiteRecord> SiteByOutcome = GridSort<SiteRecord>.ByAscending(s => s.Status);
+    private static readonly GridSort<SiteRecord> SiteByRows = GridSort<SiteRecord>.ByAscending(s => s.Rows);
+    private static readonly GridSort<SiteRecord> SiteByTime = GridSort<SiteRecord>.ByAscending(s => s.Seconds);
+    private static readonly GridSort<SiteRecord> SiteByVersionShare =
+        GridSort<SiteRecord>.ByAscending(s => SiteCount(s, "totalBytes") > 0 ? SiteCount(s, "versionBytes") / (double)SiteCount(s, "totalBytes") : 0);
+    private static readonly Dictionary<string, GridSort<SiteRecord>> SiteSorts = new();
+    private GridSort<SiteRecord> SiteByLimits => _siteByLimits ??= GridSort<SiteRecord>.ByAscending(s => _siteLimits.GetValueOrDefault(s.Site.Length > 0 ? s.Site : s.Key) ?? "");
+    private GridSort<SiteRecord>? _siteByLimits;
+
+    /// <summary>Sorting by one of the totals. Kept, so that the grid sees the same sort from one drawing to the next.</summary>
+    private static GridSort<SiteRecord> SiteBy(string counter)
+    {
+        lock (SiteSorts)
+        {
+            if (!SiteSorts.TryGetValue(counter, out var sort)) SiteSorts[counter] = sort = GridSort<SiteRecord>.ByAscending(s => SiteCount(s, counter));
+            return sort;
+        }
+    }
+
+    private List<SiteRecord> SitesShown => _sites
+        .Where(s => _siteStatusFilter.Count == 0 || _siteStatusFilter.Contains(ReportExport.SiteStatusText(s.Status)))
+        .Where(s => string.IsNullOrWhiteSpace(_filter) || s.Key.Contains(_filter.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || (s.Error?.Contains(_filter.Trim(), StringComparison.OrdinalIgnoreCase) ?? false))
+        .ToList();
+
+    private string ProgressText
+    {
+        get
+        {
+            if (_run is null) return "";
+            var now = string.IsNullOrEmpty(_run.Current) ? "" : $" · {_run.Current}";
+            if (_tenantWide) return $"{_run.Rows:N0} rows so far{now}";
+            return _run.SitesTotal == 0
+                ? "Working out which sites to scan…"
+                : $"{_run.SitesDone + _run.SitesFailed:N0} of {_run.SitesTotal:N0} sites · {_run.Rows:N0} rows{now}";
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        _run = ReportHost.Run(RunId);
+        if (_run is null) return;
+        _report = ReportCatalog.Find(_run.Report);
+        _store = new ReportStore(_run.Folder);
+        _tenantWide = _report?.Scope == ReportScope.Tenant;
+        _applied = ReportHost.WasApplied(_run);
+        _tables = _report?.Tables ?? Array.Empty<ReportTable>();
+        _provider = ProvideAsync;
+        Reload();
+        _hasMap = StorageMap.Supports(_run.Report);
+        _hasKinds = StorageMap.SupportsKinds(_run.Report);
+        ShowTable(_hasMap ? MapTab : _tables.FirstOrDefault()?.Name ?? SitesTab);
+        LoadMap();
+        _timer ??= new Timer(_ => Tick(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    protected override void OnInitialized() => Host.Changed += OnHostChanged;
+
+    private void Reload()
+    {
+        if (_store is null) return;
+        _run = ReportHost.Run(RunId) ?? _run;
+        _counts = _store.RowCounts();
+        _totalRows = _counts.Values.Sum();
+        _sites = _store.Sites();
+        _summary = _store.Summary();
+        if (_run?.Report == "storage" && _counts.GetValueOrDefault("overview") != _limitsRows)
+        {
+            _limitsRows = _counts.GetValueOrDefault("overview");
+            (_limitsNote, _siteLimits) = LimitsNote(_store);
+        }
+    }
+
+    /// <summary>Builds the map off the UI thread, again whenever the run has written more since the last time.</summary>
+    private void LoadMap()
+    {
+        if (!_hasMap || _mapLoading || _store is null || _run is null || _totalRows == _mapRows) return;
+        var wait = TimeSpan.FromSeconds(Math.Max(3, _mapTook.TotalSeconds * 10));
+        if (!_run.IsFinished && _mapRows >= 0 && DateTime.UtcNow - _mapBuilt < wait) return;
+        var rows = _totalRows;
+        var store = _store;
+        var report = _run.Report;
+        _mapLoading = true;
+        _ = Task.Run(() =>
+        {
+            Core.Reports.MapNode? map = null, kinds = null;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                map = StorageMap.Build(report, store);
+                if (StorageMap.SupportsKinds(report)) kinds = StorageMap.BuildKinds(store);
+            }
+            catch (Exception ex) { AppLog.Error("Storage map", ex); }
+            return InvokeAsync(() =>
+            {
+                if (map is not null) _map = map;
+                if (kinds is not null) _kinds = kinds;
+                _mapTook = clock.Elapsed;
+                _mapBuilt = DateTime.UtcNow;
+                _mapRows = rows;
+                _mapLoading = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    /// <summary>
+    /// Why libraries can keep versions forever although a setting says otherwise: the tenant's default
+    /// and a site's own setting only decide what new libraries get.
+    /// </summary>
+    private static (string Note, Dictionary<string, string> BySite) LimitsNote(ReportStore store)
+    {
+        var bySite = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tenant = "";
+        var settings = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in store.ReadRows("overview"))
+        {
+            if (tenant.Length == 0 && row.TryGetValue("tenantVersionLimits", out var t)) tenant = t.GetString() ?? "";
+            if (row.TryGetValue("siteVersionLimits", out var s) && s.GetString() is { Length: > 0 } setting)
+            {
+                settings[setting] = settings.GetValueOrDefault(setting) + 1;
+                if (row.TryGetValue("site", out var address) && address.GetString() is { } site) bySite[site] = setting;
+            }
+        }
+        if (settings.Count == 0) return ("", bySite);
+        if (settings.Count == 1 && settings.ContainsKey(VersionLimits.TenantDefault))
+            return (tenant.Length > 0 ? $"The tenant default is {tenant}, but it only applies to libraries created after it was set." : "The tenant default only applies to libraries created after it was set.", bySite);
+        var own = string.Join(", ", settings.OrderByDescending(s => s.Value).Select(s => $"{s.Key} on {s.Value:N0}"));
+        return ($"Site settings ({own}) only apply to libraries created after they were set.", bySite);
+    }
+
+    private ContextMenu? _menu;
+    [Inject] private IJSRuntime Script { get; set; } = null!;
+
+    private async Task CopyAsync(string text)
+    {
+        try { await Script.InvokeVoidAsync("cpCopy", text); }
+        catch (Exception) { /* the clipboard is not there to be written to; nothing else depends on it */ }
+    }
+
+    /// <summary>A right-click on a row offers every address the row has: its file, folder, library, site.</summary>
+    private void RowMenu(MouseEventArgs at, Dictionary<string, JsonElement> row, ReportColumn clicked)
+    {
+        var items = new List<ContextMenu.Item>();
+        string? first = null;
+        // The address in the cell that was clicked comes first, then the rest from the most particular to the site.
+        var names = row.Keys.Where(k => k.EndsWith("Url", StringComparison.OrdinalIgnoreCase) || k is "url" or "site")
+            .OrderBy(k => k == clicked.Name ? 0 : k switch { "fileUrl" => 1, "folderUrl" => 2, "libraryUrl" or "listUrl" => 3, "webUrl" => 5, "site" => 6, _ => 4 });
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in names)
+        {
+            if (row[name].ValueKind != JsonValueKind.String || row[name].GetString() is not { } url || !url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!seen.Add(url)) continue;
+            first ??= url;
+            var what = name switch
+            {
+                "fileUrl" => "the file",
+                "folderUrl" => "the folder",
+                "libraryUrl" or "listUrl" => "the library",
+                "webUrl" => "the subsite",
+                "site" => "the site",
+                _ => ReportCatalog.Heading(name).ToLowerInvariant(),
+            };
+            items.Add(new ContextMenu.Item($"Open {what} in SharePoint", () => Browser.Open(url)));
+        }
+        if (first is not null) items.Add(new ContextMenu.Item("Copy the link", () => CopyAsync(first)));
+        if (Cell(row, clicked) is { Length: > 0 } text) items.Add(new ContextMenu.Item("Copy this value", () => CopyAsync(text)));
+        _menu?.Show(at, items);
+    }
+
+    private void SiteMenu(MouseEventArgs at, SiteRecord site)
+    {
+        var url = site.Site.Length > 0 ? site.Site : site.Key;
+        if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return;
+        _menu?.Show(at, new[]
+        {
+            new ContextMenu.Item("Open the site in SharePoint", () => Browser.Open(url)),
+            new ContextMenu.Item("Copy the link", () => CopyAsync(url)),
+        });
+    }
+
+    private void OnHostChanged() => Tick(force: true);
+
+    /// <summary>While the report runs, pick up what it has written since the last look.</summary>
+    private void Tick(bool force = false)
+    {
+        if (_run is null || (_run.IsFinished && !force)) return;
+        _ = InvokeAsync(async () =>
+        {
+            Reload();
+            LoadMap();
+            if (_grid is not null && _filtered is null && _tab != SitesTab && !IsMap(_tab) && _counts.GetValueOrDefault(_tab) != _shownRows)
+                await _grid.RefreshDataAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void ShowTable(string name)
+    {
+        _tab = name;
+        _filter = "";
+        _filtered = null;
+        _filterNote = null;
+        _sortNote = null;
+        _sortKey = "";
+        _sortTask = null;
+        _sortedRows = 0;
+        _defaultSort = null;
+        if (name == SitesTab || IsMap(name) || _report is null)
+        {
+            _columns = Array.Empty<ReportColumn>();
+            return;
+        }
+        var table = _tables.First(t => t.Name == name);
+        _columns = ReportCatalog.Columns(_report, table, _store?.UsedColumns(table.Name));
+        _defaultSort = _counts.GetValueOrDefault(table.Name) <= SortUnasked ? table.SortBy : null;
+        // URLs and free text get room; numbers, dates and flags stay narrow.
+        var widths = _columns.Select(c => c.Type switch
+        {
+            ColumnType.Number => 120,
+            ColumnType.Bool => 110,
+            ColumnType.Date => 160,
+            _ => c.Name.EndsWith("Url", StringComparison.OrdinalIgnoreCase) || c.Name is "site" or "url" or "error" ? 320 : 190,
+        }).ToList();
+        _gridTemplate = string.Join(' ', widths.Select(w => $"{w}px"));
+        _gridMinWidth = widths.Sum();
+        _gridKey = name + "|" + Guid.NewGuid().ToString("N");
+    }
+
+    private async ValueTask<GridItemsProviderResult<Dictionary<string, JsonElement>>> ProvideAsync(GridItemsProviderRequest<Dictionary<string, JsonElement>> request)
+    {
+        if (_store is null || _tab == SitesTab || IsMap(_tab)) return GridItemsProviderResult.From(new List<Dictionary<string, JsonElement>>(), 0);
+        var count = request.Count ?? 200;
+        var table = _tab;
+        var store = _store;
+        var total = _counts.GetValueOrDefault(table);
+
+        // Sorted by a column: the table is read once for this order, and the grid pages through what was kept.
+        if (request.SortByColumn?.Title is { } heading && _columns.FirstOrDefault(c => Label(c.Name) == heading) is { } sortColumn)
+        {
+            var text = _filter.Trim();
+            var descending = !request.SortByAscending;
+            // While the report runs the table grows all the time. It is sorted again when it has grown by a fifth, not on every look.
+            if (_run?.IsFinished != false || total >= _sortedRows * 1.2 + 200) _sortedRows = total;
+            var key = $"{table}|{sortColumn.Name}|{descending}|{text}|{_sortedRows}";
+            if (key != _sortKey || _sortTask is null)
+            {
+                var filters = text.Length > 0 ? new[] { new RowFilter("*", "~", text) } : null;
+                _sortKey = key;
+                _sortTask = Task.Run(() => store.ReadSorted(table, sortColumn.Name, descending, 0, FilterCap, filters));
+            }
+            var (sorted, matching) = await _sortTask;
+            _shownRows = total;
+            var note = matching > FilterCap ? $"Showing the first {FilterCap:N0} of {matching:N0} rows in this order. Export the report to work with all of them." : null;
+            if (note != _sortNote)
+            {
+                _sortNote = note;
+                _ = InvokeAsync(StateHasChanged);
+            }
+            return GridItemsProviderResult.From(sorted.Skip(request.StartIndex).Take(count).ToList(), sorted.Count);
+        }
+
+        if (_filtered is { } filtered)
+            return GridItemsProviderResult.From(filtered.Skip(request.StartIndex).Take(count).ToList(), filtered.Count);
+
+        _shownRows = total;
+        var (rows, _) = await Task.Run(() => store.ReadPage(table, request.StartIndex, count));
+        return GridItemsProviderResult.From(rows, (int)Math.Min(total, int.MaxValue));
+    }
+
+    /// <summary>A filter reads the table once and keeps the matches; without one the grid pages straight from the file.</summary>
+    private async Task ApplyFilter()
+    {
+        if (_tab == SitesTab || IsMap(_tab) || _store is null) return;
+        var text = _filter.Trim();
+        if (text.Length == 0)
+        {
+            _filtered = null;
+            _filterNote = null;
+        }
+        else
+        {
+            var table = _tab;
+            var store = _store;
+            var filters = new[] { new RowFilter("*", "~", text) };
+            var matches = await Task.Run(() => store.ReadRows(table).Where(row => ReportStore.Matches(row, filters)).Take(FilterCap + 1).ToList());
+            if (text != _filter.Trim() || table != _tab) return;      // typed on since; a newer search is on its way
+            _filterNote = matches.Count > FilterCap ? $"Showing the first {FilterCap:N0} matching rows. Export the report to work with all of them." : $"{matches.Count:N0} matching rows";
+            _filtered = matches.Take(FilterCap).ToList();
+        }
+        if (_grid is not null) await _grid.RefreshDataAsync();
+    }
+
+    private static string Cell(Dictionary<string, JsonElement> row, ReportColumn column)
+    {
+        if (!row.TryGetValue(column.Name, out var value)) return "";
+        switch (column.Type)
+        {
+            case ColumnType.Bool:
+                return value.ValueKind == JsonValueKind.True ? "Yes" : "";
+            case ColumnType.Number when value.ValueKind == JsonValueKind.Number:
+                if (IsBytes(column.Name) && value.TryGetInt64(out var bytes)) return Friendly.Bytes(bytes);
+                return value.TryGetInt64(out var whole) ? whole.ToString("N0") : value.GetDouble().ToString("N2");
+            case ColumnType.Date when value.ValueKind == JsonValueKind.String && DateTime.TryParse(value.GetString(), CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var date):
+                return date.ToLocalTime().ToString("g");
+            default:
+                return ReportStore.CellText(value);
+        }
+    }
+
+    /// <summary>What shows when the pointer rests on a cell: its text, and for a size the exact number behind it.</summary>
+    private static string CellTip(Dictionary<string, JsonElement> row, ReportColumn column) =>
+        IsBytes(column.Name) && row.TryGetValue(column.Name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var bytes)
+            ? $"{bytes:N0} bytes"
+            : Cell(row, column);
+
+    /// <summary>Sizes are stored in bytes and shown in the unit that reads best.</summary>
+    private static bool IsBytes(string name) => name.EndsWith("Bytes", StringComparison.OrdinalIgnoreCase);
+
+    private static string Number(string name, long value) => IsBytes(name) ? Friendly.Bytes(value) : value.ToString("N0");
+
+    /// <summary>A column or total as a heading. A size loses the word "bytes": "totalBytes" is "Total size".</summary>
+    private static string Label(string name)
+    {
+        if (name == "keptForeverVersionBytes") return "Versions kept forever";
+        if (name == "preservationHoldBytes") return "Preservation hold";
+        if (!IsBytes(name)) return ReportCatalog.Heading(name);
+        var rest = name[..^5];
+        if (rest.Length == 0) return "Size";
+        var heading = ReportCatalog.Heading(rest);
+        return rest.EndsWith("size", StringComparison.OrdinalIgnoreCase) || rest.EndsWith("used", StringComparison.OrdinalIgnoreCase)
+               || rest.EndsWith("storage", StringComparison.OrdinalIgnoreCase)
+            ? heading
+            : heading + " size";
+    }
+
+    private static string SiteClass(string status) => status switch
+    {
+        "ok" => "st-ok",
+        "denied" or "signIn" or "noConnection" => "st-issues",
+        "notFound" or "locked" or "archived" => "st-interrupted",
+        _ => "st-failed",
+    };
+
+    private void Cancel()
+    {
+        Host.Cancel(RunId);
+        Toasts.ShowInfo("Stopping. Sites already scanned are kept.");
+    }
+
+    private void Resume()
+    {
+        if (!Host.Resume(RunId)) Toasts.ShowWarning("There is nothing left to scan in this run.");
+        Reload();
+    }
+
+    private async Task Export(string format)
+    {
+        if (_run is null || _report is null || _store is null) return;
+        _exporting = true;
+        StateHasChanged();
+        try
+        {
+            var run = _run; var report = _report; var store = _store;
+            var path = LogExporter.DownloadsPath($"{report.Id}-{run.Id}", format);
+            var (files, notes) = await Task.Run(() => format == "csv"
+                ? (ReportExport.ExportCsv(run, report, store, path), new List<string>())
+                : (new List<string> { path }, ReportExport.ExportXlsx(run, report, store, path)));
+            if (!run.IsFinished) notes.Add("The report is still running: this export has the sites finished so far.");
+            _exportNotes = notes;
+            _exportedFiles = files;
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not export: {ex.Message}");
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+
+    private void ApplyChanges()
+    {
+        _confirmApply = false;
+        if (_run is null) return;
+        var id = Host.Apply(_run);
+        if (id is null) Toasts.ShowWarning("This run cannot be applied.");
+        else Nav.NavigateTo($"/report/{id}");
+    }
+
+    private void Delete()
+    {
+        _confirmDelete = false;
+        if (ReportHost.Delete(RunId)) Nav.NavigateTo("/reports");
+        else Toasts.ShowWarning("The run could not be deleted. A report that is still running has to be stopped first.");
+    }
+
+    public void Dispose()
+    {
+        Host.Changed -= OnHostChanged;
+        _timer?.Dispose();
+    }
+}

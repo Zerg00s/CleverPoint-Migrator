@@ -1,4 +1,5 @@
 @namespace CleverPoint.Migrator.Ux.Components
+@using CleverPoint.Migrator.Core.Auth
 @inject UxSettings Settings
 @inject IToastService Toasts
 
@@ -9,28 +10,66 @@
     <FluentDialogBody>
         <div class="field" style="margin-bottom:14px;">
             <span class="field-label">Site URL</span>
-            <FluentTextField @bind-Value="_new.SiteUrl" Placeholder="https://contoso.sharepoint.com/sites/Team" Style="width:100%;" />
+            <FluentTextField @bind-Value="_new.SiteUrl" @bind-Value:after="SuggestAsync" Placeholder="https://contoso.sharepoint.com/sites/Team" Style="width:100%;" />
         </div>
         <div class="field" style="margin-bottom:14px;">
             <span class="field-label">Sign-in</span>
-            <FluentSelect TOption="string" @bind-Value="_authMode" Style="width:100%;">
+            <FluentSelect TOption="string" @bind-Value="_authMode" @bind-Value:after="SuggestAsync" Style="width:100%;">
                 <FluentOption Value="Browser">Browser sign-in (no Azure app needed)</FluentOption>
-                <FluentOption Value="AppCertificate">App registration + certificate</FluentOption>
+                <FluentOption Value="AppDelegated">Microsoft sign-in (your tenant's app, best for long runs)</FluentOption>
+                <FluentOption Value="AppCertificate">App registration + certificate (unattended)</FluentOption>
             </FluentSelect>
         </div>
+        @* Both app options start with a Microsoft 365 sign-in, which finds the tenant, the app and
+           (for unattended) the certificate. The fields are only for an app that already exists. *@
+        @if (_authMode == "AppDelegated")
+        {
+            <TenantAppSetup @ref="_setup" SiteUrl="@_new.SiteUrl" OnSignInAppReady="OnSignInAppReady" OnDone="Save" />
+            <button type="button" class="link-button" @onclick="ToggleManual">
+                @(_manual ? "Hide the manual fields" : "Already set up on another computer? Enter the app ID or import a connection file")
+            </button>
+            @if (_manual)
+            {
+                <div class="grid cols-2" style="margin-top:12px;">
+                    <div class="field">
+                        <span class="field-label">App (client) ID</span>
+                        <FluentTextField @bind-Value="_new.AppId" Style="width:100%;" />
+                    </div>
+                    <div class="field">
+                        <span class="field-label">Tenant ID (optional)</span>
+                        <FluentTextField @bind-Value="_new.TenantId" Placeholder="Found from the site URL" Style="width:100%;" />
+                    </div>
+                </div>
+                <div class="field" style="margin-top:12px;">
+                    <span class="field-label">Or import the connection file exported on the other computer</span>
+                    <InputFile OnChange="ImportConnectionFile" accept=".json" />
+                </div>
+            }
+        }
         @if (_authMode == "AppCertificate")
         {
-            <div class="grid cols-2">
-                <div class="field"><span class="field-label">Tenant ID</span><FluentTextField @bind-Value="_new.TenantId" Style="width:100%;" /></div>
-                <div class="field"><span class="field-label">App (client) ID</span><FluentTextField @bind-Value="_new.AppId" Style="width:100%;" /></div>
-                <div class="field"><span class="field-label">Certificate .pfx path</span><FluentTextField @bind-Value="_new.CertPfxPath" Style="width:100%;" /></div>
-                <div class="field"><span class="field-label">Certificate password</span><FluentTextField TextFieldType="TextFieldType.Password" @bind-Value="_certPwd" Style="width:100%;" /></div>
-            </div>
+            <TenantAppSetup Unattended="true" SiteUrl="@_new.SiteUrl" OnUnattendedAppReady="OnUnattendedAppReady" OnDone="Save" />
+            <button type="button" class="link-button" @onclick="ToggleManual">
+                @(_manual ? "Hide the manual fields" : "I already have an app registration and a certificate")
+            </button>
+            @if (_manual)
+            {
+                <div class="grid cols-2" style="margin-top:12px;">
+                    <div class="field"><span class="field-label">Tenant ID</span><FluentTextField @bind-Value="_new.TenantId" Style="width:100%;" /></div>
+                    <div class="field"><span class="field-label">App (client) ID</span><FluentTextField @bind-Value="_new.AppId" Style="width:100%;" /></div>
+                    <div class="field"><span class="field-label">Certificate .pfx path</span><FluentTextField @bind-Value="_new.CertPfxPath" Style="width:100%;" /></div>
+                    <div class="field"><span class="field-label">Certificate password</span><FluentTextField TextFieldType="TextFieldType.Password" @bind-Value="_certPwd" Style="width:100%;" /></div>
+                </div>
+            }
         }
     </FluentDialogBody>
     <FluentDialogFooter>
         <FluentButton Appearance="Appearance.Neutral" @onclick="Close">Cancel</FluentButton>
-        <FluentButton Appearance="Appearance.Accent" @onclick="Save">Add connection</FluentButton>
+        @* With an app option the sign-in button adds the connection itself; this one is for the manual fields. *@
+        @if (_authMode == "Browser" || _manual)
+        {
+            <FluentButton Appearance="Appearance.Accent" @onclick="Save">Add connection</FluentButton>
+        }
     </FluentDialogFooter>
 </FluentDialog>
 
@@ -42,6 +81,108 @@
     private SavedConnection _new = new();
     private string _authMode = "Browser";
     private string _certPwd = "";
+    private bool _manual;
+    private string? _suggestedFrom;
+    private TenantAppSetup? _setup;
+
+    private async Task ToggleManual()
+    {
+        _manual = !_manual;
+        if (_manual) await SuggestAsync();
+    }
+
+    /// <summary>
+    /// Fills the app fields from what this computer already knows about the site's tenant: the tenant
+    /// ID from the site itself, and the app (with its certificate) from a saved connection to the same
+    /// tenant. Never overwrites something the user typed.
+    /// </summary>
+    private async Task SuggestAsync()
+    {
+        if (_suggestedFrom is not null)
+        {
+            // The last suggestion was for another site or sign-in type; start clean.
+            _new.AppId = _new.TenantId = _new.CertPfxPath = _certPwd = "";
+            _new.CertExpiresUtc = null;
+            _suggestedFrom = null;
+        }
+        if (_authMode == "Browser") return;
+        if (!Uri.TryCreate(_new.SiteUrl?.Trim(), UriKind.Absolute, out var site) || site.Scheme != Uri.UriSchemeHttps) return;
+        if (!string.IsNullOrWhiteSpace(_new.AppId)) return;
+
+        // contoso, contoso-my and contoso-admin are one tenant.
+        static string TenantName(string host)
+        {
+            var name = host.Split('.')[0].ToLowerInvariant();
+            return name.EndsWith("-my") ? name[..^3] : name.EndsWith("-admin") ? name[..^6] : name;
+        }
+        string? tenantId = null;
+        try { tenantId = await TenantDiscovery.GetTenantIdAsync(site.Host); } catch { /* offline: match by host name only */ }
+
+        Settings.EnsureLoaded();
+        var match = Settings.Connections.FirstOrDefault(c =>
+            c.AuthMode == _authMode && Guid.TryParse(c.AppId, out _)
+            && (_authMode != "AppCertificate" || File.Exists(c.CertPfxPath))
+            && ((tenantId is not null && string.Equals(c.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+                || (Uri.TryCreate(c.SiteUrl, UriKind.Absolute, out var other) && TenantName(other.Host) == TenantName(site.Host))));
+        if (match is not null)
+        {
+            _new.AppId = match.AppId;
+            _new.TenantId = tenantId ?? match.TenantId;
+            if (_authMode == "AppCertificate")
+            {
+                _new.CertPfxPath = match.CertPfxPath;
+                _certPwd = UxSecret.Unprotect(match.CertPasswordProtected);
+                _new.CertExpiresUtc = match.CertExpiresUtc;
+            }
+            _suggestedFrom = match.Name;
+            _manual = true;
+        }
+        else if (tenantId is not null && string.IsNullOrWhiteSpace(_new.TenantId))
+        {
+            _new.TenantId = tenantId;
+        }
+        StateHasChanged();
+    }
+
+    private void OnSignInAppReady(SignInAppResult app)
+    {
+        _new.TenantId = app.TenantId;
+        _new.AppId = app.AppId;
+        StateHasChanged();
+    }
+
+    private void OnUnattendedAppReady(UnattendedAppResult app)
+    {
+        _new.TenantId = app.TenantId;
+        _new.AppId = app.AppId;
+        _new.CertPfxPath = app.PfxPath;
+        _certPwd = app.PfxPassword;
+        _new.CertExpiresUtc = app.CertExpiresUtc;
+        StateHasChanged();
+    }
+
+    private async Task ImportConnectionFile(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(64_000));
+            var json = await reader.ReadToEndAsync();
+            if (!ConnectionFile.TryParse(json, out var siteUrl, out var tenantId, out var appId, out var error))
+            {
+                Toasts.ShowWarning(error);
+                return;
+            }
+            _new.SiteUrl = siteUrl;
+            _new.TenantId = tenantId;
+            _new.AppId = appId;
+            _manual = true;
+            Toasts.ShowInfo("Connection file read. Choose Add connection, then sign in with your own account.");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowWarning($"Could not read that file: {ex.Message}");
+        }
+    }
 
     /// <summary>Opens the dialog with cleared fields.</summary>
     public async Task OpenAsync()
@@ -49,6 +190,8 @@
         _new = new SavedConnection();
         _authMode = "Browser";
         _certPwd = "";
+        _manual = false;
+        _suggestedFrom = null;
         Hidden = false;
         await HiddenChanged.InvokeAsync(false);
     }
@@ -78,6 +221,33 @@
             Toasts.ShowWarning("Enter a full site URL, for example https://contoso.sharepoint.com/sites/Team.");
             return;
         }
+        if (_authMode == "AppDelegated")
+        {
+            _new.AppId = (_new.AppId ?? "").Trim();
+            _new.TenantId = (_new.TenantId ?? "").Trim();
+            if (!Guid.TryParse(_new.AppId, out _))
+            {
+                Toasts.ShowWarning("Use the sign-in button to set up the app, or paste its app (client) ID.");
+                return;
+            }
+            // The tenant comes from the site itself, so a wrong or stale tenant ID cannot send the
+            // sign-in to another directory.
+            try
+            {
+                var actual = await TenantDiscovery.GetTenantIdAsync(parsed.Host);
+                if (_new.TenantId.Length > 0 && !string.Equals(_new.TenantId, actual, StringComparison.OrdinalIgnoreCase))
+                {
+                    Toasts.ShowWarning($"That tenant ID does not belong to {parsed.Host}. Clear it to use the right one.");
+                    return;
+                }
+                _new.TenantId = actual;
+            }
+            catch (Exception ex)
+            {
+                Toasts.ShowWarning(ex.Message);
+                return;
+            }
+        }
         _new.AuthMode = _authMode;
         _new.Name = parsed.Host.Split('.')[0];
         _new.CertPasswordProtected = UxSecret.Protect(_certPwd);   // DPAPI-protect before it touches disk
@@ -90,6 +260,14 @@
         SavedConnection saved;
         if (existing is not null)
         {
+            // A different app or sign-in type means the old sign-in no longer applies.
+            if (existing.AuthMode != _new.AuthMode || !string.Equals(existing.AppId, _new.AppId, StringComparison.OrdinalIgnoreCase))
+            {
+                existing.AccountUpn = "";
+                existing.HomeAccountId = "";
+                existing.LastStatus = "";
+            }
+            UxConnectionResolver.Invalidate(existing);
             existing.AuthMode = _new.AuthMode;
             existing.TenantId = _new.TenantId;
             existing.AppId = _new.AppId;

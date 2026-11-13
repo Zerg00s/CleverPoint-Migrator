@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace CleverPoint.Migrator.Ux.Services;
+namespace CleverPoint.Migrator.Core.Hosting;
 
 /// <summary>
 /// Protects small secrets (currently the certificate password) at rest in

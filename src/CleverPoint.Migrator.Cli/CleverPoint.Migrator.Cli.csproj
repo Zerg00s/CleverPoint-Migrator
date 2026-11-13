@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>CleverPoint.Migrator.Cli</RootNamespace>
+    <!-- The command people and agents type. Ships in the same folder as the desktop app. -->
+    <AssemblyName>cpm</AssemblyName>
+    <PublishTrimmed>false</PublishTrimmed>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Reports and jobs run for a long time in the background and read large pages of JSON. Have the
+         garbage collector give memory back instead of holding on to whatever the machine can spare. -->
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <Company>CleverPoint Solutions Inc.</Company>
+    <Authors>Denis Molodtsov</Authors>
+    <Product>CleverPoint Migrator</Product>
+    <Description>CleverPoint Migrator command line</Description>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CleverPoint.Migrator.Core\CleverPoint.Migrator.Core.csproj" />
+  </ItemGroup>
+
+</Project>

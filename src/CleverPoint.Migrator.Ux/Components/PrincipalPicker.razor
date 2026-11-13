@@ -1,0 +1,142 @@
+@namespace CleverPoint.Migrator.Ux.Components
+@using CleverPoint.Migrator.Core.Hosting
+@inject ReportHost Host
+@inject SiteBrowser Sites
+
+@*
+    Picks people and security groups by searching the tenant's directory, the way a SharePoint people
+    field does. What is picked shows as chips; the value behind each chip is what SharePoint needs to
+    find the account again (the email of a person, the sign-in name of a group).
+*@
+
+<div class="ppick">
+    @if (Values.Count > 0)
+    {
+        <div class="ppick-chips">
+            @foreach (var value in Values)
+            {
+                var v = value;
+                <span class="ppick-chip" title="@v">
+                    @(_names.GetValueOrDefault(v) ?? v)
+                    <button type="button" class="ppick-remove" title="Remove" @onclick="() => Remove(v)">×</button>
+                </span>
+            }
+        </div>
+    }
+    <div class="ppick-search">
+        <FluentSearch @bind-Value="_text" @bind-Value:after="SearchAsync" Immediate="true" ImmediateDelay="350"
+                      Placeholder="Search for a person or group…" Style="width:100%; max-width:460px;" />
+        @if (_searching) { <FluentProgressRing Style="width:16px;height:16px;" /> }
+    </div>
+    @if (_error is not null)
+    {
+        <span class="hint">@_error</span>
+    }
+    @if (_results.Count > 0 || _looksLikeAccount)
+    {
+        <div class="ppick-results">
+            @foreach (var result in _results)
+            {
+                var r = result;
+                <button type="button" class="ppick-result" @onclick="() => Pick(r)">
+                    <span class="ppick-name">@r.Title</span>
+                    <span class="ppick-detail">@(r.Email.Length > 0 ? r.Email : KindName(r))</span>
+                    @if (r.IsGroup) { <span class="ppick-kind">@KindName(r)</span> }
+                </button>
+            }
+            @if (_looksLikeAccount && !_results.Any(r => r.Email.Equals(_text.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                <button type="button" class="ppick-result" @onclick="AddTyped">
+                    <span class="ppick-name">Use "@_text.Trim()" as typed</span>
+                    <span class="ppick-detail">Not found in the directory search</span>
+                </button>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The accounts picked so far.</summary>
+    [Parameter, EditorRequired] public List<string> Values { get; set; } = new();
+    [Parameter] public EventCallback<List<string>> ValuesChanged { get; set; }
+    /// <summary>A site of the tenant to search in. Empty until the sites of the report are known.</summary>
+    [Parameter] public string SiteUrl { get; set; } = "";
+
+    private readonly Dictionary<string, string> _names = new(StringComparer.OrdinalIgnoreCase);
+    private List<SpPrincipal> _results = new();
+    private string _text = "";
+    private string? _error;
+    private bool _searching;
+    private bool _looksLikeAccount;
+
+    private async Task SearchAsync()
+    {
+        var query = _text.Trim();
+        _error = null;
+        _looksLikeAccount = query.Contains('@') && query.Contains('.') && !query.Contains(' ');
+        if (query.Length < 3)
+        {
+            _results = new();
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(SiteUrl))
+        {
+            _results = new();
+            _error = "Choose the tenant or the sites first; the search runs in their directory.";
+            return;
+        }
+        _searching = true;
+        StateHasChanged();
+        try
+        {
+            var connection = await Host.OpenAsync(SiteUrl);
+            var found = await Sites.SearchDirectoryAsync(connection, query, 12);
+            if (query != _text.Trim()) return;       // typed on since; a newer search is on its way
+            // People and security groups can be site collection administrators; SharePoint groups cannot.
+            _results = found.Where(p => p.Kind != PrincipalKind.SharePointGroup).ToList();
+            if (_results.Count == 0 && !_looksLikeAccount) _error = "Nobody found by that name.";
+        }
+        catch (Exception ex)
+        {
+            _results = new();
+            _error = "The directory search did not work here: " + ex.Message.Split('\n')[0];
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private static string KindName(SpPrincipal principal) => principal.Kind switch
+    {
+        PrincipalKind.M365Group => "Microsoft 365 group",
+        PrincipalKind.SecurityGroup => "Security group",
+        PrincipalKind.SharePointGroup => "SharePoint group",
+        _ => "User",
+    };
+
+    private Task Pick(SpPrincipal principal)
+    {
+        // A person is found again by email; a group only by its sign-in name.
+        var value = !principal.IsGroup && principal.Email.Length > 0 ? principal.Email : principal.Login;
+        _names[value] = principal.Title;
+        return Add(value);
+    }
+
+    private Task AddTyped() => Add(_text.Trim());
+
+    private async Task Add(string value)
+    {
+        if (value.Length > 0 && !Values.Contains(value, StringComparer.OrdinalIgnoreCase)) Values.Add(value);
+        _text = "";
+        _results = new();
+        _looksLikeAccount = false;
+        await ValuesChanged.InvokeAsync(Values);
+    }
+
+    private async Task Remove(string value)
+    {
+        Values.RemoveAll(v => v.Equals(value, StringComparison.OrdinalIgnoreCase));
+        await ValuesChanged.InvokeAsync(Values);
+    }
+}

@@ -26,6 +26,15 @@ public class MigrationRun
 
     /// <summary>JSON scope (folder/selected paths/item ids) so re-runs stay scoped to what was picked.</summary>
     public string? ScopeJson { get; set; }
+
+    /// <summary>Items the scan found to process; 0 until the scan has finished. Progress = processed / planned.</summary>
+    public int Planned { get; set; }
+    /// <summary>The command-line job this run belongs to, or null for a run started in the desktop app.</summary>
+    public string? JobId { get; set; }
+    /// <summary>Process that is executing the run, and when it last reported in.</summary>
+    public int? OwnerPid { get; set; }
+    public DateTime? HeartbeatUtc { get; set; }
+    public bool CancelRequested { get; set; }
 }
 
 /// <summary>
@@ -33,7 +42,7 @@ public class MigrationRun
 /// Powers the history screen, delta re-runs, resume of interrupted runs,
 /// and full log export. Comfortable at the few-thousand-runs scale.
 /// </summary>
-public class HistoryStore : IDisposable
+public partial class HistoryStore : IDisposable
 {
     private readonly SqliteConnection _db;
 
@@ -73,16 +82,20 @@ public class HistoryStore : IDisposable
         catch (SqliteException) { /* column already there */ }
         try { Exec("ALTER TABLE run_items ADD COLUMN ts TEXT"); }
         catch (SqliteException) { /* column already there */ }
+        UpgradeForSharedUse();
     }
 
     public long StartRun(MigrationRun run)
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO runs(name, source_url, source_list, target_url, target_list, engine, started_utc, status, scope_json)
-            VALUES($n, $su, $sl, $tu, $tl, $e, $st, 'Running', $sc);
+            INSERT INTO runs(name, source_url, source_list, target_url, target_list, engine, started_utc, status, scope_json,
+                             owner_pid, heartbeat_utc, job_id)
+            VALUES($n, $su, $sl, $tu, $tl, $e, $st, 'Running', $sc, $pid, $st, $job);
             SELECT last_insert_rowid();
             """;
+        cmd.Parameters.AddWithValue("$pid", Environment.ProcessId);
+        cmd.Parameters.AddWithValue("$job", (object?)run.JobId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$n", run.Name);
         cmd.Parameters.AddWithValue("$su", run.SourceUrl);
         cmd.Parameters.AddWithValue("$sl", run.SourceList);
@@ -133,17 +146,7 @@ public class HistoryStore : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>Jobs run only in-process, so any run still marked "Running" at startup
-    /// is orphaned from a previous session that closed mid-run. Flip them to Interrupted.</summary>
-    public int MarkRunningAsInterrupted()
-    {
-        using var cmd = _db.CreateCommand();
-        cmd.CommandText = "UPDATE runs SET status='Interrupted', finished_utc=COALESCE(finished_utc,$f) WHERE status='Running'";
-        cmd.Parameters.AddWithValue("$f", DateTime.UtcNow.ToString("o"));
-        return cmd.ExecuteNonQuery();
-    }
-
-    private const string RunColumns = "id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc,scope_json";
+    private const string RunColumns = "id,name,source_url,source_list,target_url,target_list,engine,started_utc,finished_utc,status,copied,skipped,warnings,failed,max_modified_utc,scope_json,planned,job_id,owner_pid,heartbeat_utc,cancel_requested";
 
     public List<MigrationRun> GetRuns(int limit = 200)
     {
@@ -176,6 +179,11 @@ public class HistoryStore : IDisposable
         Warnings = r.GetInt32(12), Failed = r.GetInt32(13),
         MaxSourceModifiedUtc = r.IsDBNull(14) ? null : DateTime.Parse(r.GetString(14)).ToUniversalTime(),
         ScopeJson = r.IsDBNull(15) ? null : r.GetString(15),
+        Planned = r.IsDBNull(16) ? 0 : r.GetInt32(16),
+        JobId = r.IsDBNull(17) ? null : r.GetString(17),
+        OwnerPid = r.IsDBNull(18) ? null : r.GetInt32(18),
+        HeartbeatUtc = r.IsDBNull(19) ? null : DateTime.Parse(r.GetString(19)).ToUniversalTime(),
+        CancelRequested = !r.IsDBNull(20) && r.GetInt32(20) != 0,
     };
 
     /// <summary>The most recent run for a source/target pair (delta baseline + resume detection).</summary>
@@ -299,6 +307,13 @@ public class HistoryStore : IDisposable
     {
         Exec("DELETE FROM run_items; DELETE FROM runs;" + (wipeItemMaps ? " DELETE FROM item_map;" : ""));
         Exec("VACUUM");
+    }
+
+    internal SqliteCommand Command(string sql)
+    {
+        var cmd = _db.CreateCommand();
+        cmd.CommandText = sql;
+        return cmd;
     }
 
     private void Exec(string sql)

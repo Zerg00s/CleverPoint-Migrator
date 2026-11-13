@@ -429,12 +429,26 @@
 
         // Browser connections sign in via the WebView2 helper popup, then reuse the
         // captured session for this site and every other one on the tenant.
-        if (!UxConnectionResolver.IsCert(Connection) && !SignIn.HasSession(_site))
+        if (UxConnectionResolver.IsBrowser(Connection) && !SignIn.HasSession(_site))
         {
             _loading = true; _status = "Opening sign-in…"; StateHasChanged();
             var (ok, msg) = await SignIn.SignInAsync(_site);
             _loading = false;
             if (!ok) { _status = msg; await NotifyChangedAsync(); return; }
+        }
+        // Microsoft sign-in connections renew silently; the system browser opens only when the
+        // cached sign-in is missing or can no longer be renewed.
+        else if (UxConnectionResolver.IsDelegated(Connection))
+        {
+            _loading = true; _status = "Checking sign-in…"; StateHasChanged();
+            try
+            {
+                if (await UxConnectionResolver.EnsureDelegatedAsync(Connection, _site)) Settings.Save();
+            }
+            catch (Exception ex)
+            {
+                _loading = false; _status = ex.Message; await NotifyChangedAsync(); return;
+            }
         }
 
         _loading = true; _status = "Loading…"; StateHasChanged();

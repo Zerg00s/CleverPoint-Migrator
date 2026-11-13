@@ -74,6 +74,94 @@
         </div>
     </FluentTab>
 
+    <FluentTab Id="agents" Label="AI agents">
+        <div style="padding-top:16px; max-width:720px;">
+            <h3 style="margin:0 0 6px 0;">Use with AI agents</h3>
+            <p class="hint" style="line-height:1.5;">
+                AI coding agents such as Claude Code, Codex and Gemini CLI can run migrations for you through the
+                command line that ships with this app (<code>cpm</code>). The agent writes a job, starts it and
+                reports back; this app does the copying, and the run shows up on the Activity page as usual.
+                Installing the skill tells those agents the tool exists. It is one small text file per agent.
+            </p>
+
+            <div class="btn-row" style="margin-top:14px;">
+                <FluentButton Appearance="Appearance.Accent" IconStart="@(new Icons.Regular.Size20.Bot())"
+                              @onclick="InstallSkill" Disabled="_agentsBusy">@(_agentsBusy ? "Working…" : "Install for all")</FluentButton>
+                <FluentButton Appearance="Appearance.Neutral" IconStart="@(new Icons.Regular.Size20.ArrowClockwise())"
+                              @onclick="LoadAgents" Disabled="_agentsBusy">Look again</FluentButton>
+            </div>
+
+            @if (_agentsLoaded)
+            {
+                @if (_agentRows.Count == 0)
+                {
+                    <p class="hint" style="margin-top:12px;">
+                        No AI agent was found on this computer. You can still tell any agent that can run commands:
+                        "use <code>cpm</code>, start with <code>cpm agent guide</code>".
+                    </p>
+                }
+                else
+                {
+                    <table class="agent-table" style="margin-top:12px;">
+                        <thead><tr><th>Agent</th><th>Where</th><th>Skill</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var row in _agentRows)
+                            {
+                                var r = row;
+                                <tr>
+                                    <td>@r.Agent</td>
+                                    <td>@r.Where</td>
+                                    <td>@r.State</td>
+                                    <td class="agent-actions">
+                                        @if (r.Key is "current")
+                                        {
+                                            <button type="button" class="link-button" disabled="@_agentsBusy" @onclick="() => RemoveSkill(r)">Remove</button>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="link-button" disabled="@_agentsBusy" @onclick="() => InstallSkillAt(r)">
+                                                @(r.Key is "outdated" or "edited" ? "Replace" : "Install")
+                                            </button>
+                                            @if (r.Key is "outdated" or "edited")
+                                            {
+                                                <button type="button" class="link-button" disabled="@_agentsBusy" @onclick="() => RemoveSkill(r)">Remove</button>
+                                            }
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+
+            <div class="section-title" style="margin-top:22px;">Command line</div>
+            @if (!CommandLinePath.IsInstalled)
+            {
+                <p class="hint">The command line (<code>@CommandLinePath.ExecutableName</code>) is missing from this app's folder. Download the latest version of the app to get it.</p>
+            }
+            else if (_onPath)
+            {
+                <p class="hint"><code>cpm</code> can be run by name from a new terminal.</p>
+            }
+            else
+            {
+                <div class="callout warning">
+                    <FluentIcon Value="@(new Icons.Regular.Size20.Warning())" Color="Color.Custom" CustomColor="var(--cp-warn-text)" />
+                    <div>
+                        <div class="callout-title">Agents cannot find <code>cpm</code> yet</div>
+                        <p>Its folder is not on your PATH:</p>
+                        <code class="callout-path">@CommandLinePath.Folder</code>
+                        @if (OperatingSystem.IsWindows())
+                        {
+                            <FluentButton Appearance="Appearance.Neutral" @onclick="AddToPath">Add it to my PATH</FluentButton>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </FluentTab>
+
     <FluentTab Id="about" Label="About">
         <div style="padding-top:16px; max-width:640px;">
             <h3 style="margin:0 0 6px 0;">CleverPoint Migrator</h3>
@@ -120,7 +208,7 @@
                     <p class="hint" style="margin-top:10px;">You're on the latest version.</p>
                 }
             }
-            <p class="hint" style="margin-top:16px;">Version @AppVersion</p>
+            <p class="hint" style="margin-top:16px;" title="@AppInfo.Explanation">Version @AppInfo.Label</p>
             <p class="hint" style="margin-top:4px;">
                 Settings stored at
                 <a href="#" @onclick:preventDefault @onclick="OpenSettingsFile" style="color:var(--cp-link); cursor:pointer;"><code>@UxSettings.SettingsPath</code></a>
@@ -131,12 +219,6 @@
 
 @code {
     private string _tab = "perf";
-
-    // Comes from the assembly version stamped at publish time by Sign-App.ps1
-    // (-p:Version=X.Y.Z), so the About tab always reflects the released version.
-    private static readonly string AppVersion =
-        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v
-            ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0";
 
     protected override void OnInitialized()
     {
@@ -168,6 +250,110 @@
 
     private UpdateInfo? _update;
     private bool _checking, _installing;
+
+    // ---- AI agents tab ----
+    private sealed record AgentRow(string Agent, string Where, string State, string Key, string Target, string AgentId, string Path);
+    private List<AgentRow> _agentRows = new();
+    private bool _agentsLoaded, _agentsBusy, _onPath;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadAgents();
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Looking inside WSL takes a moment, so it runs off the UI thread.</summary>
+    private async Task LoadAgents()
+    {
+        _agentsBusy = true;
+        StateHasChanged();
+        try
+        {
+            var (found, installed) = await Task.Run(() => (AgentSkill.Discover(), AgentSkill.Status()));
+            _onPath = CommandLinePath.IsOnPath;
+            _agentRows = found.Select(f =>
+            {
+                var state = installed.FirstOrDefault(i => i.Target == f.Target && i.Path == f.Path)?.State ?? "none";
+                return new AgentRow(AgentName(f.Agent), f.Target == "local" ? "This computer" : "WSL: " + f.Target["wsl:".Length..], state switch
+                {
+                    "current" => "Installed",
+                    "outdated" => "Installed, older version",
+                    "edited" => "Installed, edited by you (left alone)",
+                    "missing" => "Removed since it was installed",
+                    _ => "Not installed",
+                }, state, f.Target, f.Agent, f.Path);
+            }).ToList();
+            _agentsLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not look for agents: {ex.Message}");
+        }
+        finally { _agentsBusy = false; }
+    }
+
+    private static string AgentName(string agent) => agent switch
+    {
+        "claude" => "Claude Code",
+        "codex" => "Codex",
+        "gemini" => "Gemini CLI",
+        _ => "Shared skills folder (.agents)",
+    };
+
+    private async Task InstallSkill()
+    {
+        _agentsBusy = true;
+        StateHasChanged();
+        try
+        {
+            var results = await Task.Run(() => AgentSkill.Install());
+            var ok = results.Count(r => r.State == "installed");
+            if (results.Count == 0) Toasts.ShowInfo("No AI agent was found on this computer, so nothing was installed.");
+            else if (ok == results.Count) Toasts.ShowSuccess($"Skill installed for {ok} agent location(s). Agents pick it up in their next session.");
+            else Toasts.ShowWarning($"Installed for {ok} of {results.Count} location(s).");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not install the skill: {ex.Message}");
+        }
+        finally { _agentsBusy = false; }
+        await LoadAgents();
+    }
+
+    private async Task InstallSkillAt(AgentRow row)
+    {
+        _agentsBusy = true;
+        StateHasChanged();
+        var ok = await Task.Run(() => AgentSkill.InstallAt(row.Target, row.AgentId, row.Path));
+        if (!ok) Toasts.ShowError($"Could not install the skill for {row.Agent} ({row.Where}).");
+        await LoadAgents();
+    }
+
+    private async Task RemoveSkill(AgentRow row)
+    {
+        _agentsBusy = true;
+        StateHasChanged();
+        var ok = await Task.Run(() => AgentSkill.RemoveAt(row.Target, row.Path));
+        if (!ok) Toasts.ShowError($"Could not remove the skill for {row.Agent} ({row.Where}).");
+        await LoadAgents();
+    }
+
+    private void AddToPath()
+    {
+        try
+        {
+            CommandLinePath.AddToUserPath();
+            _onPath = CommandLinePath.IsOnPath;
+            Toasts.ShowSuccess("Added. Open a new terminal for it to take effect.");
+        }
+        catch (Exception ex)
+        {
+            Toasts.ShowError($"Could not change PATH: {ex.Message}");
+        }
+    }
 
     private async Task CheckUpdates()
     {

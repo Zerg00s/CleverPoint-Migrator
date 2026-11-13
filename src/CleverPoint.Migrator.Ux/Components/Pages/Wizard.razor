@@ -109,8 +109,14 @@
             <span class="field-label">Copy mode</span>
             @if (_lockContentOnly)
             {
-                <div class="ro-value">Content only</div>
-                <span class="hint">You picked specific items, so they're added to the target list (no structure to recreate).</span>
+                <FluentSelect TOption="string" @bind-Value="_copyMode" Style="width:100%;" Disabled="_running">
+                    <FluentOption Value="content">Content only (add the picked items to the target list)</FluentOption>
+                    <FluentOption Value="permissions">Permissions only (nothing is copied)</FluentOption>
+                </FluentSelect>
+                @if (!PermsOnly)
+                {
+                    <span class="hint">You picked specific items, so they're added to the target list (no structure to recreate).</span>
+                }
             }
             else
             {
@@ -118,10 +124,28 @@
                     <FluentOption Value="full">Structure + content (recreate the list, then copy items)</FluentOption>
                     <FluentOption Value="content">Content only (target list already exists)</FluentOption>
                     <FluentOption Value="structure">Structure only (recreate the list and columns, no items)</FluentOption>
+                    <FluentOption Value="permissions">Permissions only (nothing is copied)</FluentOption>
                 </FluentSelect>
             }
         </div>
-        <div class="field">
+        @if (PermsOnly)
+        {
+            <div class="field">
+                <span class="field-label">What this does</span>
+                <span class="hint" style="opacity:.85; line-height:1.5;">
+                    No list, library, folder, file or item is created, copied or changed. Everything on the source that has its
+                    own permissions gets the same permissions on the target, replacing what the target item has now. Files and
+                    folders are matched by path. List items are matched through the copy this tool made earlier. Anything with
+                    no match on the target is reported and skipped.
+                </span>
+            </div>
+            <div class="field" style="grid-column: 1 / -1;">
+                <FluentCheckbox @bind-Value="_resetInherit" Disabled="_running"
+                                Label="Also restore inheritance on target items where the source item inherits" />
+                <span class="hint">Leave this off to keep permissions that were set by hand on the target and have no counterpart on the source.</span>
+            </div>
+        }
+        <div class="field" hidden="@PermsOnly">
             <span class="field-label">Engine</span>
             <FluentSelect TOption="string" @bind-Value="_engine" Style="width:100%;" Disabled="_running || !string.IsNullOrEmpty(_targetSubfolder)">
                 <FluentOption Value="Classic">Classic copy (recommended for most migrations)</FluentOption>
@@ -132,12 +156,26 @@
                 <span class="hint">Copying into a target folder uses the Classic engine (the Migration API ignores subfolders).</span>
             }
         </div>
-        <div class="field">
+        @if (ApiEngineNotices.Count > 0)
+        {
+            <div class="field" style="grid-column: 1 / -1;">
+                <FluentMessageBar Intent="MessageIntent.Info" AllowDismiss="false">
+                    <strong>This copy will use the Classic engine instead of the Migration API engine, because:</strong>
+                    <ul style="margin:6px 0 0 18px; padding:0;">
+                        @foreach (var notice in ApiEngineNotices)
+                        {
+                            <li>@notice</li>
+                        }
+                    </ul>
+                </FluentMessageBar>
+            </div>
+        }
+        <div class="field" hidden="@PermsOnly">
             <span class="field-label">File versions to copy</span>
             <FluentNumberField @bind-Value="_maxVersions" Min="1" Max="2000" Style="width:140px;" Disabled="_running" />
             <span class="hint">1 = latest only. Set 2000 to copy the full version history (SharePoint keeps up to 500 by default).</span>
         </div>
-        <div class="field">
+        <div class="field" hidden="@PermsOnly">
             <span class="field-label">If the item already exists on the target</span>
             <FluentSelect TOption="string" @bind-Value="_existingMode" Style="width:100%;" Disabled="_running">
                 <FluentOption Value="Overwrite">Overwrite (replace the target copy)</FluentOption>
@@ -147,9 +185,11 @@
         </div>
     </div>
 
+    <div hidden="@PermsOnly">
     <div class="section-title" style="margin-top:18px;">Date filter (optional)</div>
     <FluentCheckbox @bind-Value="_useDateFilter" Label="Only copy items within a date range" Disabled="_running" />
-    @if (_useDateFilter)
+    </div>
+    @if (_useDateFilter && !PermsOnly)
     {
         <div class="grid cols-2" style="gap:14px 28px; margin-top:10px; max-width:760px;">
             <div class="field">
@@ -173,7 +213,7 @@
         </div>
     }
 
-    <div class="grid cols-2" style="gap:8px 28px; margin:10px 0 4px;">
+    <div class="grid cols-2" style="gap:8px 28px; margin:10px 0 4px;" hidden="@PermsOnly">
         <FluentCheckbox @bind-Value="_preserve" Label="Preserve authors and dates" Disabled="_running" />
         @if (_showAttachments)
         {
@@ -191,7 +231,7 @@
     }
     <div class="begin-bar">
         <FluentButton Appearance="Appearance.Accent" Class="cp-cta" IconStart="@(new Icons.Regular.Size24.Play())"
-                      Disabled="@(BeginBlockedReason is not null)" @onclick="Start">Begin copy</FluentButton>
+                      Disabled="@(BeginBlockedReason is not null)" @onclick="Start">@(PermsOnly ? "Apply permissions" : "Begin copy")</FluentButton>
     </div>
 
     @if (_status is not null)
@@ -222,6 +262,32 @@
     private List<PendingJob> _jobs = new();
     private bool _batch, _sameSite;
     private bool _preserve = true, _attachments = true, _permissions, _contentTypes = true;
+    // Permissions-only mode: apply the source's permissions to content that is already on the target.
+    private bool PermsOnly => _copyMode == "permissions";
+
+    // Why the Migration API engine cannot do this copy as configured. The run then uses the Classic
+    // engine by itself; this tells the user before they start, and the run log repeats it.
+    private List<string> ApiEngineNotices
+    {
+        get
+        {
+            if (_engine != "MigrationApi") return new();
+            var reasons = Core.MigrationApi.MigrationApiEngine.ReasonsToUseClassic(new CopyOptions
+            {
+                ExistingMode = _existingMode switch { "CopyIfNewer" => ExistingItemMode.CopyIfNewer, "Skip" => ExistingItemMode.Skip, _ => ExistingItemMode.Overwrite },
+                MaxVersions = _maxVersions,
+                PreserveAuthorsAndDates = _preserve,
+                CopyPermissions = _permissions,
+                PermissionsOnly = PermsOnly,
+                TargetSubfolderRelative = _targetSubfolder,
+            }, sourceIsLibrary: true);
+            // Lists in the selection are a reason of their own; libraries next to them still use the API.
+            if (_jobs.Any(j => !j.IsLibrary))
+                reasons.Add(_jobs.All(j => !j.IsLibrary) ? "it only copies libraries, and this is a list" : "it only copies libraries (the lists in this selection use the Classic engine)");
+            return reasons;
+        }
+    }
+    private bool _resetInherit;
 
     // Attachments only apply to list items; libraries don't have them.
     private bool _showAttachments => !(_jobs.Count == 1 && _jobs[0].IsLibrary);
@@ -242,6 +308,8 @@
         _targetState == TargetState.Mismatch ? _targetStateMsg
         : (_copyMode == "content" && _targetState == TargetState.New)
             ? "Content-only needs an existing target list, but this one doesn't exist yet. Switch to Structure + content, or point at an existing list."
+        : (PermsOnly && _targetState == TargetState.New)
+            ? "Permissions only needs an existing target list, but this one doesn't exist yet. Copy the list first, or point at an existing list."
         : null;
     private const bool _running = false;   // execution moved to the background runner
     private string? _status;
@@ -343,6 +411,8 @@
     {
         if (r.Engine is "Classic" or "MigrationApi" && string.IsNullOrEmpty(_targetSubfolder)) _engine = r.Engine;
         if (r.CopyMode is "full" or "content" or "structure" && !_lockContentOnly) _copyMode = r.CopyMode;
+        if (r.CopyMode == "permissions") _copyMode = "permissions";
+        if (r.ResetTargetWhereSourceInherits is { } reset) _resetInherit = reset;
         if (r.MaxVersions is { } mv) _maxVersions = Math.Clamp(mv, 1, 2000);
         if (r.ExistingMode is "Overwrite" or "CopyIfNewer" or "Skip") _existingMode = r.ExistingMode;
         if (r.DateField is "Modified" or "Created") _dateField = r.DateField;
@@ -528,6 +598,8 @@
                 PreserveAuthorsAndDates = _preserve,
                 CopyAttachments = _attachments,
                 CopyPermissions = _permissions,
+                PermissionsOnly = PermsOnly,
+                ResetTargetWhereSourceInherits = PermsOnly && _resetInherit,
                 CopyContent = !structureOnly,
                 // Transfer files concurrently within a library copy (Settings default; the
                 // engine caps it and forces sequential when permissions are being copied).
@@ -569,7 +641,9 @@
             queued++;
         }
 
-        Toasts.ShowSuccess(queued == 1 ? "Copy queued." : $"{queued} copies queued.");
+        Toasts.ShowSuccess(PermsOnly
+            ? (queued == 1 ? "Permissions run queued." : $"{queued} permissions runs queued.")
+            : (queued == 1 ? "Copy queued." : $"{queued} copies queued."));
         Nav.NavigateTo("/activity");
     }
 }

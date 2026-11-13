@@ -31,6 +31,27 @@ public static class CopyEngine
         var users = new UserResolver(sourceCtx, targetCtx, userMap, options.UnresolvedUserFallback);
         await users.PrimeSourceUsersAsync();
 
+        // Permissions-only: nothing below this block runs, so no schema, list or content is touched.
+        if (options.PermissionsOnly)
+        {
+            var existingTarget = await ListLocator.TryFindAsync(targetCtx, options.TargetListTitle, options.TargetListServerRelativeUrl);
+            if (existingTarget is null)
+            {
+                result.Add("List", sourceListTitle, options.TargetListTitle, ItemCopyStatus.Failed,
+                    "the target list does not exist. A permissions-only run creates nothing, so copy the list first.");
+            }
+            else
+            {
+                var sync = new PermissionSync(new PermissionCopier(sourceCtx, targetCtx, users, groupMap)) { CancellationToken = cancellationToken };
+                await sync.RunAsync(sourceList, existingTarget, options, result);
+            }
+            foreach (var (login, reason) in users.Unresolved)
+                result.Add("User", login, options.UnresolvedUserFallback ?? "(dropped)", ItemCopyStatus.Warning, $"unresolved user: {reason}");
+            result.FinishedUtc = DateTime.UtcNow;
+            Diagnostics.TraceLog.Write("Copy", $"done '{sourceListTitle}' (permissions only): {result.Summary()}");
+            return result;
+        }
+
         // Managed metadata before any schema work: cross-tenant the target term store is a different
         // object, so the term sets this list depends on must exist there BEFORE columns are bound to
         // them and BEFORE item values carrying term GUIDs are written. Same-tenant this is a no-op.
@@ -113,6 +134,20 @@ public static class CopyEngine
             await copier.CopyAsync(sourceList, targetList, options, result);
             result.FileHashes = copier.SourceHashes;
             result.MaxSourceModifiedUtc = copier.LastScanMaxModifiedUtc;
+
+            // Files and folders are in place; now give those with their own permissions on the
+            // source the same permissions here. Paired by path, limited to what this copy covers.
+            if (options.CopyPermissions)
+            {
+                var sync = new PermissionSync(new PermissionCopier(sourceCtx, targetCtx, users, groupMap))
+                {
+                    CancellationToken = cancellationToken,
+                    ReportMissing = false,
+                    CountAsContent = false,
+                    ReplaceExisting = false,
+                };
+                await sync.RunAsync(sourceList, targetList, options, result);
+            }
         }
         else
         {
@@ -133,6 +168,10 @@ public static class CopyEngine
             }
             await copier.CopyAsync(sourceList, targetList, options, result);
             result.MaxSourceModifiedUtc = copier.LastScanMaxModifiedUtc;
+            // Items carried their own permissions above; the list's own come last.
+            if (options.CopyPermissions && copier.Permissions != null)
+                await new PermissionSync(copier.Permissions) { ReplaceExisting = false }
+                    .ApplyListLevelAsync(sourceList, targetList, options, result);
         }
 
         foreach (var (login, reason) in users.Unresolved)

@@ -3,7 +3,7 @@ using CleverPoint.Migrator.Core.Csom;
 using Microsoft.SharePoint.Client;
 using File = System.IO.File;   // the CSOM namespace also defines File; the cache uses System.IO.File
 
-namespace CleverPoint.Migrator.Ux.Services;
+namespace CleverPoint.Migrator.Core.Hosting;
 
 public record SpListInfo(string Title, string ServerRelativeUrl, bool IsLibrary, int ItemCount)
 {

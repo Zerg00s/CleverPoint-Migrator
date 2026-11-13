@@ -80,6 +80,9 @@ public static class FileIcons
         : e.IsFolder ? Url("folder")
         : Url(ForExtension(Path.GetExtension(e.Name)));
 
+    /// <summary>Icon for a file type by its extension, with or without the dot.</summary>
+    public static string ForExtension(string? extension, int size) => Url(ForExtension(extension ?? ""), size);
+
     private static string ForExtension(string ext)
     {
         ext = ext.TrimStart('.').ToLowerInvariant();

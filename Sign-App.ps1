@@ -123,7 +123,7 @@ $tag          = "v$Version"
 if (-not $SkipBuild) {
     # Stop any running instance launched from this repo, otherwise the build cannot
     # overwrite the locked exe (MSB3026). The app and its sign-in helper both lock files.
-    $procNames = @("CleverPoint.Migrator.Ux", "CleverPoint.Migrator.SignInHelper")
+    $procNames = @("CleverPoint.Migrator.Ux", "CleverPoint.Migrator.SignInHelper", "cpm")
     $running = Get-Process -Name $procNames -ErrorAction SilentlyContinue |
                Where-Object { $_.Path -and $_.Path -like "$projectDir\*" }
     foreach ($proc in $running) {
@@ -150,6 +150,16 @@ if (-not $SkipBuild) {
     if (-not (Test-Path "$publishDir\SignInHelper\CleverPoint.Migrator.SignInHelper.exe")) {
         throw "Sign-in helper exe missing after publish (browser auth would fail)"
     }
+
+    # The command line (cpm.exe) goes into the same folder as the app. Both are self-contained
+    # builds of the same runtime and share the engine DLL, so the files they have in common are
+    # identical. It has to be published with the same version for that to hold.
+    Write-Host "Publishing the command line (cpm.exe) ..." -ForegroundColor Cyan
+    dotnet publish "$projectDir\src\CleverPoint.Migrator.Cli" -c Release -r win-x64 --self-contained true `
+        -p:Version=$Version `
+        -o $publishDir
+    if ($LASTEXITCODE -ne 0) { throw "Command line publish failed" }
+    if (-not (Test-Path "$publishDir\cpm.exe")) { throw "cpm.exe missing after publish" }
 }
 
 # Step 2: Verify exe exists
@@ -181,7 +191,7 @@ if (-not $dlib) { throw "Azure.CodeSigning.Dlib.dll not found. Install: winget i
 
 # Sign the exe plus all of our own binaries shipped in the folder (the main exe, the
 # Core/UX/SignInHelper assemblies). Third-party DLLs are already signed by their authors.
-$toSign = Get-ChildItem -Path $publishDir -Recurse -File -Include 'CleverPoint.Migrator.*.exe','CleverPoint.Migrator.*.dll' |
+$toSign = Get-ChildItem -Path $publishDir -Recurse -File -Include 'CleverPoint.Migrator.*.exe','CleverPoint.Migrator.*.dll','cpm.exe','cpm.dll' |
           Select-Object -ExpandProperty FullName
 if (-not $toSign) { throw "No CleverPoint.* binaries found to sign in $publishDir" }
 
