@@ -165,8 +165,8 @@ public sealed class PermissionsCompareReport : ReportDefinition
             bool aUnique = sourceUnique.Contains(a.Id), bUnique = targetUnique.Contains(b.Id);
             if (!aUnique && !bUnique) continue;
             var type = a.IsLibrary ? "Library" : "List";
-            var sourceUrl = sourceAuthority + a.RootFolder;
-            var targetUrl = targetAuthority + b.RootFolder;
+            var sourceUrl = sourceAuthority + Links.Escape(a.RootFolder);
+            var targetUrl = targetAuthority + Links.Escape(b.RootFolder);
             if (aUnique != bUnique)
             {
                 context.Count("objectsCompared");

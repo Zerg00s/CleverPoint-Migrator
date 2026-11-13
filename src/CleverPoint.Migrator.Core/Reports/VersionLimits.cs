@@ -38,10 +38,13 @@ public static class VersionLimits
         };
     }
 
-    public static string Describe(bool automatic, long majorVersions, long expireAfterDays) =>
-        automatic ? Automatic
-        : expireAfterDays > 0 ? $"{majorVersions:N0} versions, deleted after {expireAfterDays:N0} days"
-        : $"{majorVersions:N0} versions, {Forever}";
+    public static string Describe(bool automatic, long majorVersions, long expireAfterDays)
+    {
+        if (automatic) return Automatic;
+        // A limit of 0 is how SharePoint says there is none. Site Pages libraries are made that way: every version is kept.
+        var count = majorVersions > 0 ? $"{majorVersions:N0} versions" : "Every version";
+        return expireAfterDays > 0 ? $"{count}, deleted after {expireAfterDays:N0} days" : $"{count}, {Forever}";
+    }
 
     /// <summary>Whether limits put this way never delete a version because of its age.</summary>
     public static bool KeepsForever(string limits) => limits.EndsWith(Forever, StringComparison.Ordinal);
@@ -55,7 +58,7 @@ public static class VersionLimits
             var lists = await connection.Rest.GetAllAsync(
                 $"{webUrl}/_api/web/lists?$select=Id,Title,Hidden,ItemCount,EnableVersioning,MajorVersionLimit,VersionPolicies/DefaultTrimMode,VersionPolicies/DefaultExpireAfterDays," +
                 "RootFolder/ServerRelativeUrl&$expand=RootFolder,VersionPolicies&$filter=BaseType eq 1&$top=500", ct);
-            return lists.Select(l => new Library(l.Str("Id"), l.Str("Title"), authority + l.Child("RootFolder").Str("ServerRelativeUrl"), l.Bool("Hidden"), l.Num("ItemCount"),
+            return lists.Select(l => new Library(l.Str("Id"), l.Str("Title"), authority + Links.Escape(l.Child("RootFolder").Str("ServerRelativeUrl")), l.Bool("Hidden"), l.Num("ItemCount"),
                 l.Bool("EnableVersioning"), l.Child("VersionPolicies").Num("DefaultTrimMode"), l.Num("MajorVersionLimit"), l.Child("VersionPolicies").Num("DefaultExpireAfterDays"))).ToList();
         }
         catch (SpRestException)

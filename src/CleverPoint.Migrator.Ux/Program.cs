@@ -90,6 +90,15 @@ internal class Program
             .SetDevToolsEnabled(true)
             .Center();
 
+        // A copy pointed at another data folder (CPM_HOME) keeps its browser profile there too and names
+        // the folder in its window caption, so that it can run beside the installed app without the two touching.
+        if (Environment.GetEnvironmentVariable("CPM_HOME") is { Length: > 0 } home)
+        {
+            var folder = Path.GetFullPath(home);
+            app.MainWindow.SetTemporaryFilesPath(Path.Combine(folder, "browser"));
+            app.MainWindow.SetTitle($"CleverPoint Migrator ({Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar))})");
+        }
+
         try
         {
             var iconPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "favicon.ico");

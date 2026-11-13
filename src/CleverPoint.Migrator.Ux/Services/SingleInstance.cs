@@ -42,7 +42,22 @@ public static class SingleInstance
     // so a second SESSION of the same user (console + RDP, two desktops) must not open a second
     // instance, which would crash browser sign-in on the shared WebView2 folder. Global\ spans
     // sessions; appending the SID keeps different users independent.
-    private static string MutexNameForUser()
+    private static string MutexNameForUser() => NameForUser() + HomeSuffix();
+
+    /// <summary>
+    /// CPM_HOME points the app at another folder for its settings, history and browser profile. Such a
+    /// copy shares nothing with the one on the default folder, so it may run beside it: that is how a
+    /// build can be tried out while the installed app is in use. Each folder still gets one instance.
+    /// </summary>
+    private static string HomeSuffix()
+    {
+        if (Environment.GetEnvironmentVariable("CPM_HOME") is not { Length: > 0 } home) return "";
+        var full = Path.GetFullPath(home).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant();
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(full));
+        return ".home-" + Convert.ToHexString(hash, 0, 6);
+    }
+
+    private static string NameForUser()
     {
         if (OperatingSystem.IsWindows())
         {

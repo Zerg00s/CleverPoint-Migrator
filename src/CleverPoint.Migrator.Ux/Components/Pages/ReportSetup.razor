@@ -173,7 +173,7 @@
                     <div class="field" title="@o.Help">
                         <span class="field-label">@ReportCatalog.OptionLabel(o) <span class="field-info" title="@o.Help">ⓘ</span></span>
                         <FluentSelect TOption="string" Items="@o.Choices" OptionText="@(c => c)" OptionValue="@(c => c)" Placeholder="Choose…"
-                                      Value="@(_options[o.Name] as string ?? "")" ValueChanged="@(v => _options[o.Name] = v)" Style="min-width:220px;" />
+                                      Value="@(_options[o.Name] as string ?? "")" ValueChanged="@(v => _options[o.Name] = v)" Style="width:320px; max-width:100%;" />
                     </div>
                 }
                 else

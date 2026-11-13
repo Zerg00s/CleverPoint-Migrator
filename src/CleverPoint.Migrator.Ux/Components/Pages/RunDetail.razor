@@ -139,7 +139,7 @@ else
             else
             {
                 <FluentDataGrid Items="@_filteredItems.AsQueryable()" Virtualize="true" ItemSize="30" GenerateHeader="GenerateHeaderOption.Sticky"
-                                GridTemplateColumns="0.9fr 1.2fr 0.9fr 2.4fr 2fr" ShowHover="true" Style="width:100%;"
+                                GridTemplateColumns="148px 184px 124px minmax(200px, 2.4fr) minmax(200px, 2fr)" ShowHover="true" Style="width:100%;"
                                 RowClass="@(_ => "click-row")"
                                 OnRowClick="@((FluentDataGridRow<(string ItemType, string SourcePath, string TargetPath, string Status, string? Message, string? ItemUrl, DateTime? WhenUtc)> r) => { _detail = r.Item; return Task.CompletedTask; })">
                     <TemplateColumn Title="Type">
@@ -152,8 +152,8 @@ else
                     <TemplateColumn Title="Status">
                         <span class="status-pill @ItemStatusClass(context.Status)">@context.Status</span>
                     </TemplateColumn>
-                    <PropertyColumn Property="@(i => i.SourcePath)" Title="Item" />
-                    <PropertyColumn Property="@(i => i.Message)" Title="Detail" />
+                    <PropertyColumn Property="@(i => i.SourcePath)" Title="Item" Tooltip="true" />
+                    <PropertyColumn Property="@(i => i.Message)" Title="Detail" Tooltip="true" />
                 </FluentDataGrid>
             }
         </div>

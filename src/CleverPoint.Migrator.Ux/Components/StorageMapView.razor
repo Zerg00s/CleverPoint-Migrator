@@ -23,19 +23,26 @@
                 else { <button type="button" class="smap-crumb" title="Back out to @node.Name" @onclick="() => Zoom(node)">@node.Name</button> }
             }
         </div>
-        <div class="smap-summary">
-            <div class="smap-figure"><span class="smap-number">@Friendly.Bytes(_view.Total)</span><span class="smap-caption">Total</span></div>
-            @if (_hasVersions)
-            {
-                <div class="smap-figure"><span class="smap-number current">@Friendly.Bytes(_view.Current)</span><span class="smap-caption">Current versions</span></div>
-                <div class="smap-figure"><span class="smap-number versions">@Friendly.Bytes(_view.Versions)</span><span class="smap-caption">Older versions · @_view.VersionShare.ToString("P0")</span></div>
-            }
-            <div class="smap-figure"><span class="smap-number">@_view.Files.ToString("N0")</span><span class="smap-caption">Files</span></div>
-            @if (_byVersions)
-            {
-                <div class="smap-legend"><span>No older versions</span><span class="smap-scale"></span><span>Nothing but older versions</span></div>
-            }
-        </div>
+        @if (_view != _root || ShowTotalsAtTop)
+        {
+            <div class="smap-summary">
+                <div class="smap-figure"><span class="smap-number">@Friendly.Bytes(_view.Total)</span><span class="smap-caption">Total</span></div>
+                @if (_hasVersions)
+                {
+                    <div class="smap-figure"><span class="smap-number current">@Friendly.Bytes(_view.Current)</span><span class="smap-caption">Current versions</span></div>
+                    <div class="smap-figure"><span class="smap-number versions">@Friendly.Bytes(_view.Versions)</span><span class="smap-caption">Older versions · @_view.VersionShare.ToString("P0")</span></div>
+                }
+                <div class="smap-figure"><span class="smap-number">@_view.Files.ToString("N0")</span><span class="smap-caption">Files</span></div>
+                @if (_byVersions)
+                {
+                    <div class="smap-legend"><span>No older versions</span><span class="smap-scale"></span><span>Nothing but older versions</span></div>
+                }
+            </div>
+        }
+        else if (_byVersions)
+        {
+            <div class="smap-legend"><span>No older versions</span><span class="smap-scale"></span><span>Nothing but older versions</span></div>
+        }
         @if (_hasVersions)
         {
             <div class="smap-modes" title="What the colors of the map mean">
@@ -184,6 +191,8 @@
     [Parameter, EditorRequired] public MapNode Root { get; set; } = new();
     /// <summary>Whether the nodes say what kind of file they are. Then the map is colored by kind and the kinds are listed beside the tree.</summary>
     [Parameter] public bool ByKind { get; set; }
+    /// <summary>Show the totals of the whole map above it. Off where the page around the map already says them.</summary>
+    [Parameter] public bool ShowTotalsAtTop { get; set; } = true;
 
     // The map is laid out on a canvas of this size and drawn in percentages of it, so it scales with the window.
     private const double CanvasWidth = 1300;

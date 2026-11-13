@@ -302,7 +302,7 @@ public sealed class FixNotebooksAction : ReportDefinition
                     context.Cancel.ThrowIfCancellationRequested();
                     var row = new Dictionary<string, object?>
                     {
-                        ["webUrl"] = web, ["library"] = notebook.Library, ["notebook"] = notebook.Name, ["folderUrl"] = authority + notebook.Path,
+                        ["webUrl"] = web, ["library"] = notebook.Library, ["notebook"] = notebook.Name, ["folderUrl"] = authority + Links.Escape(notebook.Path),
                     };
                     if (csom is null)
                     {

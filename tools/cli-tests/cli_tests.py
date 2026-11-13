@@ -19,6 +19,9 @@ Groups:
     life    the job lifecycle: timeouts, cancel, a killed process, concurrent access
     report  reports: the catalog and file format (no network), then every report against the sandbox,
             many sites at once, failing sites, cancel, a killed process, resume and export
+    corners every report against content made to be awkward: odd names, an empty file, deep folders,
+            drafts, every kind of version limit, and a second site that differs in known ways.
+            Build the content once with: cd tools/CleverPoint.Migrator.TestRunner && dotnet run -- report-corners
 
 conn, site, job, life and the online half of report need the sandbox credentials the TestRunner uses
 (the Secrets folder beside the repository). job and life write lists named "CliT-..." to the test
@@ -1416,9 +1419,10 @@ def test_report(cpm, work):
           and sub_a.get("depth") == 1 and sub_1.get("depth") == 2, [sub_a, sub_1])
     check("a library is the sum of its top folders and the files at its top",
           top.get("files") == top.get("ownFiles", 0) + sum(x["files"] for x in lib if x.get("depth") == 1), top)
-    check("storage agrees with the documents report on what the current versions take",
-          st.get("currentBytes") == cpm("report", "status", docs_run).data.get("summary", {}).get("sizeBytes"),
-          f"{st.get('currentBytes')} vs {cpm('report', 'status', docs_run).data.get('summary', {}).get('sizeBytes')}")
+    weigh = cpm("report", "status", docs_run).data.get("summary", {}).get("sizeBytes", 0)
+    check("storage: a total is its current versions plus its older ones", st.get("totalBytes") == st.get("currentBytes", 0) + st.get("versionBytes", 0), st)
+    check("storage takes what the documents report says the files weigh, plus a little SharePoint keeps about each file",
+          0 <= st.get("currentBytes", 0) - weigh < 20_000 * max(1, st.get("files", 0)), f"{st.get('currentBytes')} vs {weigh}")
     kinds = rows(st_run, "--table", "types")
     check("file types add up to the same total", sum(x["totalBytes"] for x in kinds) == st.get("totalBytes") and sum(x["files"] for x in kinds) == st.get("files"), kinds[:2])
     check("lists are measured too, and archived files are counted even when there are none",
@@ -1552,8 +1556,13 @@ def test_report(cpm, work):
           and r.data.get("summary", {}).get("librariesKeepingVersionsForever") == limits.get("keptForever"), [r.out[:300], limits])
     check("version-limits: every library says its limits in words",
           bool(libraries) and all(x.get("versionLimits") for x in libraries)
-          and all(x["versionLimits"] == "Automatic" or "versions" in x["versionLimits"] or x["versionLimits"] == "No versioning" for x in libraries),
+          and all(x["versionLimits"] in ("Automatic", "No versioning") or "version" in x["versionLimits"] for x in libraries),
           [x.get("versionLimits") for x in libraries][:6])
+    # SharePoint gives a library without a limit on the count (Site Pages, as a rule) a limit of 0.
+    unlimited = [x for x in libraries if x.get("majorVersionLimit") == 0]
+    check("version-limits: a library with no limit on the count keeps every version, not 0 versions",
+          not any(x["versionLimits"].startswith("0 ") for x in libraries) and all(x["versionLimits"].startswith("Every version") for x in unlimited),
+          [(x["library"], x["versionLimits"]) for x in unlimited][:4])
     check("version-limits: the tenant's default is read through the admin site", limits.get("tenantDefault") in ("Automatic",) or "versions" in limits.get("tenantDefault", ""), limits)
     forever = sum(1 for x in rows(st_run, "--table", "folders", "--where", "depth=0") if x.get("versionLimits", "").endswith("kept forever"))
     check("storage says the same per library, and counts the libraries that keep versions forever",
@@ -1728,6 +1737,369 @@ def load_credentials():
     return creds
 
 
+def test_corners(cpm, work):
+    """
+    Every report against content made to be awkward: odd file names, an empty file, uppercase and
+    missing extensions, deep folders, drafts, every kind of version limit, an empty and a hidden
+    library, and a second site that differs from the first in known ways. The content is built once
+    by the TestRunner (dotnet run -- report-corners), which also writes corners.json, the list of
+    what it built. These checks compare what the reports say with that list.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "corners.json")
+    if not os.path.exists(path):
+        check("the corner-case content is described in corners.json", False, "build it: cd tools/CleverPoint.Migrator.TestRunner && dotnet run -- report-corners")
+        return
+    m = json.load(open(path, encoding="utf-8"))
+    src, tgt, docs = m["source"], m["target"], m["docs"]
+    files = {f["path"]: f for f in m["files"]}
+    names = {p.rsplit("/", 1)[-1]: f for p, f in files.items()}
+    if not cpm("site", "lists", "--site", src).ok:
+        check("the corner-case content is in the sandbox", False, "build it: cd tools/CleverPoint.Migrator.TestRunner && dotnet run -- report-corners")
+        return
+
+    def run(*args, timeout=600):
+        return cpm("report", "start", *args, "--wait", "--timeout", timeout, timeout=timeout + 60)
+
+    def rows(run_id, table, *args):
+        return cpm("report", "rows", run_id, "--table", table, *args, "--limit", "1000").data.get("rows", [])
+
+    def folder_of(p):
+        return p.rsplit("/", 1)[0] if "/" in p else ""
+
+    # ---- storage ---------------------------------------------------------------------------------
+    r = run("--report", "storage", "--sites", src)
+    st_run, st = r.data.get("runId"), r.data.get("summary", {})
+    check("storage: completes on the awkward content", r.code == 0 and r.data.get("status") == "Completed", r.out[:300])
+    check("storage: a total is its current versions plus its older versions, exactly",
+          st.get("totalBytes", 0) > 0 and st.get("totalBytes") == st.get("currentBytes", 0) + st.get("versionBytes", 0), st)
+    folders = [x for x in rows(st_run, "folders") if x.get("library") == docs]
+    by_path = {x.get("path", ""): x for x in folders}
+    expected_folders = {""} | {"Empty folder"} | {"/".join(p.split("/")[:i]) for p in files for i in range(1, p.count("/") + 1)}
+    check("storage: every folder is there once, the empty one and the one called Forms inside a folder included",
+          set(by_path) == expected_folders and len(folders) == len(expected_folders), sorted(set(by_path) ^ expected_folders))
+    check("storage: the library counts every file, and the files at its top apart",
+          by_path.get("", {}).get("files") == len(files) and by_path.get("", {}).get("ownFiles") == sum(1 for p in files if "/" not in p), by_path.get(""))
+    check("storage: an empty folder takes nothing; a folder six levels down knows its depth",
+          by_path.get("Empty folder", {}).get("files") == 0 and by_path.get("Empty folder", {}).get("totalBytes") == 0
+          and by_path.get("L1/L2/L3/L4/L5/L6", {}).get("depth") == 6 and by_path.get("L1", {}).get("files") == 2, [by_path.get("Empty folder"), by_path.get("L1")])
+    check("storage: every folder is its own files plus its subfolders",
+          all(f["files"] == f["ownFiles"] + sum(c["files"] for p, c in by_path.items() if p and folder_of(p) == f.get("path", "") and p != f.get("path", ""))
+              for f in folders), [(f.get("path"), f["files"], f["ownFiles"]) for f in folders][:6])
+    listed = {((x.get("folder") or ""), x["fileName"]): x for x in rows(st_run, "files") if x.get("library") == docs}
+    check("storage: every file of the library is listed under its own name, however odd",
+          set(listed) == {(folder_of(p), p.rsplit("/", 1)[-1]) for p in files}, sorted(str(k) for k in set(listed) ^ {(folder_of(p), p.rsplit("/", 1)[-1]) for p in files})[:6])
+    check("storage: a file takes at least its size, and not much more",
+          all(0 <= listed[(folder_of(p), p.rsplit("/", 1)[-1])]["totalBytes"] - f["size"] < 4000 for p, f in files.items() if f["versions"] == 1),
+          [(p, listed.get((folder_of(p), p.rsplit("/", 1)[-1]), {}).get("totalBytes"), f["size"]) for p, f in files.items()][:5])
+    versioned = listed.get(("", "versions.docx"), {})
+    check("storage: a file with three versions has older versions, and current plus older is its total",
+          versioned.get("version") == "3.0" and versioned.get("versionBytes", 0) >= 3000
+          and versioned.get("currentBytes", 0) + versioned.get("versionBytes", 0) == versioned.get("totalBytes"), versioned)
+    check("storage: an empty file is listed and takes next to nothing", 0 <= listed.get(("", "empty.txt"), {}).get("totalBytes", -1) < 2000, listed.get(("", "empty.txt")))
+    types = {x["extension"]: x for x in rows(st_run, "types")}
+    check("storage: extensions are told apart whatever their case, and a file without one is counted as such",
+          types.get("pdf", {}).get("kind") == "PDF" and types.get("jpg", {}).get("kind") == "Images" and "PDF" not in types and "JPG" not in types
+          and types.get("(none)", {}).get("files") == 1 and types.get("(none)", {}).get("kind") == "Other", sorted(types))
+    check("storage: each kind of file is recognised",
+          {e: types.get(e, {}).get("kind") for e in ("docx", "mp4", "msg", "zip", "txt")}
+          == {"docx": "Office documents", "mp4": "Video", "msg": "Email", "zip": "Archives", "txt": "Other"}, {e: t.get("kind") for e, t in types.items()})
+    kinds = [x for x in rows(st_run, "folderKinds") if x.get("library") == docs]
+    check("storage: kinds by folder cover every file of the library once",
+          sum(x["files"] for x in kinds) == len(files)
+          and {x["kind"] for x in kinds if not x.get("path")} == {"Office documents", "Archives", "Images", "Video", "Email", "PDF", "Other"},
+          [(x.get("path"), x["kind"], x["files"]) for x in kinds][:8])
+    limits = {x["library"]: x.get("versionLimits") for x in rows(st_run, "folders", "--where", "depth=0")}
+    check("storage: each library says the limits it works by",
+          limits.get("Corners Limits") == "100 versions, deleted after 30 days" and limits.get("Corners NoVersions") == "No versioning"
+          and limits.get(docs) == "Automatic", limits)
+    special = by_path.get(m["looseSource"], {})
+    odd = listed.get(("", "it's 100% #1 & co (final).txt"), {})
+    check("storage: the address of something with # or % in its name is a working address",
+          special.get("folderUrl") == src + "/CornersDocs/Folder %231 & 50%25" and odd.get("fileUrl") == src + "/CornersDocs/it's 100%25 %231 & co (final).txt",
+          [special.get("folderUrl"), odd.get("fileUrl")])
+    over = (rows(st_run, "overview") or [{}])[0]
+    check("storage: lists are measured, nothing keeps versions forever here, and a subsite says what is left out",
+          over.get("listBytes", 0) > 0 and over.get("librariesKeepingVersionsForever") == 0 and "subsite" in over.get("note", "").lower(), over)
+    r = run("--report", "storage", "--sites", src, "--set", "includeHidden=false")
+    visible = {x["library"] for x in rows(r.data.get("runId"), "folders", "--where", "depth=0")}
+    check("storage: without hidden libraries the hidden one is gone and the rest stay",
+          "Corners Hidden" not in visible and {docs, "Corners Empty", "Corners Drafts"} <= visible
+          and "Corners Hidden" in limits and r.data.get("summary", {}).get("files", 0) < st.get("files", 0), sorted(visible))
+    r = run("--report", "storage", "--sites", src, "--set", "largestFiles=0")
+    check("storage: with no files listed one by one the totals are the same",
+          r.code == 0 and "files" not in r.data.get("tables", {}) and r.data.get("summary", {}).get("totalBytes") == st.get("totalBytes"), r.out[:300])
+
+    # ---- documents -------------------------------------------------------------------------------
+    r = run("--report", "documents", "--sites", src)
+    doc_run = r.data.get("runId")
+    documents = rows(doc_run, "documents")
+    in_docs = {((x.get("folder") or ""), x["fileName"]): x for x in documents if x.get("library") == docs}
+    check("documents: a row per file with its exact size",
+          {k: v.get("sizeBytes") for k, v in in_docs.items()} == {(folder_of(p), p.rsplit("/", 1)[-1]): f["size"] for p, f in files.items()},
+          [(k, v.get("sizeBytes")) for k, v in in_docs.items()][:5])
+    check("documents: the extension is lower case, and missing when the file has none",
+          in_docs[("", "UPPER.PDF")].get("extension") == "pdf" and in_docs[("", "photo.JPG")].get("extension") == "jpg"
+          and not in_docs[("", "noextension")].get("extension"), in_docs[("", "noextension")])
+    by_name = {x["fileName"]: x for x in documents}
+    check("documents: versions as SharePoint numbers them, drafts included",
+          by_name.get("versions.docx", {}).get("version") == "3.0" and by_name.get("draft.txt", {}).get("version") == "0.2"
+          and by_name.get("published.txt", {}).get("version") == "1.1", [by_name.get(n, {}).get("version") for n in ("versions.docx", "draft.txt", "published.txt")])
+    check("documents: the hidden library is left out, the empty one adds nothing",
+          "hidden.txt" not in by_name and not any(x.get("library") == "Corners Empty" for x in documents), sorted(by_name)[:5])
+    check("documents and storage agree on the number of files, and storage takes at least what the files weigh",
+          r.data.get("summary", {}).get("files") == run("--report", "storage", "--sites", src, "--set", "includeHidden=false").data.get("summary", {}).get("files")
+          and st.get("currentBytes", 0) >= r.data.get("summary", {}).get("sizeBytes", 0) > 0, r.data.get("summary"))
+    r = run("--report", "documents", "--sites", src, "--set", "extensions=PDF;txt")
+    picked = rows(r.data.get("runId"), "documents")
+    check("documents: extensions are matched whatever their case", {x.get("extension") for x in picked} == {"pdf", "txt"}
+          and any(x["fileName"] == "UPPER.PDF" for x in picked), sorted({x.get("extension") or "" for x in picked}))
+    r = run("--report", "documents", "--sites", src, "--set", "folderLevels=true")
+    leveled = {x["fileName"]: x for x in rows(r.data.get("runId"), "documents")}
+    deep, inside = leveled.get("deep.txt", {}), leveled.get("in special.txt", {})
+    check("documents: folder levels are addresses, one per level, escaped like every other address",
+          deep.get("level1") == src + "/CornersDocs" and deep.get("level2") == src + "/CornersDocs/L1" and deep.get("level4") == src + "/CornersDocs/L1/L2/L3"
+          and inside.get("level2") == src + "/CornersDocs/Folder %231 & 50%25", [deep.get("level2"), inside.get("level2")])
+
+    # ---- reading rows with awkward values ---------------------------------------------------------
+    def where(text, *more):
+        return [x["fileName"] for x in rows(doc_run, "documents", "--where", text, *more)]
+    check("rows --where: a value with a comma in it", where("fileName=a,b;c=d.txt") == ["a,b;c=d.txt"], where("fileName=a,b;c=d.txt"))
+    check("rows --where: a value with a comma, and a second filter after it",
+          where("fileName=a,b;c=d.txt,library=" + docs) == ["a,b;c=d.txt"] and where("fileName=a,b;c=d.txt,library=Corners Drafts") == [], where("fileName=a,b;c=d.txt,library=" + docs))
+    check("rows --where: values that start like a formula, have quotes, percent signs or other alphabets",
+          where("fileName==cmd.txt") == ["=cmd.txt"] and where("fileName=it's 100% #1 & co (final).txt") == ["it's 100% #1 & co (final).txt"]
+          and where("fileName~文件") == ["ünïcødé 文件.txt"] and where("fileName~ÜNÏ") == ["ünïcødé 文件.txt"], where("fileName~文件"))
+    check("rows --where: a number, and text in any case", where("sizeBytes=0") == ["empty.txt"] and where("extension=PDF") == ["UPPER.PDF"], where("sizeBytes=0"))
+    r = cpm("report", "rows", doc_run, "--table", "documents", "--where", "nope=1,fileName=x")
+    check("rows --where: a first filter on a column that is not there is still refused", r.code == 2 and "no column 'nope'" in r.out, r.out[:200])
+    longest = max(names, key=len)
+    check("rows: a file name of 150 characters comes back whole", where("fileName~" + longest[:40]) == [longest], len(longest))
+
+    # ---- export ----------------------------------------------------------------------------------
+    out = os.path.join(work, "corners")
+    os.makedirs(out, exist_ok=True)
+    r = cpm("report", "export", doc_run, "--format", "csv", "--out", os.path.join(out, "docs"))
+    exported = [f for f in r.data.get("files", []) if "documents" in os.path.basename(f)]
+    import csv as csv_module
+    parsed = list(csv_module.DictReader(open(exported[0], encoding="utf-8-sig", newline=""))) if exported else []
+    csv_names = [x.get("File name", "") for x in parsed]
+    check("export csv: as many lines as rows, with commas and other alphabets intact",
+          len(parsed) == len(documents) and "a,b;c=d.txt" in csv_names and "ünïcødé 文件.txt" in csv_names, [len(parsed), len(documents)])
+    check("export csv: a name that a spreadsheet would run as a formula is written as text",
+          all("'" + n in csv_names and n not in csv_names for n in ("=cmd.txt", "+plus.txt", "-minus.txt", "@at.txt")), [n for n in csv_names if n[:1] in "'=+-@"])
+    r = cpm("report", "export", doc_run, "--format", "xlsx", "--out", os.path.join(out, "docs.xlsx"))
+    book = (r.data.get("files") or [""])[0]
+    sheets = ""
+    if book and os.path.exists(book):
+        import zipfile
+        with zipfile.ZipFile(book) as z:
+            sheets = "".join(z.read(n).decode("utf-8") for n in z.namelist() if n.endswith(".xml"))
+    check("export xlsx: odd names are in the workbook as text, never as a formula",
+          "=cmd.txt" in sheets and "ünïcødé 文件.txt" in sheets and "<f>" not in sheets and "it&apos;s 100% #1 &amp; co (final).txt" in sheets.replace("'", "&apos;"),
+          [book, len(sheets)])
+
+    # ---- file versions ---------------------------------------------------------------------------
+    r = run("--report", "file-versions", "--sites", src)
+    fv = {x["fileName"]: x for x in rows(r.data.get("runId"), "files")}
+    check("file-versions: versions and what the older ones weigh, to the byte",
+          (fv.get("versions.docx", {}).get("versionCount"), fv.get("versions.docx", {}).get("currentVersionBytes"), fv.get("versions.docx", {}).get("olderVersionsBytes")) == (3, 3000, 3000)
+          and (fv.get("draft.txt", {}).get("versionCount"), fv.get("draft.txt", {}).get("olderVersionsBytes")) == (2, 110)
+          and (fv.get("published.txt", {}).get("versionCount"), fv.get("published.txt", {}).get("olderVersionsBytes")) == (2, 130),
+          [fv.get(n) for n in ("versions.docx", "draft.txt", "published.txt")])
+    check("file-versions: a file with one version has no older ones, also where versioning is off and for an empty file",
+          all(fv.get(n, {}).get("versionCount") == 1 and not fv.get(n, {}).get("olderVersionsBytes") for n in ("plain.txt", "a.txt", "empty.txt")),
+          [fv.get(n) for n in ("plain.txt", "a.txt", "empty.txt")])
+    check("file-versions: the totals are the sum of the files",
+          r.data.get("summary", {}).get("versions") == sum(x.get("versionCount", 0) for x in fv.values())
+          and r.data.get("summary", {}).get("olderVersionsBytes") == sum(x.get("olderVersionsBytes", 0) for x in fv.values()), r.data.get("summary"))
+    r = run("--report", "file-versions", "--sites", src, "--set", "versionRows=true,onlyWithHistory=true")
+    per_version = [x for x in rows(r.data.get("runId"), "versions") if x["fileName"] == "versions.docx"]
+    check("file-versions: a row per version, each with its own size, one of them the current one",
+          {(x["versionLabel"], x["sizeBytes"]) for x in per_version} == {("1.0", 1000), ("2.0", 2000), ("3.0", 3000)}
+          and [x["versionLabel"] for x in per_version if x.get("currentVersion")] == ["3.0"], per_version)
+    check("file-versions: onlyWithHistory keeps the three files that have a history",
+          {x["fileName"] for x in rows(r.data.get("runId"), "files")} == {"versions.docx", "draft.txt", "published.txt"}, r.data.get("tables"))
+
+    # ---- version limits ---------------------------------------------------------------------------
+    r = run("--report", "version-limits", "--sites", src, "--set", "includeHidden=true")
+    libraries = {x["library"]: x for x in rows(r.data.get("runId"), "libraries")}
+    row = (rows(r.data.get("runId"), "limits") or [{}])[0]
+    check("version-limits: limits by count and age, no versioning, and automatic, each in its own words",
+          (libraries.get("Corners Limits", {}).get("versionLimits"), libraries.get("Corners Limits", {}).get("majorVersionLimit"), libraries.get("Corners Limits", {}).get("expireAfterDays"))
+          == ("100 versions, deleted after 30 days", 100, 30)
+          and libraries.get("Corners NoVersions", {}).get("versionLimits") == "No versioning" and "majorVersionLimit" not in libraries.get("Corners NoVersions", {})
+          and libraries.get(docs, {}).get("versionLimits") == "Automatic" and "expireAfterDays" not in libraries.get(docs, {}),
+          [libraries.get(n) for n in ("Corners Limits", "Corners NoVersions")])
+    check("version-limits: a library without versioning is not counted among the versioned ones",
+          row.get("deletedAfterDays") == 1 and row.get("keptForever") == 0
+          and row.get("versionedLibraries") == sum(1 for x in libraries.values() if x["versionLimits"] != "No versioning")
+          and row.get("versionedLibraries") == row.get("automatic", 0) + 1, row)
+    check("version-limits: the hidden library is marked, and an empty library is listed like any other",
+          libraries.get("Corners Hidden", {}).get("hidden") is True and libraries.get("Corners Empty", {}).get("items") == 0, libraries.get("Corners Hidden"))
+    r = run("--report", "version-limits", "--sites", src)
+    check("version-limits: hidden libraries are left out unless asked for",
+          "Corners Hidden" not in {x["library"] for x in rows(r.data.get("runId"), "libraries")}, r.data.get("tables"))
+
+    # ---- lists, columns, the smaller reports -------------------------------------------------------
+    r = run("--report", "lists", "--sites", src)
+    lists = {x["listTitle"]: x for x in rows(r.data.get("runId"), "lists")}
+    check("lists: counts, versioning with drafts, none, and the limits of each",
+          lists.get("Corners List", {}).get("itemCount") == 3 and lists.get("Corners Empty", {}).get("itemCount") == 0
+          and lists.get("Corners Drafts", {}).get("versioning") == "Major and minor" and lists.get("Corners NoVersions", {}).get("versioning") == "None"
+          and (lists.get("Corners Limits", {}).get("majorVersionLimit"), lists.get("Corners Limits", {}).get("expireAfterDays")) == (100, 30)
+          and "Corners Hidden" not in lists, [lists.get(n) for n in ("Corners Drafts", "Corners Limits")])
+    r = run("--report", "lists", "--sites", src, "--set", "includeHidden=true")
+    check("lists: includeHidden brings the hidden library in, marked",
+          {x["listTitle"]: x for x in rows(r.data.get("runId"), "lists")}.get("Corners Hidden", {}).get("hidden") is True, r.data.get("summary"))
+    r = run("--report", "custom-columns", "--sites", src)
+    columns = rows(r.data.get("runId"), "columns")
+    check("custom-columns: the three columns someone added, with their types, and nothing SharePoint made",
+          {(x["listTitle"], x["internalName"], x["fieldType"]) for x in columns}
+          == {("Corners List", "ProjectCode", "Text"), ("Corners List", "Budget", "Number"), ("Corners List", "Stage", "Choice")}
+          and r.data.get("summary", {}).get("listsWithCustomColumns") == 1, [(x.get("listTitle"), x.get("internalName"), x.get("fieldType")) for x in columns])
+    r = run("--report", "customized-lists", "--sites", src)
+    check("customized-lists: no customized forms means no rows, and the lists are still counted",
+          r.code == 0 and not r.data.get("tables") and r.data.get("summary", {}).get("lists", 0) >= 5, r.out[:300])
+    r = run("--report", "customized-lists", "--sites", src, "--set", "customizedOnly=false")
+    check("customized-lists: every list with the kind of form it has, when asked",
+          any(x["listTitle"] == "Corners List" and x.get("formType") for x in rows(r.data.get("runId"), "lists")), r.out[:300])
+    r = run("--report", "publishing", "--sites", src)
+    pub = (rows(r.data.get("runId"), "publishing") or [{}])[0]
+    check("publishing: a site without publishing says so in a row of its own",
+          pub.get("status") == "None" and not pub.get("publishingWeb") and not pub.get("publishingInfrastructure"), pub)
+    r = run("--report", "subsites", "--sites", src)
+    check("subsites: a site without subsites completes with none", r.code == 0 and r.data.get("summary", {}).get("subsites") == 0 and not r.data.get("tables"), r.out[:300])
+    r = run("--report", "guests", "--sites", src)
+    g = r.data.get("summary", {})
+    check("guests: completes, and the two kinds add up to the total", r.code == 0 and g.get("guests") == g.get("directoryGuests", 0) + g.get("oneTimePasscodeGuests", 0), g)
+    r = run("--report", "guests", "--sites", src, "--set", "kind=OneTimePasscode")
+    check("guests: asking for one kind never counts the other", r.code == 0 and r.data.get("summary", {}).get("directoryGuests", 0) == 0, r.data.get("summary"))
+    r = run("--report", "broken-notebooks", "--sites", src)
+    check("broken-notebooks: a notebook folder with nothing in it yet is not called a broken notebook",
+          r.code == 0 and r.data.get("status") == "Completed" and not r.data.get("summary", {}).get("broken"), r.out[:300])
+    r = run("--report", "site-app-catalogs", "--sites", src)
+    check("site-app-catalogs: completes on a subsite", r.code == 0 and r.data.get("status") == "Completed", r.out[:300])
+    r = run("--report", "onedrive-pages", "--sites", src)
+    check("onedrive-pages: finds the home page of the site", r.code == 0 and any(x.get("pageUrl", "").endswith("/SitePages/Home.aspx") for x in rows(r.data.get("runId"), "pages")), r.out[:300])
+    r = run("--report", "onedrive-lists", "--sites", src)
+    check("onedrive-lists: the one list someone made; libraries and SharePoint's own lists are not lists people made",
+          r.code == 0 and [x.get("listTitle") for x in rows(r.data.get("runId"), "lists")] == ["Corners List"], r.out[:300])
+
+    # ---- permissions ------------------------------------------------------------------------------
+    if m.get("uniquePermissions"):
+        r = run("--report", "permissions", "--sites", src)
+        perms = rows(r.data.get("runId"), "permissions")
+        own = {(x["objectType"], x["objectUrl"]) for x in perms if x["objectType"] in ("Folder", "File")}
+        check("permissions: the folder and the file with permissions of their own, and nothing that merely inherits from them",
+              own == {("Folder", src + "/CornersDocs/Private"), ("File", src + "/CornersDocs/shared.txt")}, sorted(own))
+        check("permissions: who has access there, and at which level",
+              all(x.get("principal") and x.get("principalType") == "SharePoint group" and "Read" in (x.get("permissionLevels") or "")
+                  for x in perms if x["objectType"] in ("Folder", "File")), [x for x in perms if x["objectType"] in ("Folder", "File")])
+        r = run("--report", "permissions", "--sites", src, "--set", "includeItems=false")
+        check("permissions: without items only the site and its lists are looked at",
+              not any(x["objectType"] in ("Folder", "File", "Item") for x in rows(r.data.get("runId"), "permissions")), r.data.get("summary"))
+
+    # ---- document compare --------------------------------------------------------------------------
+    def compare(*settings):
+        r = run("--report", "document-compare", "--source", src, "--target", tgt, *(["--set", ",".join(settings)] if settings else []))
+        libs = {x["library"]: x for x in rows(r.data.get("runId"), "libraries")}
+        return r, libs, [x for x in rows(r.data.get("runId"), "differences") if x.get("library") == docs]
+
+    def counts(lib):
+        return {k: lib.get(k, 0) for k in ("sourceFiles", "targetFiles", "found", "sourceOnly", "targetOnly", "sizeIssues", "newerAtSource", "foldersSourceOnly", "foldersTargetOnly")}
+
+    missing = sum(1 for f in files.values() if f["target"] == "Missing")
+    r, libs, diffs = compare()
+    lib = libs.get(docs, {})
+    by_item = {x["path"]: x for x in diffs}
+    check("document-compare: for files, what the source has is what was found plus what is only there; the same for the target",
+          lib.get("sourceFiles") == len(files) == lib.get("found", 0) + lib.get("sourceOnly", 0)
+          and lib.get("targetFiles") == lib.get("found", 0) + lib.get("targetOnly", 0), counts(lib))
+    check("document-compare: every planned difference is counted, folders apart from files",
+          counts(lib) == {"sourceFiles": len(files), "targetFiles": len(files) - missing + 1, "found": len(files) - missing - 1, "sourceOnly": missing + 1, "targetOnly": 2,
+                          "sizeIssues": 2, "newerAtSource": 2, "foldersSourceOnly": 2, "foldersTargetOnly": 1} and lib.get("status") == "Differences", counts(lib))
+    check("document-compare: a file that arrived empty or far smaller is a size issue, with both sizes",
+          (by_item.get("big.bin", {}).get("status"), by_item.get("big.bin", {}).get("sourceSizeBytes"), by_item.get("big.bin", {}).get("targetSizeBytes")) == ("Size issue", 200000, 10000)
+          and (by_item.get("zero.txt", {}).get("status"), by_item.get("zero.txt", {}).get("sourceSizeBytes"), by_item.get("zero.txt", {}).get("targetSizeBytes")) == ("Size issue", 400, 0),
+          [by_item.get("big.bin"), by_item.get("zero.txt")])
+    check("document-compare: a file that is empty on both sides is not a difference", "empty.txt" not in by_item, by_item.get("empty.txt"))
+    check("document-compare: changed at the source after the copy is a note, not a failure",
+          by_item.get("newer.txt", {}).get("status") == "Found" and by_item.get("newer.txt", {}).get("note") == "Newer at the source", by_item.get("newer.txt"))
+    check("document-compare: what is on one side only, files and folders, the empty folder included",
+          by_item.get("only-source.txt", {}).get("status") == "Source only" and by_item.get("only-target.txt", {}).get("status") == "Target only"
+          and (by_item.get("Empty folder", {}).get("status"), by_item.get("Empty folder", {}).get("itemType")) == ("Source only", "Folder")
+          and by_item.get(m["looseSource"] + "/in special.txt", {}).get("status") == "Source only"
+          and by_item.get(m["looseTarget"] + "/in special.txt", {}).get("status") == "Target only", sorted(by_item))
+    check("document-compare: a library missing on the target is one finding; an empty one on both sides matches",
+          all(libs.get(n, {}).get("status") == "Source only" for n in ("Corners Drafts", "Corners Limits", "Corners NoVersions"))
+          and libs.get("Corners Empty", {}).get("status") == "Match", {n: x.get("status") for n, x in libs.items()})
+    check("document-compare: addresses of both sides, escaped where the name needs it",
+          by_item.get(m["looseSource"] + "/in special.txt", {}).get("sourceUrl") == src + "/CornersDocs/Folder %231 & 50%25/in special.txt"
+          and by_item.get("big.bin", {}).get("targetUrl") == tgt + "/CornersDocs/big.bin", by_item.get(m["looseSource"] + "/in special.txt"))
+    r, libs, diffs = compare("looseNames=true")
+    lib = libs.get(docs, {})
+    check("document-compare: with looseNames a name whose special characters became underscores is the same name",
+          counts(lib) == {"sourceFiles": len(files), "targetFiles": len(files) - missing + 1, "found": len(files) - missing, "sourceOnly": missing, "targetOnly": 1,
+                          "sizeIssues": 2, "newerAtSource": 2, "foldersSourceOnly": 1, "foldersTargetOnly": 0}
+          and not any("in special.txt" in x["path"] for x in diffs), counts(lib))
+    r, libs, diffs = compare("includeFolders=false")
+    lib = libs.get(docs, {})
+    check("document-compare: without folders the files are compared just the same",
+          not any(x["itemType"] == "Folder" for x in diffs) and (lib.get("found"), lib.get("sourceOnly"), lib.get("targetOnly")) == (len(files) - missing - 1, missing + 1, 2)
+          and not lib.get("foldersSourceOnly"), counts(lib))
+    r, libs, diffs = compare("includeMatches=true")
+    fine = {x["path"]: x for x in diffs if x["status"] == "Found" and not x.get("note")}
+    check("document-compare: with includeMatches every file that is fine has a row too, the empty file among them",
+          fine.get("empty.txt", {}).get("itemType") == "File" and "plain.txt" in fine and len([x for x in diffs if x["itemType"] == "File"]) == len(files) + 2, len(diffs))
+    r, libs, diffs = compare("exclude=" + docs)
+    check("document-compare: a library that is left out is not compared", docs not in libs and "Corners Empty" in libs, sorted(libs))
+    r = run("--report", "document-compare", "--source", tgt, "--target", src)
+    back = {x["library"]: x for x in rows(r.data.get("runId"), "libraries")}.get(docs, {})
+    check("document-compare the other way round: the sides swap, and a file that grew is not a size issue",
+          (back.get("sourceOnly"), back.get("targetOnly"), back.get("sizeIssues"), back.get("newerAtSource"), back.get("foldersSourceOnly"), back.get("foldersTargetOnly"))
+          == (2, missing + 1, 0, 0, 1, 2), counts(back))
+
+    # ---- list compare ------------------------------------------------------------------------------
+    def list_compare(*settings):
+        r = run("--report", "list-compare", "--source", src, "--target", tgt, *(["--set", ",".join(settings)] if settings else []))
+        return {x["listTitle"]: x for x in rows(r.data.get("runId"), "lists")}
+    lc = list_compare()
+    the_list = lc.get("Corners List", {})
+    check("list-compare: both counts and the difference", (the_list.get("sourceCount"), the_list.get("targetCount"), the_list.get("difference"), the_list.get("status")) == (3, 5, 2, "Mismatch"), the_list)
+    check("list-compare: lists only on the source are named; an empty library on both sides matches",
+          all(lc.get(n, {}).get("status") == "Source only" for n in ("Corners Drafts", "Corners Limits", "Corners NoVersions"))
+          and lc.get("Corners Empty", {}).get("status") == "Match", {n: x.get("status") for n, x in lc.items()})
+    check("list-compare: a tolerance in items, and one in percent, applied to the larger count or not at all",
+          list_compare("toleranceItems=2").get("Corners List", {}).get("status") == "Match"
+          and list_compare("toleranceItems=1").get("Corners List", {}).get("status") == "Mismatch"
+          and list_compare("tolerancePercent=10").get("Corners List", {}).get("status") == "Mismatch"
+          and list_compare("tolerancePercent=90").get("Corners List", {}).get("status") == "Match", the_list)
+    check("list-compare: a list that is left out has no row", "Corners List" not in list_compare("exclude=Corners List"))
+
+    # ---- the other compares, and one site that fails among good ones ---------------------------------
+    r = run("--report", "permissions-compare", "--source", src, "--target", tgt)
+    check("permissions-compare: completes between two sites that inherit from the same parent", r.code == 0 and r.data.get("status") == "Completed", r.out[:300])
+    r = run("--report", "navigation-compare", "--source", src, "--target", tgt)
+    check("navigation-compare: completes between two sites", r.code == 0 and r.data.get("status") == "Completed", r.out[:300])
+    # ---- how sites are given, and a site in another language ------------------------------------------
+    host, rest = src.split("/sites/", 1)
+    r = run("--report", "lists", "--sites", ",".join([src, src + "/", host.upper() + "/sites/" + rest.upper()]))
+    check("the same site written three ways (as is, with a slash at the end, in capitals) is scanned once",
+          r.code == 0 and r.data.get("sitesTotal") == 1 and r.data.get("summary", {}).get("lists") == len(lists), [r.data.get("sitesTotal"), r.data.get("summary")])
+    french = SOURCE_SITE + "/migtestfr"
+    if cpm("site", "lists", "--site", french).ok:
+        r = run("--report", "storage", "--sites", french)
+        fr_limits = run("--report", "version-limits", "--sites", french)
+        check("a site in another language: storage and version limits complete, libraries under their own names",
+              r.code == 0 and r.data.get("summary", {}).get("libraries", 0) > 0 and fr_limits.code == 0
+              and all(x.get("versionLimits") for x in rows(fr_limits.data.get("runId"), "libraries")), [r.out[:200], fr_limits.out[:200]])
+
+    r = run("--report", "site-access", "--sites", src + "," + src + "-gone")
+    access = {x["site"]: x.get("status") for x in rows(r.data.get("runId"), "access")}
+    check("site-access: a site that is there and one that is not, each with its answer",
+          r.code == 0 and access == {src: "accessible", src + "-gone": "notFound"}, access)
+
+
 def main():
     global GROUP
     args = sys.argv[1:]
@@ -1736,7 +2108,7 @@ def main():
         i = args.index("--cpm")
         exe = os.path.abspath(args[i + 1])
         del args[i:i + 2]
-    groups = args or ["cli", "agent", "conn", "site", "job", "life", "report"]
+    groups = args or ["cli", "agent", "conn", "site", "job", "life", "report", "corners"]
     if not os.path.exists(exe):
         sys.exit(f"cpm not found at {exe}. Build it: dotnet build src/CleverPoint.Migrator.Cli")
 
@@ -1770,7 +2142,8 @@ def main():
             print("\n=== report (offline) ===")
             test_report_offline(cpm, work)
 
-        if any(g in groups for g in ("site", "job", "life")) or report_online:
+        corners_online = "corners" in groups and bool(creds)
+        if any(g in groups for g in ("site", "job", "life")) or report_online or corners_online:
             GROUP = "setup"
             for key, site in (("source", SOURCE_SITE), ("target", LAB_SITE)):
                 c = creds[key]
@@ -1794,6 +2167,10 @@ def main():
                 GROUP = "report"
                 print("\n=== report ===")
                 test_report(cpm, work)
+            if corners_online:
+                GROUP = "corners"
+                print("\n=== corners ===")
+                test_corners(cpm, work)
 
         GROUP = "all"
         everything = "\n".join(captured)

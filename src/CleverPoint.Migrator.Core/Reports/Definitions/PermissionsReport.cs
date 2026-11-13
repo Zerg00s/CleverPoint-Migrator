@@ -83,7 +83,7 @@ public sealed class PermissionsReport : ReportDefinition
                 var root = list.Child("RootFolder").Str("ServerRelativeUrl");
                 if (list.Bool("HasUniqueRoleAssignments"))
                 {
-                    var securable = new Securable(isLibrary ? "Library" : "List", list.Str("Title"), authority + root);
+                    var securable = new Securable(isLibrary ? "Library" : "List", list.Str("Title"), authority + Links.Escape(root));
                     await WriteAssignmentsAsync(context, web, securable,
                         await rest.GetAllAsync($"{web}/_api/web/lists(guid'{listId}')/roleassignments?{Expand}", context.Cancel), groups);
                     context.Count("uniqueObjects");
@@ -106,7 +106,7 @@ public sealed class PermissionsReport : ReportDefinition
                         var item = slice[n];
                         // A list item's "file name" is only its ID with a suffix; say what it is instead.
                         var name = item.IsFolder || isLibrary ? item.FileRef[(item.FileRef.LastIndexOf('/') + 1)..] : $"Item {item.Id}";
-                        var securable = new Securable(item.IsFolder ? "Folder" : isLibrary ? "File" : "Item", name, authority + item.FileRef);
+                        var securable = new Securable(item.IsFolder ? "Folder" : isLibrary ? "File" : "Item", name, authority + Links.Escape(item.FileRef));
                         List<JsonElement> assignments;
                         if (n < answers.Count && answers[n].Status == 200)
                         {

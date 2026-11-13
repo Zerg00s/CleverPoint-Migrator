@@ -35,7 +35,7 @@ public sealed class StorageReport : ReportDefinition
             Text("webUrl"), Text("library"), Text("path"), Text("kind"), Number("files"), Number("totalBytes"), Number("currentBytes"), Number("versionBytes"),
             Text("folderUrl")) with { SortBy = "totalBytes" },
         // Lists are not scanned item by item: SharePoint says what each one takes, attachments included, in one call per site.
-        Table("lists", "Lists and attachments",
+        Table("lists", "Lists",
             Text("webUrl"), Text("list"), Number("items"), Number("attachments"), Number("totalBytes"), IfAny(Flag("hidden")), Text("listUrl")) with { SortBy = "totalBytes" },
         Table("overview", "Overview",
             Number("usedBytes"), Number("libraryBytes"), Number("currentBytes"), Number("versionBytes"), Number("recycleBinBytes"), Number("recycleBinItems"),
@@ -99,7 +99,10 @@ public sealed class StorageReport : ReportDefinition
                         if (!folders.TryGetValue(folder, out var sum)) folders[folder] = sum = new Sum();
                         var total = entry.StorageBytes;
                         var versions = entry.VersionBytes;
-                        var current = entry.StreamSize > 0 ? entry.StreamSize : entry.Size;
+                        // What the file takes without its older versions. That is a little more than the
+                        // file's own size, because SharePoint counts what it keeps about a file with it; this
+                        // way a total is always its current versions plus its older ones.
+                        var current = total - versions;
                         sum.OwnFiles++;
                         sum.OwnTotal += total;
                         sum.OwnCurrent += current;
@@ -174,7 +177,7 @@ public sealed class StorageReport : ReportDefinition
                         ["ownFiles"] = sum.OwnFiles,
                         ["ownBytes"] = sum.OwnTotal,
                         ["versionLimits"] = path.Length == 0 ? limits.GetValueOrDefault(library.Id) : null,
-                        ["folderUrl"] = authority + root + (path.Length > 0 ? "/" + path : ""),
+                        ["folderUrl"] = authority + Links.Escape(root + (path.Length > 0 ? "/" + path : "")),
                     });
 
                 foreach (var (path, sum) in folders.OrderBy(f => f.Key, StringComparer.OrdinalIgnoreCase))
@@ -193,7 +196,7 @@ public sealed class StorageReport : ReportDefinition
                             ["totalBytes"] = sum.Kinds[kind * 4 + 1],
                             ["currentBytes"] = sum.Kinds[kind * 4 + 2],
                             ["versionBytes"] = sum.Kinds[kind * 4 + 3],
-                            ["folderUrl"] = authority + root + (path.Length > 0 ? "/" + path : ""),
+                            ["folderUrl"] = authority + Links.Escape(root + (path.Length > 0 ? "/" + path : "")),
                         });
                     }
                 }
@@ -241,13 +244,13 @@ public sealed class StorageReport : ReportDefinition
                 ["fileName"] = big.File.Name,
                 ["extension"] = big.File.Extension,
                 ["totalBytes"] = big.File.StorageBytes,
-                ["currentBytes"] = big.File.StreamSize > 0 ? big.File.StreamSize : big.File.Size,
+                ["currentBytes"] = big.File.StorageBytes - big.File.VersionBytes,
                 ["versionBytes"] = big.File.VersionBytes,
                 ["version"] = big.File.Version,
                 ["modified"] = big.File.Modified,
                 ["modifiedBy"] = big.File.ModifiedBy,
                 ["archiveStatus"] = DocumentsReport.ArchiveState(big.File.ArchiveStatus),
-                ["fileUrl"] = authority + big.File.Path,
+                ["fileUrl"] = authority + Links.Escape(big.File.Path),
             });
     }
 
@@ -376,7 +379,7 @@ public sealed class StorageReport : ReportDefinition
                     ["attachments"] = attachments,
                     ["totalBytes"] = bytes,
                     ["hidden"] = list.Bool("Hidden") ? true : null,
-                    ["listUrl"] = authority + list.Child("RootFolder").Str("ServerRelativeUrl"),
+                    ["listUrl"] = authority + Links.Escape(list.Child("RootFolder").Str("ServerRelativeUrl")),
                 });
             }
             return total;

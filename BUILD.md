@@ -145,7 +145,13 @@ src/CleverPoint.Migrator.Cli/bin/Debug/net8.0/cpm agent guide
   means "tenant default") and library (`VersionPolicies` on the list). Changing them and queuing
   trim jobs goes through the admin site with tenant CSOM (`Definitions/VersionReports.cs`), because
   SharePoint refuses the site-level job calls for an app-only connection. `dotnet run -- version-probe`
-  shows the raw answers.
+  shows the raw answers. `CP_REPORT_DIR=<run folder> dotnet run -- version-check` compares a finished
+  version-limits run with SharePoint site by site, without the report's code (237 sites, no
+  differences, on 2026-11-13). `CP_FILE=<file address> dotnet run -- file-sizes` shows one file's size
+  every way SharePoint gives it. A limit of 0 on a library means no limit on the count: Site Pages
+  libraries are made that way. The storage report's version figures are SharePoint's quota fields
+  (`SMTotalSize`), which include metadata; file-versions adds up the version list. They differ by a
+  few KB a version, and for a few files by much more, for reasons the API does not show.
 - `Reports/FileKinds.cs` sorts extensions into nine kinds of file. The list is short on purpose:
   each kind has a color on the map (`--k0` to `--k8` in `app.css`, in the order of `FileKinds.All`),
   and more colors than that cannot be told apart. The storage report's `folderKinds` table is what
@@ -154,6 +160,8 @@ src/CleverPoint.Migrator.Cli/bin/Debug/net8.0/cpm agent guide
 - `FileWalker` reads a whole library a page at a time (threshold-safe), `RestBatch` sends up to 50
   GETs in one `$batch` request, `Operations/UniquePermissionScanner` finds items with their own
   permissions (the permissions-only copy uses it too).
+- An address written into a report row goes through `Links.Escape` (`Reports/Links.cs`). SharePoint
+  hands paths out as people read them, and a `#` or `%` in a name breaks a link built from one as is.
 - An action is a `ReportDefinition` with `ChangesData`. It must do nothing but read unless
   `context.Apply` is true, and write the same table in both cases ("Would ..." versus what it did).
   `cpm report apply <previewRunId>` and the Apply button start the real run from a finished preview.
@@ -168,7 +176,7 @@ connections and history are never touched. Python 3 only, no packages.
 
 ```bash
 dotnet build src/CleverPoint.Migrator.Cli
-python3 tools/cli-tests/cli_tests.py                # everything (about 20 minutes)
+python3 tools/cli-tests/cli_tests.py                # everything (about 25 minutes)
 python3 tools/cli-tests/cli_tests.py cli agent      # no network, under a minute
 python3 tools/cli-tests/cli_tests.py --cpm C:\path\to\cpm.exe conn site
 ```
@@ -182,6 +190,13 @@ python3 tools/cli-tests/cli_tests.py --cpm C:\path\to\cpm.exe conn site
 | `job` | real jobs: every mode, selections, identity mapping, both engines, another tenant | the `Secrets` folder |
 | `life` | timeouts, cancel, a killed background process, concurrent readers and writers | the `Secrets` folder |
 | `report` | the report catalog and file format; then every report on the sandbox, all sites of the tenant in one run, failing sites, cancel, a killed process, resume, export | nothing for the first half, the `Secrets` folder for the rest |
+| `corners` | every report against content made to be awkward: names with `#`, `%`, `&` and an apostrophe, an empty file, deep folders, drafts, every kind of version limit, a site in French, and a second site that differs from the first in known ways | the `Secrets` folder and the content below |
+
+The `corners` group checks exact numbers against content that `dotnet run -- report-corners` builds
+once in the TestRunner folder: two subsites of the sandbox test site, described in
+`tools/cli-tests/corners.json`. The tenant's retention policy does not let a site be deleted, so a
+change to that content means raising `Version` in `Scenarios/ReportCorners.cs`, which builds new
+subsites.
 
 Run one suite at a time. The engine scenarios, `job` and `life` create and delete lists in the test
 subsite; a report that scans the site at that moment sees them come and go and its exact-count
@@ -211,6 +226,30 @@ dotnet run -- auth-delegated    # sign in, REST + CSOM, silent renewal from the 
 dotnet run -- app-unattended    # the app-only app with a certificate
 set CP_AUTH=delegated           # then any scenario runs as the signed-in user
 ```
+
+## Working on the UI
+
+A second copy of the app runs beside the first when `CPM_HOME` points it at another data folder: it
+keeps its browser profile there and names the folder in its window caption. Build it somewhere else
+(`dotnet build src\CleverPoint.Migrator.Ux -r win-x64 -o %TEMP%\cpm-uxalt`) and the app that is in
+use never has to close. One caution when that folder gets a copy of `history.db`: a report run
+records the full path of its rows, so the copy shows, and its Delete button deletes, the original's
+report files.
+
+On Windows the page of a running copy can be read from outside. Start it with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` set, and
+`http://127.0.0.1:9333/json` lists the page with a WebSocket address that takes DevTools commands
+such as `Runtime.evaluate`. That is how a layout gets measured instead of judged by eye: which cells
+are cut off, what scrolls sideways, what a column needs against what it has.
+
+Tables are `FluentDataGrid` inside a `cp-grid` element, and `wwwroot/cp-grid.js` owns their column
+widths. It turns the template a grid was rendered with into pixels, which is what makes dragging a
+column smooth, and measures again when the grid's width changes. A column that holds short values of
+unknown width (a date, a count, a status) is written `minmax(160px, max-content)`: as wide as its
+longest value, never narrower than usual, measured again when the rows change. The column that names
+the row takes the rest (`minmax(160px, 1fr)`). Tables that load rows as they scroll (`Virtualize`)
+keep to pixels and `fr`, because their rows change with every scroll. Check a table at the window's
+opening size, 1320 by 880.
 
 ## Seeding mock run history (for UI testing)
 

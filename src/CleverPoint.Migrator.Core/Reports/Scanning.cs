@@ -145,6 +145,6 @@ public static class ListTypes
     {
         if (serverRelativeUrl.Length == 0) return "";
         var authority = new Uri(webUrl).GetLeftPart(UriPartial.Authority);
-        return authority + serverRelativeUrl;
+        return authority + Links.Escape(serverRelativeUrl);
     }
 }

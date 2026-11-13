@@ -66,17 +66,17 @@ public sealed class DocumentsReport : ReportDefinition
                         ["versions"] = entry.MajorVersions,
                         ["archiveStatus"] = ArchiveState(entry.ArchiveStatus),
                         ["archiveChanged"] = entry.ArchiveChanged,
-                        ["fileUrl"] = authority + entry.Path,
+                        ["fileUrl"] = authority + Links.Escape(entry.Path),
                     };
                     if (levels)
                     {
                         // The library first, then each folder below it, each as the full address down to that level.
-                        var path = authority + library.RootFolder;
+                        var path = authority + Links.Escape(library.RootFolder);
                         row["level1"] = path;
                         var parts = folder.Split('/', StringSplitOptions.RemoveEmptyEntries);
                         for (var i = 0; i < parts.Length && i < Levels - 1; i++)
                         {
-                            path += "/" + parts[i];
+                            path += "/" + Links.Escape(parts[i]);
                             row[$"level{i + 2}"] = path;
                         }
                     }
@@ -240,20 +240,20 @@ public sealed class FileVersionsReport : ReportDefinition
                 ["modified"] = file.Modified,
                 ["modifiedBy"] = file.ModifiedBy,
                 ["archiveStatus"] = DocumentsReport.ArchiveState(file.ArchiveStatus),
-                ["fileUrl"] = authority + file.Path,
+                ["fileUrl"] = authority + Links.Escape(file.Path),
                 ["note"] = history.Note,
             });
             if (!versionRows) continue;
             context.Write("versions", new Dictionary<string, object?>
             {
                 ["webUrl"] = web, ["library"] = library, ["folder"] = folder, ["fileName"] = file.Name, ["versionLabel"] = file.Version,
-                ["currentVersion"] = true, ["sizeBytes"] = file.Size, ["modified"] = file.Modified, ["fileUrl"] = authority + file.Path,
+                ["currentVersion"] = true, ["sizeBytes"] = file.Size, ["modified"] = file.Modified, ["fileUrl"] = authority + Links.Escape(file.Path),
             });
             foreach (var version in history.Versions ?? new())
                 context.Write("versions", new Dictionary<string, object?>
                 {
                     ["webUrl"] = web, ["library"] = library, ["folder"] = folder, ["fileName"] = file.Name, ["versionLabel"] = version.Str("VersionLabel"),
-                    ["sizeBytes"] = version.Num("Size"), ["modified"] = version.When("Created"), ["fileUrl"] = authority + file.Path,
+                    ["sizeBytes"] = version.Num("Size"), ["modified"] = version.When("Created"), ["fileUrl"] = authority + Links.Escape(file.Path),
                 });
         }
     }

@@ -41,17 +41,20 @@
         <div class="cp-grid cp-scroll runs-grid" style="@($"max-height: calc(100vh - {(ShowPageSize ? 320 : 360)}px); min-height:200px;")">
             <FluentDataGrid Items="@_view.AsQueryable()" Pagination="@_pagination" ResizableColumns="true"
                             GenerateHeader="GenerateHeaderOption.Sticky"
-                            GridTemplateColumns="70px 2fr 1.2fr 1.1fr 1.1fr 0.7fr 1.9fr" ShowHover="true" Style="width:100%;"
+                            GridTemplateColumns="minmax(68px, max-content) minmax(160px, 1fr) minmax(136px, max-content) minmax(160px, max-content) minmax(108px, max-content) minmax(230px, max-content)" ShowHover="true" Style="width:100%;"
                             OnRowClick="@(async (FluentDataGridRow<Core.History.MigrationRun> r) => { await Task.CompletedTask; if (r.Item is not null) Nav.NavigateTo($"/run/{r.Item.Id}"); })">
+                @* Every column but the name is as wide as its longest value (cp-grid.js measures them), with a usual
+                   width to start from so that the table does not shift from page to page. The name takes the rest.
+                   At the window's opening size nothing is cut off and nothing scrolls sideways. When a run ended
+                   is the tooltip of how long it took. *@
                 <PropertyColumn Property="@(r => r.Id)" Title="#" Sortable="true" />
-                <PropertyColumn Property="@(r => r.Name)" Title="Name" Sortable="true" />
+                <PropertyColumn Property="@(r => r.Name)" Title="Name" Sortable="true" Tooltip="true" />
                 <TemplateColumn Title="Status" Sortable="false">
-                    <span class="status-pill @StatusClass(context)">@Pretty(context.Status)</span>
+                    <span class="status-pill @StatusClass(context)" title="@Pretty(context.Status)">@Friendly.StatusShort(context.Status)</span>
                 </TemplateColumn>
-                <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" Sortable="true" />
-                <PropertyColumn Property="@(r => r.FinishedUtc.HasValue ? r.FinishedUtc.Value.ToLocalTime().ToString("g") : "")" Title="Finished" />
+                <PropertyColumn Property="@(r => r.StartedUtc.ToLocalTime())" Title="Started" Format="g" Sortable="true" Tooltip="true" />
                 <TemplateColumn Title="Duration">
-                    <span class="duration">@Duration(context)</span>
+                    <span class="duration" title="@Finished(context)">@Duration(context)</span>
                 </TemplateColumn>
                 <TemplateColumn Title="Result">
                     <ResultChips Copied="context.Copied" Skipped="context.Skipped" Warnings="context.Warnings" Failed="context.Failed" />
@@ -114,7 +117,10 @@
         return r.FinishedUtc is { } finished ? Friendly.Duration(finished - r.StartedUtc) : "";
     }
 
-    private static string Pretty(string status) => status == "CompletedWithIssues" ? "Completed with issues" : status;
+    private static string? Finished(Core.History.MigrationRun r) =>
+        r.FinishedUtc is { } finished ? $"Finished {finished.ToLocalTime():g}" : null;
+
+    private static string Pretty(string status) => Friendly.Status(status);
 
     // Pill color follows the status label so the two never disagree.
     private static string StatusClass(Core.History.MigrationRun r) => r.Status switch

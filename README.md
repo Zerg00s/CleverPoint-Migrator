@@ -115,7 +115,7 @@ Reports answer what is in a tenant or a set of sites, before and after a migrati
 | Pages in OneDrives | Site pages that exist in OneDrives |
 | Site app catalogs | Sites with their own app catalog, and the apps in it |
 | List compare | Source site against target site: item counts per list, and lists on one side only |
-| Document compare | Source site against target site, file by file: missing, extra, empty or shrunken, newer at the source, path too long |
+| Document compare | Source site against target site, file by file: missing, extra, empty or shrunken, newer at the source, path too long. Folders on one side only are counted apart from files |
 | Navigation compare | Source site against target site: every link of the quick launch and top navigation |
 | Permissions compare | Source site against target site: who has which level on the site and on lists with unique permissions |
 
@@ -127,7 +127,7 @@ Click a box and the tree opens at that file or folder. Click a line of the tree 
 
 The Storage report also has a **File kinds** tab: the same view by kind, then file type, then the sites that hold files of that type. Tables show sizes in KB, MB and GB, and sort by any column with a click on its heading; exports keep exact bytes.
 
-Version storage costs nothing extra to report: SharePoint returns, with every file, both the size of its current version and its total with all versions.
+Version storage costs nothing extra to report: SharePoint returns, with every file, both the size of its current version and its total with all versions. Those are the figures SharePoint counts against the quota, metadata included. The File versions report adds up the sizes of the versions SharePoint lists for each file instead, so its totals come out a little lower.
 
 Sites can be typed or pasted, loaded from a file, ticked in the tenant's own list of sites, or taken from an earlier Sites report. A site that cannot be opened does not stop the run; it is listed with the reason. A run that was stopped, or had sites fail, can be continued and only scans what is left. Results open in the app and export to Excel or CSV.
 

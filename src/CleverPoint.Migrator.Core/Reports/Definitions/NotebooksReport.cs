@@ -92,7 +92,7 @@ public sealed class BrokenNotebooksReport : ReportDefinition
                         ["library"] = notebook.Library,
                         ["notebook"] = notebook.Name,
                         ["state"] = notebook.Broken ? "Broken" : "Healthy",
-                        ["folderUrl"] = authority + notebook.Path,
+                        ["folderUrl"] = authority + Links.Escape(notebook.Path),
                         ["itemId"] = notebook.ItemId,
                         ["markedAs"] = notebook.HtmlFileType,
                     });

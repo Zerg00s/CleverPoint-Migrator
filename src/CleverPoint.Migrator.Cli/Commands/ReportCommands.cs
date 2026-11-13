@@ -714,14 +714,34 @@ public static class ReportCommands
         var filters = new List<RowFilter>();
         if (args.Get("site") is { } site) filters.Add(new RowFilter("site", "=", JobSpecs.NormalizeSite(site)));
         if (args.Get("where") is { } where)
-            foreach (var part in where.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            // Filters are separated by commas, and a value may have a comma of its own ("Smith, John").
+            // A piece starts a new filter only when it begins with a column of the table; otherwise it
+            // is the rest of the value before it.
+            var open = false;
+            foreach (var piece in where.Split(','))
             {
+                var part = piece.Trim();
                 var at = part.IndexOfAny(new[] { '=', '~' });
-                if (at <= 0) throw CliError.Usage($"--where needs column=value or column~text, got '{part}'.");
-                var column = part[..at].Trim();
-                CheckColumn(column);
-                filters.Add(new RowFilter(column, part[at].ToString(), part[(at + 1)..].Trim()));
+                var column = at > 0 ? part[..at].Trim() : "";
+                var starts = at > 0 && (known is null || column == "*" || known.Contains(column, StringComparer.OrdinalIgnoreCase));
+                if (starts)
+                {
+                    filters.Add(new RowFilter(column, part[at].ToString(), part[(at + 1)..].Trim()));
+                    open = true;
+                }
+                else if (open)
+                {
+                    var last = filters[^1];
+                    filters[^1] = last with { Value = last.Value + "," + piece.TrimEnd() };
+                }
+                else if (part.Length > 0)
+                {
+                    if (at <= 0) throw CliError.Usage($"--where needs column=value or column~text, got '{part}'.");
+                    CheckColumn(column);
+                }
             }
+        }
         var columns = args.Get("columns")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
         if (columns is not null) foreach (var column in columns) CheckColumn(column);
 

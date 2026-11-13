@@ -18,8 +18,11 @@ public sealed record FileEntry(
     public long StorageBytes => TotalSize > 0 ? TotalSize : Size;
     /// <summary>More than the one version every file has.</summary>
     public bool HasHistory => Version.Length > 0 && Version is not ("1.0" or "0.1");
-    /// <summary>What the older versions of a file take. A file with a single version has none.</summary>
-    public long VersionBytes => !IsFolder && HasHistory && TotalSize > StreamSize && StreamSize > 0 ? TotalSize - StreamSize : 0;
+    /// <summary>
+    /// What the older versions of a file take. A file with a single version has none. A file emptied in its
+    /// latest version has a current version of 0 bytes, and everything else it takes is its older versions.
+    /// </summary>
+    public long VersionBytes => !IsFolder && HasHistory && TotalSize > StreamSize && (StreamSize > 0 || Size == 0) ? TotalSize - StreamSize : 0;
     /// <summary>The number of major versions, which is how many versions a library without drafts keeps.</summary>
     public int MajorVersions => int.TryParse(Version.Split('.')[0], out var major) && major > 0 ? major : 1;
     public string Extension => IsFolder ? "" : System.IO.Path.GetExtension(Name).TrimStart('.').ToLowerInvariant();

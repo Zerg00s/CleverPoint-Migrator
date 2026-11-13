@@ -111,7 +111,7 @@ public sealed class OneDrivePagesReport : ReportDefinition
                         ["modified"] = entry.Modified,
                         ["modifiedBy"] = entry.ModifiedBy,
                         ["version"] = entry.Version,
-                        ["pageUrl"] = authority + entry.Path,
+                        ["pageUrl"] = authority + Links.Escape(entry.Path),
                     });
                     pages++;
                 }, context.Cancel);
@@ -203,7 +203,7 @@ public sealed class SiteAppCatalogsReport : ReportDefinition
             ["hasAppCatalog"] = true,
             ["catalog"] = kind,
             ["apps"] = apps.Count,
-            ["catalogUrl"] = authority + catalogs[0].Child("RootFolder").Str("ServerRelativeUrl"),
+            ["catalogUrl"] = authority + Links.Escape(catalogs[0].Child("RootFolder").Str("ServerRelativeUrl")),
         });
         context.Count("sitesWithCatalog");
     }

@@ -13,6 +13,15 @@ public static class Friendly
         return $"{bytes / 1099511627776.0:N2} TB";
     }
 
+    /// <summary>A run's status in full: "Completed with issues".</summary>
+    public static string Status(string status) => status == "CompletedWithIssues" ? "Completed with issues" : status;
+
+    /// <summary>
+    /// A run's status as it fits in a row of a table: "Issues" for a run that completed with issues,
+    /// the word the Activity page uses. The cell's tooltip has it in full.
+    /// </summary>
+    public static string StatusShort(string status) => status == "CompletedWithIssues" ? "Issues" : status;
+
     /// <summary>
     /// A length of time with its units: "13 s", "3 min 58 s", "1 h 19 min", "2 d 4 h". Two units at
     /// most: past an hour the seconds no longer matter.

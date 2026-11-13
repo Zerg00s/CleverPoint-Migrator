@@ -15,12 +15,19 @@
     return;
 }
 
-<div class="page-head report-head">
-    <div>
-        <h1>@_run.Name</h1>
-        <div class="btn-row" style="margin-top:6px;">
+<div class="rr-head">
+    <div class="rr-title">
+        <div class="rr-name">
+            <h1 title="@_run.Name">@_run.Name</h1>
             <span class="status-pill @Reports.StatusClass(_run.Status)">@ReportExport.StatusText(_run.Status)</span>
-            <span class="hint">@(_report?.Title ?? _run.Report) · run @_run.Id@(_run.StartedUtc is { } started ? $" · started {started.ToLocalTime():g}" : "")</span>
+            <span class="rr-meta" title="Run @_run.Id">@MetaLine</span>
+            @if (Totals.Count > 0)
+            {
+                <button type="button" class="rr-more" @onclick="@(() => _allTotals = !_allTotals)">
+                    @(_allTotals ? "Fewer totals" : "All totals")
+                    <svg class="smap-chevron @(_allTotals ? "open" : "")" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 2.5 11 8l-5.5 5.5" /></svg>
+                </button>
+            }
         </div>
     </div>
     <div class="btn-row">
@@ -61,7 +68,6 @@
     </div>
 </div>
 
-<FluentCard Style="padding:10px 16px;">
 <div class="report-summary">
     @if (!_run.IsFinished)
     {
@@ -89,6 +95,14 @@
             </div>
         </div>
     }
+    else if (_applied == true && _run.IsFinished && _run.SitesFailed > 0)
+    {
+        // A site that failed is not a site left alone: SharePoint may have taken part of the change before it refused the rest.
+        <div class="callout warning" style="margin-top:14px; max-width:none;">
+            <FluentIcon Value="@(new Icons.Regular.Size20.Warning())" Color="Color.Custom" CustomColor="var(--cp-warn-text)" />
+            <div><div class="callout-title">This run was changing the sites. A site that failed may be changed in part.</div></div>
+        </div>
+    }
     else if (_applied == true)
     {
         <div class="callout" style="margin-top:14px; max-width:none;">
@@ -97,26 +111,32 @@
         </div>
     }
 
-    <div class="report-stats">
-        @if (!_tenantWide)
+</div>
+
+<div class="rr-figures">
+    @foreach (var figure in Headline)
+    {
+        <span class="rr-figure @figure.Class" title="@figure.Tip"><b>@figure.Value</b> @figure.Label</span>
+    }
+</div>
+@if (_allTotals)
+{
+    <div class="rr-totals">
+        @foreach (var group in Totals)
         {
-            <div class="report-stat"><span class="report-stat-value">@_run.SitesDone.ToString("N0")<span class="report-stat-of"> of @_run.SitesTotal.ToString("N0")</span></span><span class="report-stat-label">Sites scanned</span></div>
-            @if (_run.SitesFailed > 0)
-            {
-                <div class="report-stat"><span class="report-stat-value" style="color:var(--cp-fail-text);">@_run.SitesFailed.ToString("N0")</span><span class="report-stat-label">Sites not scanned</span></div>
-            }
-        }
-        @foreach (var (name, value) in _summary)
-        {
-            var flagged = ForeverLibraries > 0 && name is "librariesKeepingVersionsForever" or "keptForeverVersionBytes";
-            <div class="report-stat @(flagged ? "flag" : "")" title="@(flagged ? ForeverTip : null)"><span class="report-stat-value">@Number(name, value)</span><span class="report-stat-label">@Label(name)</span></div>
+            <div class="rr-total-group">
+                <div class="rr-total-head">@group.Name</div>
+                @foreach (var (label, value, tip) in group.Items)
+                {
+                    <div class="rr-total" title="@tip"><span>@label</span><span class="rr-total-value">@value</span></div>
+                }
+            </div>
         }
     </div>
-</div>
-</FluentCard>
+}
 
 <FluentCard style="margin-top:16px;">
-    <FluentToolbar Style="width:100%;">
+    <div class="report-tabbar">
         <div class="report-tabs">
             @if (_hasMap)
             {
@@ -140,23 +160,24 @@
                 </button>
             }
         </div>
-        <FluentSpacer />
-        @if (_tab == SitesTab)
-        {
-            <MultiFilter Options="_siteStatuses" Selected="_siteStatusFilter" Changed="StateHasChanged" AllLabel="All outcomes" Style="min-width:190px;" />
-        }
         @if (!IsMap(_tab))
         {
-            <FluentSearch @bind-Value="_filter" @bind-Value:after="ApplyFilter" Immediate="true" ImmediateDelay="350" Placeholder="Filter…" />
+            <div class="report-tabbar-tools">
+                @if (_tab == SitesTab)
+                {
+                    <MultiFilter Options="_siteStatuses" Selected="_siteStatusFilter" Changed="StateHasChanged" AllLabel="All outcomes" Style="min-width:190px;" />
+                }
+                <FluentSearch @bind-Value="_filter" @bind-Value:after="ApplyFilter" Immediate="true" ImmediateDelay="350" Placeholder="Filter…" Style="width:240px;" />
+            </div>
         }
-    </FluentToolbar>
+    </div>
 
     @if (IsMap(_tab))
     {
         var shown = _tab == KindsTab ? _kinds : _map;
         @if (shown is not null && shown.Total > 0)
         {
-            <StorageMapView @key="_tab" Root="shown" ByKind="_hasKinds" />
+            <StorageMapView @key="_tab" Root="shown" ByKind="_hasKinds" ShowTotalsAtTop="@(!_hasKinds)" />
         }
         else if (_mapLoading || !_run.IsFinished)
         {
@@ -176,18 +197,20 @@
         var counters = SiteCounters;
         var sizeKey = counters.Contains("totalBytes") ? "totalBytes" : counters.Contains("storageBytes") ? "storageBytes" : null;
         var versions = sizeKey == "totalBytes" && counters.Contains("versionBytes");
-        var widths = new List<int> { 360, 150 };
+        // The site and the reason take what the other columns leave; a count is as wide as its heading needs.
+        var widths = new List<int> { 240, 150 };
         if (sizeKey is not null) widths.Add(190);
-        widths.AddRange(counters.Select(_ => 124));
-        if (versions) widths.Add(124);
+        widths.AddRange(counters.Select(c => Math.Max(108, HeadingWidth(Label(c)))));
+        if (versions) widths.Add(Math.Max(108, HeadingWidth("Older versions")));
         if (_siteLimits.Count > 0) widths.Add(230);
-        widths.AddRange(new[] { 84, 84, 280 });
-        <div class="cp-scroll cp-grid" style="height: calc(100vh - 420px); min-height:240px; margin-top:12px;">
+        widths.AddRange(new[] { 92, 108, 280 });
+        var siteTemplate = string.Join(' ', widths.Select((w, i) => i == 0 || i == widths.Count - 1 ? $"minmax({w}px, {w}fr)" : $"{w}px"));
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 345px); min-height:260px; margin-top:12px;">
             <FluentDataGrid @key="@("sites|" + string.Join(',', counters))" Items="@SitesShown.AsQueryable()" Virtualize="true" ItemSize="32"
-                            GenerateHeader="GenerateHeaderOption.Sticky" ResizableColumns="true" GridTemplateColumns="@string.Join(' ', widths.Select(w => w + "px"))"
+                            GenerateHeader="GenerateHeaderOption.Sticky" ResizableColumns="true" GridTemplateColumns="@siteTemplate"
                             ShowHover="true" Style="@($"min-width:{widths.Sum()}px; width:100%;")">
                 <TemplateColumn Title="Site" Sortable="true" SortBy="@SiteByName">
-                    <span class="cell-fill" title="@context.Key" @oncontextmenu="e => SiteMenu(e, context)" @oncontextmenu:preventDefault="true">@context.Key</span>
+                    <span class="cell-fill" title="@context.Key" @oncontextmenu="e => SiteMenu(e, context)" @oncontextmenu:preventDefault="true">@SiteLabel(context)</span>
                 </TemplateColumn>
                 <TemplateColumn Title="Outcome" Sortable="true" SortBy="@SiteByOutcome"><span class="status-pill @SiteClass(context.Status)">@ReportExport.SiteStatusText(context.Status)</span></TemplateColumn>
                 @if (sizeKey is not null)
@@ -203,14 +226,14 @@
                 @foreach (var counter in counters)
                 {
                     var c = counter;
-                    <TemplateColumn Title="@Label(c)" Sortable="true" SortBy="@SiteBy(c)">
-                        <span title="@(IsBytes(c) ? $"{SiteCount(context, c):N0} bytes" : null)">@(context.Counts is null ? "" : Number(c, SiteCount(context, c)))</span>
+                    <TemplateColumn Title="@Label(c)" Tooltip="true" HeaderTooltip="@Label(c)" Sortable="true" SortBy="@SiteBy(c)" Align="Align.End">
+                        <span class="num-cell" title="@(IsBytes(c) ? $"{SiteCount(context, c):N0} bytes" : null)">@(context.Counts is null ? "" : Number(c, SiteCount(context, c)))</span>
                     </TemplateColumn>
                 }
                 @if (versions)
                 {
-                    <TemplateColumn Title="Older versions" Sortable="true" SortBy="@SiteByVersionShare">
-                        <span>@(SiteCount(context, "totalBytes") > 0 ? (SiteCount(context, "versionBytes") / (double)SiteCount(context, "totalBytes")).ToString("P1") : "")</span>
+                    <TemplateColumn Title="Older versions" Sortable="true" SortBy="@SiteByVersionShare" Align="Align.End">
+                        <span class="num-cell">@(SiteCount(context, "totalBytes") > 0 ? (SiteCount(context, "versionBytes") / (double)SiteCount(context, "totalBytes")).ToString("P1") : "")</span>
                     </TemplateColumn>
                 }
                 @if (_siteLimits.Count > 0)
@@ -219,7 +242,7 @@
                         <span title="What new libraries of the site get. Each library's own limits are in the Folders tab.">@_siteLimits.GetValueOrDefault(context.Site.Length > 0 ? context.Site : context.Key)</span>
                     </TemplateColumn>
                 }
-                <TemplateColumn Title="Rows" Sortable="true" SortBy="@SiteByRows"><span>@context.Rows.ToString("N0")</span></TemplateColumn>
+                <TemplateColumn Title="Rows" Sortable="true" SortBy="@SiteByRows" Align="Align.End"><span class="num-cell">@context.Rows.ToString("N0")</span></TemplateColumn>
                 <TemplateColumn Title="Took" Sortable="true" SortBy="@SiteByTime"><span class="duration">@Friendly.Duration(TimeSpan.FromSeconds(context.Seconds))</span></TemplateColumn>
                 <TemplateColumn Title="Reason"><span title="@context.Error">@context.Error</span></TemplateColumn>
             </FluentDataGrid>
@@ -229,18 +252,21 @@
     {
         @if (_filterNote is not null) { <span class="hint" style="display:block; margin-top:8px;">@_filterNote</span> }
         @if (_sortNote is not null) { <span class="hint" style="display:block; margin-top:8px;">@_sortNote</span> }
-        <div class="cp-scroll cp-grid" style="height: calc(100vh - 420px); min-height:240px; margin-top:12px;">
+        <div class="cp-scroll cp-grid" style="height: calc(100vh - 345px); min-height:260px; margin-top:12px;">
             <FluentDataGrid @key="_gridKey" @ref="_grid" TGridItem="Dictionary<string, JsonElement>" ItemsProvider="_provider" Virtualize="true" ItemSize="32"
                             GenerateHeader="GenerateHeaderOption.Sticky" ResizableColumns="true" GridTemplateColumns="@_gridTemplate"
                             ShowHover="true" Style="@($"min-width:{_gridMinWidth}px; width:100%;")">
+                <EmptyContent><span class="grid-empty">Nothing in this table.</span></EmptyContent>
+                <ChildContent>
                 @foreach (var column in _columns)
                 {
                     var c = column;
-                    <TemplateColumn Title="@Label(c.Name)" Sortable="true" IsDefaultSortColumn="@(c.Name == _defaultSort)"
+                    <TemplateColumn Title="@Label(c.Name)" Tooltip="true" HeaderTooltip="@Label(c.Name)" Sortable="true" IsDefaultSortColumn="@(c.Name == _defaultSort)" Align="@(c.Type == ColumnType.Number ? Align.End : Align.Start)"
                                     InitialSortDirection="@(c.Type == ColumnType.Text ? SortDirection.Ascending : SortDirection.Descending)">
-                        <span class="cell-fill" title="@CellTip(context, c)" @oncontextmenu="e => RowMenu(e, context, c)" @oncontextmenu:preventDefault="true">@Cell(context, c)</span>
+                        <span class="cell-fill @(c.Type == ColumnType.Number ? "num-cell" : "")" title="@CellTip(context, c)" @oncontextmenu="e => RowMenu(e, context, c)" @oncontextmenu:preventDefault="true">@Cell(context, c)</span>
                     </TemplateColumn>
                 }
+                </ChildContent>
             </FluentDataGrid>
         </div>
     }
@@ -361,17 +387,116 @@
     private Dictionary<string, string> _siteLimits = new(StringComparer.OrdinalIgnoreCase);
     private long _limitsRows = -1;
 
-    /// <summary>In a storage run: how many libraries never delete a version for its age. That is worth a button of its own.</summary>
-    private long ForeverLibraries => _run?.Report == "storage" ? _summary.GetValueOrDefault("librariesKeepingVersionsForever") : 0;
+    /// <summary>
+    /// In a storage or a version limits run: how many libraries never delete a version for its age. That is
+    /// worth a button of its own, which takes the sites that have such libraries to the action that sets limits.
+    /// </summary>
+    private long ForeverLibraries => _run?.Report is "storage" or "version-limits" ? _summary.GetValueOrDefault("librariesKeepingVersionsForever") : 0;
+
+    /// <summary>The sites those libraries are in, where the report counts them.</summary>
+    private long ForeverSites => _summary.GetValueOrDefault("sitesWithSuchLibraries");
 
     private string ForeverTip =>
-        $"{ForeverLibraries:N0} {(ForeverLibraries == 1 ? "library keeps" : "libraries keep")} older versions forever, {Friendly.Bytes(_summary.GetValueOrDefault("keptForeverVersionBytes"))} of them. {_limitsNote}";
+        _run?.Report == "storage"
+            ? $"{ForeverLibraries:N0} {(ForeverLibraries == 1 ? "library keeps" : "libraries keep")} older versions forever, {Friendly.Bytes(_summary.GetValueOrDefault("keptForeverVersionBytes"))} of them. {_limitsNote}"
+            : $"{ForeverLibraries:N0} {(ForeverLibraries == 1 ? "library keeps" : "libraries keep")} older versions forever. A site's or the tenant's setting only applies to libraries created after it was set.";
+
+    /// <summary>Totals that say nothing while they are zero. Left out of the strip then, so that it stays one line where it can.</summary>
+    private static readonly HashSet<string> QuietWhenZero = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "preservationHoldBytes", "archivedFiles", "archivedBytes", "librariesKeepingVersionsForever", "keptForeverVersionBytes",
+        "recycleBinBytes", "listBytes", "siteUsedBytes", "foldersSourceOnly", "foldersTargetOnly", "longPaths", "sitesWithATrimJob",
+    };
+
+    // The totals of a run, all of them, are a click away; what shows at once is the handful that matter.
+    private static bool _allTotals;
+
+    private sealed record Figure(string Value, string Label, string Class = "", string? Tip = null);
+    private sealed record TotalGroup(string Name, List<(string Label, string Value, string? Tip)> Items);
+
+    /// <summary>For the reports where the first few totals are not the telling ones: which to show at once.</summary>
+    private static readonly Dictionary<string, string[]> HeadlineOf = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["storage"] = new[] { "files", "siteUsedBytes", "totalBytes", "versionBytes", "recycleBinBytes" },
+        ["documents"] = new[] { "files", "sizeBytes", "libraries" },
+        ["file-versions"] = new[] { "files", "versions", "olderVersionsBytes" },
+        ["version-limits"] = new[] { "libraries" },
+        ["document-compare"] = new[] { "sourceFiles", "found", "sourceOnly", "targetOnly", "sizeIssues" },
+    };
+
+    /// <summary>One line under the name: which report, how many sites, when.</summary>
+    private string MetaLine
+    {
+        get
+        {
+            if (_run is null) return "";
+            var parts = new List<string> { _report?.Title ?? _run.Report };
+            if (!_tenantWide && _run.SitesTotal > 0)
+                parts.Add(_run.IsFinished && _run.SitesFailed == 0 ? (_run.SitesTotal == 1 ? "1 site" : $"{_run.SitesTotal:N0} sites") : $"{_run.SitesDone:N0} of {_run.SitesTotal:N0} sites");
+            if (_run.StartedUtc is { } started) parts.Add(started.ToLocalTime().ToString("g"));
+            return string.Join(" · ", parts);
+        }
+    }
+
+    /// <summary>The few numbers shown at once.</summary>
+    private List<Figure> Headline
+    {
+        get
+        {
+            var figures = new List<Figure>();
+            if (_run is null) return figures;
+            if (!_tenantWide && _run.SitesFailed > 0)
+                figures.Add(new Figure(_run.SitesFailed.ToString("N0"), _run.SitesFailed == 1 ? "site not scanned" : "sites not scanned", "fail", "The Sites tab says which, and why."));
+            var wanted = HeadlineOf.TryGetValue(_run.Report, out var named)
+                ? named.Where(_summary.ContainsKey).ToList()
+                : _summary.Keys.Where(k => !(QuietWhenZero.Contains(k) && _summary[k] == 0)).Take(4).ToList();
+            foreach (var name in wanted)
+            {
+                if (_summary[name] == 0 && QuietWhenZero.Contains(name)) continue;
+                // In a storage run "total" is what the libraries hold; beside what the site uses, saying so avoids two totals.
+                var label = _run.Report == "storage" && name == "totalBytes" ? "in libraries" : Label(name).ToLowerInvariant();
+                figures.Add(new Figure(Number(name, _summary[name]), label));
+            }
+            if (ForeverLibraries > 0)
+                figures.Add(new Figure(ForeverLibraries.ToString("N0"), (ForeverLibraries == 1 ? "library keeps versions forever" : "libraries keep versions forever")
+                    + (ForeverSites > 0 ? $", on {ForeverSites:N0} {(ForeverSites == 1 ? "site" : "sites")}" : ""), "flag", ForeverTip));
+            return figures;
+        }
+    }
+
+    /// <summary>Every total of the run, sorted into what it counts: sizes, versions, everything else.</summary>
+    private List<TotalGroup> Totals
+    {
+        get
+        {
+            var counts = new TotalGroup("Counted", new());
+            var sizes = new TotalGroup("Size", new());
+            var versions = new TotalGroup("Versions", new());
+            if (_run is not null && !_tenantWide)
+            {
+                counts.Items.Add(("Sites scanned", $"{_run.SitesDone:N0} of {_run.SitesTotal:N0}", null));
+                if (_run.SitesFailed > 0) counts.Items.Add(("Sites not scanned", _run.SitesFailed.ToString("N0"), null));
+            }
+            foreach (var (name, value) in _summary)
+            {
+                var group = name.Contains("version", StringComparison.OrdinalIgnoreCase) || name.Contains("Forever", StringComparison.OrdinalIgnoreCase) ? versions
+                    : IsBytes(name) ? sizes
+                    : counts;
+                group.Items.Add((Label(name), Number(name, value), IsBytes(name) ? $"{value:N0} bytes" : null));
+            }
+            return new[] { counts, sizes, versions }.Where(g => g.Items.Count > 0).ToList();
+        }
+    }
 
     private static bool IsMap(string tab) => tab is MapTab or KindsTab;
     private long _mapRows = -1;
 
     /// <summary>The totals of the run, in the order they are shown at the top. Each site has its own part of every one.</summary>
     private List<string> SiteCounters => _summary.Keys.Where(k => _sites.Any(s => s.Counts?.ContainsKey(k) == true)).ToList();
+
+    /// <summary>A scanned site by its name; a pair of sites as "source → target".</summary>
+    private static string SiteLabel(SiteRecord site) =>
+        string.IsNullOrEmpty(site.Target) ? SiteName(site.Site.Length > 0 ? site.Site : site.Key) : $"{SiteName(site.Site)} → {SiteName(site.Target)}";
 
     private static long SiteCount(SiteRecord site, string counter) => site.Counts is { } counts && counts.TryGetValue(counter, out var value) ? value : 0;
 
@@ -528,16 +653,19 @@
         var names = row.Keys.Where(k => k.EndsWith("Url", StringComparison.OrdinalIgnoreCase) || k is "url" or "site")
             .OrderBy(k => k == clicked.Name ? 0 : k switch { "fileUrl" => 1, "folderUrl" => 2, "libraryUrl" or "listUrl" => 3, "webUrl" => 5, "site" => 6, _ => 4 });
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // A row about the site itself carries the site's address twice, as its site and as its web.
+        var siteAddress = row.TryGetValue("site", out var ofSite) && ofSite.ValueKind == JsonValueKind.String ? (ofSite.GetString() ?? "").TrimEnd('/') : "";
         foreach (var name in names)
         {
             if (row[name].ValueKind != JsonValueKind.String || row[name].GetString() is not { } url || !url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!seen.Add(url)) continue;
+            if (!seen.Add(url.TrimEnd('/'))) continue;
             first ??= url;
             var what = name switch
             {
                 "fileUrl" => "the file",
                 "folderUrl" => "the folder",
                 "libraryUrl" or "listUrl" => "the library",
+                "webUrl" when url.TrimEnd('/').Equals(siteAddress, StringComparison.OrdinalIgnoreCase) => "the site",
                 "webUrl" => "the subsite",
                 "site" => "the site",
                 _ => ReportCatalog.Heading(name).ToLowerInvariant(),
@@ -569,6 +697,7 @@
         _ = InvokeAsync(async () =>
         {
             Reload();
+            RefreshColumns();
             LoadMap();
             if (_grid is not null && _filtered is null && _tab != SitesTab && !IsMap(_tab) && _counts.GetValueOrDefault(_tab) != _shownRows)
                 await _grid.RefreshDataAsync();
@@ -593,20 +722,55 @@
             return;
         }
         var table = _tables.First(t => t.Name == name);
-        _columns = ReportCatalog.Columns(_report, table, _store?.UsedColumns(table.Name));
         _defaultSort = _counts.GetValueOrDefault(table.Name) <= SortUnasked ? table.SortBy : null;
-        // URLs and free text get room; numbers, dates and flags stay narrow.
-        var widths = _columns.Select(c => c.Type switch
-        {
-            ColumnType.Number => 120,
-            ColumnType.Bool => 110,
-            ColumnType.Date => 160,
-            _ => c.Name.EndsWith("Url", StringComparison.OrdinalIgnoreCase) || c.Name is "site" or "url" or "error" ? 320 : 190,
-        }).ToList();
-        _gridTemplate = string.Join(' ', widths.Select(w => $"{w}px"));
-        _gridMinWidth = widths.Sum();
-        _gridKey = name + "|" + Guid.NewGuid().ToString("N");
+        SetColumns(table, ReportCatalog.Columns(_report, table, _store?.UsedColumns(table.Name)));
     }
+
+    /// <summary>
+    /// Some columns only show once a row has something in them, and a run that is still writing may get to
+    /// such a row after the table was opened. The table then gains the column, instead of hiding it until
+    /// someone leaves the tab and comes back.
+    /// </summary>
+    private void RefreshColumns()
+    {
+        if (_report is null || _store is null || _tab == SitesTab || IsMap(_tab)) return;
+        if (_tables.FirstOrDefault(t => t.Name == _tab) is not { } table) return;
+        var columns = ReportCatalog.Columns(_report, table, _store.UsedColumns(table.Name));
+        if (!columns.Select(c => c.Name).SequenceEqual(_columns.Select(c => c.Name))) SetColumns(table, columns);
+    }
+
+    private void SetColumns(ReportTable table, IReadOnlyList<ReportColumn> columns)
+    {
+        _columns = columns;
+        // URLs and free text get room, and share what the window has left over; numbers, dates and flags stay
+        // narrow. No column is narrower than its heading.
+        var widths = _columns.Select(c => Math.Max(HeadingWidth(Label(c.Name)), c.Type switch
+        {
+            ColumnType.Number => c.Name is "depth" or "level" ? 84 : 100,
+            ColumnType.Bool => 100,
+            ColumnType.Date => 160,
+            // Names of things are what a row is read by, so they get room; short codes get little.
+            _ when c.Name is "path" or "folder" or "fileName" or "objectTitle" or "note" => 280,
+            _ when c.Name == "extension" => 100,
+            _ when c.Name == "kind" => 150,
+            _ when c.Name is "version" or "versionLabel" or "itemType" or "status" => 124,
+            _ when c.Name is "siteSetting" or "tenantDefault" => 160,
+            _ when c.Name == "versionLimits" => 250,
+            _ => c.Name is "site" or "targetSite" ? 180
+                : c.Name == "webUrl" ? 140
+                : c.Name.EndsWith("Url", StringComparison.OrdinalIgnoreCase) || c.Name is "url" or "error" ? 320 : 190,
+        })).ToList();
+        _gridTemplate = string.Join(' ', _columns.Select((c, i) => c.Type == ColumnType.Text ? $"minmax({widths[i]}px, {widths[i]}fr)" : $"{widths[i]}px"));
+        _gridMinWidth = widths.Sum();
+        _gridKey = table.Name + "|" + Guid.NewGuid().ToString("N");
+    }
+
+    /// <summary>
+    /// The width a column needs for its heading to be read in full: 7.5px a letter, the room the heading's
+    /// button takes, and the sort arrow any column shows once it is sorted by. A heading longer than a column
+    /// should be is cut off, with a tooltip.
+    /// </summary>
+    private static int HeadingWidth(string label) => Math.Min(290, (int)Math.Ceiling(label.Length * 7.5) + 60);
 
     private async ValueTask<GridItemsProviderResult<Dictionary<string, JsonElement>>> ProvideAsync(GridItemsProviderRequest<Dictionary<string, JsonElement>> request)
     {
@@ -675,6 +839,16 @@
     private static string Cell(Dictionary<string, JsonElement> row, ReportColumn column)
     {
         if (!row.TryGetValue(column.Name, out var value)) return "";
+        if (value.ValueKind == JsonValueKind.String && column.Name is "site" or "targetSite") return SiteName(value.GetString() ?? "");
+        if (value.ValueKind == JsonValueKind.String && column.Name == "webUrl")
+        {
+            // The site itself is not a subsite of itself: the cell stays empty unless the row is about a subsite.
+            var web = value.GetString() ?? "";
+            var site = row.TryGetValue("site", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() ?? "" : "";
+            return web.Equals(site, StringComparison.OrdinalIgnoreCase) ? ""
+                : site.Length > 0 && web.StartsWith(site + "/", StringComparison.OrdinalIgnoreCase) ? web[(site.Length + 1)..]
+                : SiteName(web);
+        }
         switch (column.Type)
         {
             case ColumnType.Bool:
@@ -692,9 +866,20 @@
 
     /// <summary>What shows when the pointer rests on a cell: its text, and for a size the exact number behind it.</summary>
     private static string CellTip(Dictionary<string, JsonElement> row, ReportColumn column) =>
-        IsBytes(column.Name) && row.TryGetValue(column.Name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var bytes)
+        column.Name is "site" or "targetSite" or "webUrl" && row.TryGetValue(column.Name, out var address) ? ReportStore.CellText(address)
+        : IsBytes(column.Name) && row.TryGetValue(column.Name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var bytes)
             ? $"{bytes:N0} bytes"
             : Cell(row, column);
+
+    /// <summary>A site by the part of its address that tells it from the others: "Marketing" for .../sites/Marketing.</summary>
+    private static string SiteName(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed)) return url;
+        var path = Uri.UnescapeDataString(parsed.AbsolutePath).Trim('/');
+        foreach (var prefix in new[] { "sites/", "teams/", "personal/" })
+            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return path[prefix.Length..];
+        return path.Length > 0 ? path : parsed.Host;
+    }
 
     /// <summary>Sizes are stored in bytes and shown in the unit that reads best.</summary>
     private static bool IsBytes(string name) => name.EndsWith("Bytes", StringComparison.OrdinalIgnoreCase);
@@ -704,8 +889,21 @@
     /// <summary>A column or total as a heading. A size loses the word "bytes": "totalBytes" is "Total size".</summary>
     private static string Label(string name)
     {
-        if (name == "keptForeverVersionBytes") return "Versions kept forever";
-        if (name == "preservationHoldBytes") return "Preservation hold";
+        // Sizes that have a plainer name than their column.
+        switch (name)
+        {
+            case "keptForeverVersionBytes": return "Versions kept forever";
+            case "preservationHoldBytes": return "Preservation hold";
+            case "totalBytes": return "Total";
+            case "currentBytes": return "Current versions";
+            case "versionBytes": return "Older versions";
+            case "recycleBinBytes": return "Recycle bin";
+            case "listBytes": return "Lists";
+            case "archivedBytes": return "Archived";
+            case "siteUsedBytes": return "Site used";
+            case "ownBytes": return "Own files";
+            case "webUrl": return "Subsite";
+        }
         if (!IsBytes(name)) return ReportCatalog.Heading(name);
         var rest = name[..^5];
         if (rest.Length == 0) return "Size";

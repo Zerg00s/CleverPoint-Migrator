@@ -28,11 +28,15 @@
             <div class="tile report-tile" role="button" @onclick="@(() => Nav.NavigateTo($"/reports/new/{r.Id}"))">
                 <div class="tile-title">@r.Title</div>
                 <div class="tile-desc" title="@r.Summary">@ReportCatalog.ShortSummary(r)</div>
-                <div class="report-tags">
-                    <span class="report-tag">@ScopeLabel(r)</span>
-                    @if (r.NeedsTenantAdmin) { <span class="report-tag">Needs tenant admin</span> }
-                    @if (r.ChangesData) { <span class="report-tag warn">Changes sites</span> }
-                </div>
+                @* Most reports take any number of sites; only what differs from that is worth a tag. *@
+                @if (r.Scope != ReportScope.Sites || r.NeedsTenantAdmin || r.ChangesData)
+                {
+                    <div class="report-tags">
+                        @if (r.Scope != ReportScope.Sites) { <span class="report-tag">@ScopeLabel(r)</span> }
+                        @if (r.NeedsTenantAdmin) { <span class="report-tag">Needs tenant admin</span> }
+                        @if (r.ChangesData) { <span class="report-tag warn">Changes sites</span> }
+                    </div>
+                }
             </div>
         }
     </div>
@@ -56,15 +60,15 @@
         </FluentToolbar>
         <div class="cp-grid cp-scroll runs-grid" style="max-height: 420px; margin-top:12px;">
             <FluentDataGrid Items="@Shown.AsQueryable()" ResizableColumns="true" GenerateHeader="GenerateHeaderOption.Sticky"
-                            GridTemplateColumns="2fr 1.2fr 1.3fr 1.2fr 1fr 0.8fr" ShowHover="true" Style="width:100%;"
+                            GridTemplateColumns="minmax(150px, 1.6fr) minmax(120px, 1fr) minmax(136px, max-content) minmax(160px, max-content) minmax(110px, max-content) minmax(88px, max-content)" ShowHover="true" Style="width:100%;"
                             RowClass="@(_ => "click-row")"
                             OnRowClick="@((FluentDataGridRow<ReportRun> row) => { if (row.Item is not null) Nav.NavigateTo($"/report/{row.Item.Id}"); return Task.CompletedTask; })">
-                <TemplateColumn Title="Name"><span>@context.Name</span></TemplateColumn>
-                <TemplateColumn Title="Report"><span>@(ReportCatalog.Find(context.Report)?.Title ?? context.Report)</span></TemplateColumn>
-                <TemplateColumn Title="Status"><span class="status-pill @StatusClass(context.Status)">@ReportExport.StatusText(context.Status)</span></TemplateColumn>
-                <TemplateColumn Title="Started"><span>@(context.StartedUtc?.ToLocalTime().ToString("g") ?? "")</span></TemplateColumn>
-                <TemplateColumn Title="Sites"><span>@SitesText(context)</span></TemplateColumn>
-                <TemplateColumn Title="Rows"><span>@context.Rows.ToString("N0")</span></TemplateColumn>
+                <TemplateColumn Title="Name"><span class="cell-fill" title="@context.Name">@context.Name</span></TemplateColumn>
+                <TemplateColumn Title="Report"><span class="cell-fill" title="@ReportTitle(context)">@ReportTitle(context)</span></TemplateColumn>
+                <TemplateColumn Title="Status"><span class="status-pill @StatusClass(context.Status)" title="@ReportExport.StatusText(context.Status)">@Friendly.StatusShort(context.Status)</span></TemplateColumn>
+                <TemplateColumn Title="Started"><span class="cell-fill" title="@Started(context)">@Started(context)</span></TemplateColumn>
+                <TemplateColumn Title="Sites"><span class="cell-fill" title="@SitesText(context)">@SitesText(context)</span></TemplateColumn>
+                <TemplateColumn Title="Rows" Align="Align.End"><span class="num-cell">@context.Rows.ToString("N0")</span></TemplateColumn>
             </FluentDataGrid>
         </div>
     }
@@ -129,6 +133,10 @@
         ReportScope.SitePairs => "Source and target sites",
         _ => "Any number of sites",
     };
+
+    private static string ReportTitle(ReportRun run) => ReportCatalog.Find(run.Report)?.Title ?? run.Report;
+
+    private static string Started(ReportRun run) => run.StartedUtc?.ToLocalTime().ToString("g") ?? "";
 
     private static string SitesText(ReportRun run)
     {

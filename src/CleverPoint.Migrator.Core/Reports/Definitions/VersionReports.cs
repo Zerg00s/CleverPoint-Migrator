@@ -26,10 +26,12 @@ public sealed class VersionLimitsReport : ReportDefinition
 
     public override IReadOnlyList<ReportTable> Tables => new[]
     {
+        // What a site is set to, then what its libraries do in fact, the ones that keep versions forever first:
+        // that is the number the report is run for, and the sites with the most of them come first.
         Table("limits", "Limits by site",
-            IfAny(Text("tenantDefault")), Text("siteSetting"), Number("versionedLibraries"), Number("automatic"), Number("deletedAfterDays"), Number("keptForever"),
+            Text("siteSetting"), Number("versionedLibraries"), Number("keptForever"), Number("automatic"), Number("deletedAfterDays"), IfAny(Text("tenantDefault")),
             IfAny(Text("limitsJob")), IfAny(Number("limitsJobLibraries")), IfAny(Text("trimJob")), IfAny(Text("trimJobKind")), IfAny(Date("trimJobRequested")),
-            IfAny(Number("versionsDeleted")), IfAny(Number("storageReleasedBytes")), IfAny(Text("note"))),
+            IfAny(Number("versionsDeleted")), IfAny(Number("storageReleasedBytes")), IfAny(Text("note"))) with { SortBy = "keptForever" },
         Table("libraries", "Libraries",
             Text("webUrl"), Text("library"), Text("versionLimits"), Number("majorVersionLimit"), Number("expireAfterDays"), Number("items"), Flag("hidden"), Text("libraryUrl")),
     };

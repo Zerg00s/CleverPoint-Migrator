@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "source": "https://gocleverpointcom.sharepoint.com/sites/DemoLargeSite/rptcorners1",
+  "target": "https://gocleverpointcom.sharepoint.com/sites/DemoLargeSite/rptcorners1b",
+  "docs": "Corners Docs",
+  "looseSource": "Folder #1 & 50%",
+  "looseTarget": "Folder _1 _ 50_",
+  "uniquePermissions": true,
+  "files": [
+    {
+      "path": "plain.txt",
+      "size": 1000,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "empty.txt",
+      "size": 0,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "UPPER.PDF",
+      "size": 2048,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "noextension",
+      "size": 500,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "versions.docx",
+      "size": 3000,
+      "versions": 3,
+      "target": "Same"
+    },
+    {
+      "path": "it's 100% #1 & co (final).txt",
+      "size": 300,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "=cmd.txt",
+      "size": 100,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "+plus.txt",
+      "size": 101,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "-minus.txt",
+      "size": 102,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "@at.txt",
+      "size": 103,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "a,b;c=d.txt",
+      "size": 200,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "ünïcødé 文件.txt",
+      "size": 400,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL.txt",
+      "size": 150,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "L1/L2/L3/L4/L5/L6/deep.txt",
+      "size": 600,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "L1/Forms/inside-forms.txt",
+      "size": 700,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "Folder #1 & 50%/in special.txt",
+      "size": 800,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "big.bin",
+      "size": 200000,
+      "versions": 1,
+      "target": "Small"
+    },
+    {
+      "path": "zero.txt",
+      "size": 400,
+      "versions": 1,
+      "target": "Empty"
+    },
+    {
+      "path": "newer.txt",
+      "size": 500,
+      "versions": 1,
+      "target": "Older"
+    },
+    {
+      "path": "only-source.txt",
+      "size": 900,
+      "versions": 1,
+      "target": "Missing"
+    },
+    {
+      "path": "Private/secret.txt",
+      "size": 250,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "shared.txt",
+      "size": 350,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "photo.JPG",
+      "size": 5000,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "clip.mp4",
+      "size": 40000,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "mail.msg",
+      "size": 1200,
+      "versions": 1,
+      "target": "Same"
+    },
+    {
+      "path": "pack.zip",
+      "size": 7000,
+      "versions": 1,
+      "target": "Same"
+    }
+  ]
+}

@@ -121,8 +121,8 @@ public sealed class ListCompareReport : ReportDefinition
                 ["targetCount"] = right?.Items,
                 ["difference"] = left is not null && right is not null ? difference : null,
                 ["percentDifference"] = left is { Items: > 0 } && right is not null ? Math.Round(difference * 100.0 / left.Items, 1) : null,
-                ["sourceUrl"] = left is null ? null : sourceAuthority + left.RootFolder,
-                ["targetUrl"] = right is null ? null : targetAuthority + right.RootFolder,
+                ["sourceUrl"] = left is null ? null : sourceAuthority + Links.Escape(left.RootFolder),
+                ["targetUrl"] = right is null ? null : targetAuthority + Links.Escape(right.RootFolder),
             });
             context.Count("lists");
             context.Count(status switch { "Match" => "match", "Mismatch" => "mismatch", "Source only" => "sourceOnly", _ => "targetOnly" });
@@ -160,7 +160,7 @@ public sealed class DocumentCompareReport : ReportDefinition
             Date("sourceModified"), Date("targetModified"), Number("sourceVersions"), Number("targetVersions"), Text("sourceUrl"), Text("targetUrl")),
         Table("libraries", "Libraries",
             Text("library"), Text("status"), Number("sourceFiles"), Number("targetFiles"), Number("found"), Number("sourceOnly"), Number("targetOnly"),
-            Number("sizeIssues"), Number("newerAtSource"), Text("sourceUrl"), Text("targetUrl")),
+            Number("sizeIssues"), Number("newerAtSource"), IfAny(Number("foldersSourceOnly")), IfAny(Number("foldersTargetOnly")), Text("sourceUrl"), Text("targetUrl")),
     };
 
     private readonly record struct Slim(string Path, bool IsFolder, long Size, DateTime? Modified, int Versions);
@@ -187,7 +187,7 @@ public sealed class DocumentCompareReport : ReportDefinition
                 context.Write("libraries", new Dictionary<string, object?>
                 {
                     ["library"] = title, ["status"] = side, ["sourceFiles"] = left?.Items, ["targetFiles"] = right?.Items,
-                    ["sourceUrl"] = left is null ? null : sourceAuthority + left.RootFolder, ["targetUrl"] = right is null ? null : targetAuthority + right.RootFolder,
+                    ["sourceUrl"] = left is null ? null : sourceAuthority + Links.Escape(left.RootFolder), ["targetUrl"] = right is null ? null : targetAuthority + Links.Escape(right.RootFolder),
                 });
                 context.Count(left is null ? "librariesTargetOnly" : "librariesSourceOnly");
                 continue;
@@ -219,7 +219,9 @@ public sealed class DocumentCompareReport : ReportDefinition
             if (relative.Length > 0) remaining[Key(relative)] = new Slim(relative, entry.IsFolder, entry.Size, entry.Modified, entry.MajorVersions);
         }, context.Cancel, onProgress: FileWalker.Progress(context, left.Title, left.Items, "source"));
 
+        // Files and folders are counted apart: for files, what the source has is what was found plus what is on the source only.
         long sourceFiles = remaining.Values.LongCount(v => !v.IsFolder), targetFiles = 0, found = 0, targetOnly = 0, sizeIssues = 0, newer = 0;
+        long foldersTargetOnly = 0, foldersSourceOnly = 0;
         await FileWalker.ForEachAsync(target, target.SiteUrl, right.Id, entry =>
         {
             if (!Wanted(entry)) return;
@@ -228,12 +230,12 @@ public sealed class DocumentCompareReport : ReportDefinition
             if (!entry.IsFolder) targetFiles++;
             if (!remaining.Remove(Key(relative), out var there))
             {
-                targetOnly++;
+                if (entry.IsFolder) foldersTargetOnly++; else targetOnly++;
                 Write(context, left.Title, entry.IsFolder, relative, "Target only", null, null, entry.Size, null, entry.Modified, null, entry.MajorVersions,
-                    null, targetAuthority + right.RootFolder + "/" + relative);
+                    null, targetAuthority + Links.Escape(right.RootFolder + "/" + relative));
                 return;
             }
-            found++;
+            if (!entry.IsFolder) found++;
             string status = "Found";
             string? note = null;
             if (!entry.IsFolder)
@@ -253,13 +255,13 @@ public sealed class DocumentCompareReport : ReportDefinition
             }
             if (status != "Found" || note is not null || matches)
                 Write(context, left.Title, entry.IsFolder, relative, status, note, there.Size, entry.Size, there.Modified, entry.Modified, there.Versions, entry.MajorVersions,
-                    sourceAuthority + left.RootFolder + "/" + there.Path, targetAuthority + right.RootFolder + "/" + relative);
+                    sourceAuthority + Links.Escape(left.RootFolder + "/" + there.Path), targetAuthority + Links.Escape(right.RootFolder + "/" + relative));
         }, context.Cancel, onProgress: FileWalker.Progress(context, right.Title, right.Items, "target"));
 
         long sourceOnly = 0, longPaths = 0;
         foreach (var missing in remaining.Values)
         {
-            sourceOnly++;
+            if (missing.IsFolder) foldersSourceOnly++; else sourceOnly++;
             var wouldBe = targetAuthority + right.RootFolder + "/" + missing.Path;
             string? note = null;
             if (wouldBe.Length > MaxPath)
@@ -268,16 +270,17 @@ public sealed class DocumentCompareReport : ReportDefinition
                 longPaths++;
             }
             Write(context, left.Title, missing.IsFolder, missing.Path, "Source only", note, missing.Size, null, missing.Modified, null, missing.Versions, null,
-                sourceAuthority + left.RootFolder + "/" + missing.Path, null);
+                sourceAuthority + Links.Escape(left.RootFolder + "/" + missing.Path), null);
         }
 
         context.Write("libraries", new Dictionary<string, object?>
         {
             ["library"] = left.Title,
-            ["status"] = sourceOnly + targetOnly + sizeIssues == 0 ? "Match" : "Differences",
+            ["status"] = sourceOnly + targetOnly + sizeIssues + foldersSourceOnly + foldersTargetOnly == 0 ? "Match" : "Differences",
             ["sourceFiles"] = sourceFiles, ["targetFiles"] = targetFiles, ["found"] = found, ["sourceOnly"] = sourceOnly, ["targetOnly"] = targetOnly,
             ["sizeIssues"] = sizeIssues, ["newerAtSource"] = newer,
-            ["sourceUrl"] = sourceAuthority + left.RootFolder, ["targetUrl"] = targetAuthority + right.RootFolder,
+            ["foldersSourceOnly"] = foldersSourceOnly > 0 ? foldersSourceOnly : null, ["foldersTargetOnly"] = foldersTargetOnly > 0 ? foldersTargetOnly : null,
+            ["sourceUrl"] = sourceAuthority + Links.Escape(left.RootFolder), ["targetUrl"] = targetAuthority + Links.Escape(right.RootFolder),
         });
         context.Count("sourceFiles", sourceFiles);
         context.Count("targetFiles", targetFiles);
@@ -286,6 +289,8 @@ public sealed class DocumentCompareReport : ReportDefinition
         context.Count("targetOnly", targetOnly);
         context.Count("sizeIssues", sizeIssues);
         context.Count("newerAtSource", newer);
+        context.Count("foldersSourceOnly", foldersSourceOnly);
+        context.Count("foldersTargetOnly", foldersTargetOnly);
         context.Count("longPaths", longPaths);
     }
 

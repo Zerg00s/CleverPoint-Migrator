@@ -20,12 +20,12 @@ else
 {
     <div class="conn-table cp-grid">
         <FluentDataGrid Items="@Settings.Connections.AsQueryable()" ResizableColumns="true"
-                        GridTemplateColumns="minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 2.4fr) minmax(0, 1.6fr) 240px" ShowHover="true" Style="width:100%;">
-            <PropertyColumn Property="@(c => c.Name)" Title="Name" />
-            <TemplateColumn Title="Sign-in">@SignInLabel(context)</TemplateColumn>
+                        GridTemplateColumns="minmax(110px, 170px) minmax(136px, max-content) minmax(160px, 1fr) minmax(170px, 252px) minmax(190px, max-content)" ShowHover="true" Style="width:100%;">
+            <PropertyColumn Property="@(c => c.Name)" Title="Name" Tooltip="true" />
+            <TemplateColumn Title="Sign-in"><span class="conn-site" title="@SignInLabel(context)">@SignInLabel(context)</span></TemplateColumn>
             <TemplateColumn Title="Site"><span class="conn-site" title="@context.SiteUrl">@context.SiteUrl</span></TemplateColumn>
             <TemplateColumn Title="Status">
-                <span class="conn-status"><span class="conn-dot @StatusClass(context)"></span> <span>@StatusText(context)</span></span>
+                <span class="conn-status" title="@StatusText(context)"><span class="conn-dot @StatusClass(context)"></span> <span>@StatusText(context)</span></span>
             </TemplateColumn>
             <TemplateColumn Title="">
                 <div class="conn-actions">
@@ -35,7 +35,7 @@ else
                     }
                     else
                     {
-                        <FluentButton Appearance="Appearance.Accent" @onclick="@(() => Connect(context, false))"
+                        <FluentButton Appearance="Appearance.Neutral" @onclick="@(() => Connect(context, false))"
                                       IconStart="@(IsConnected(context) ? (Icon)new Icons.Regular.Size20.ArrowClockwise() : new Icons.Regular.Size20.PlugConnected())">
                             @(IsConnected(context) ? "Reconnect" : "Connect")
                         </FluentButton>
