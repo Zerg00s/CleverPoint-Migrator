@@ -755,7 +755,7 @@
             _ when c.Name == "kind" => 150,
             _ when c.Name is "version" or "versionLabel" or "itemType" or "status" => 124,
             _ when c.Name is "siteSetting" or "tenantDefault" => 160,
-            _ when c.Name == "versionLimits" => 250,
+            _ when c.Name is "versionLimits" or "limitsNow" or "limitsAfter" or "limitsBefore" => 250,
             _ => c.Name is "site" or "targetSite" ? 180
                 : c.Name == "webUrl" ? 140
                 : c.Name.EndsWith("Url", StringComparison.OrdinalIgnoreCase) || c.Name is "url" or "error" ? 320 : 190,

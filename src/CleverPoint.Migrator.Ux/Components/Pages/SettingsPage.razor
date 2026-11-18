@@ -3,6 +3,8 @@
 @inject UxSettings Settings
 @inject IToastService Toasts
 @inject UpdateService Updates
+@inject MigrationRunner Runner
+@inject ReportHost ReportRuns
 
 <div class="page-head">
     <h1>Settings</h1>
@@ -186,8 +188,8 @@
                     <div class="update-card">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <FluentIcon Value="@(new Icons.Regular.Size20.ArrowCircleUp())" Color="Color.Accent" />
-                            <strong>Update available: v@u.LatestVersion</strong>
-                            <span class="hint">(you have v@u.CurrentVersion)</span>
+                            <strong>Update available: v@(u.LatestVersion)</strong>
+                            <span class="hint">(you have v@(u.CurrentVersion))</span>
                         </div>
                         @if (!string.IsNullOrWhiteSpace(u.Notes))
                         {
@@ -372,11 +374,22 @@
 
     private async Task Install(UpdateInfo u)
     {
+        // The installer replaces the app's files, so the app has to close, and closing stops what it is running.
+        if (Runner.ActiveCount > 0 || ReportRuns.ActiveCount > 0)
+        {
+            Toasts.ShowWarning("A copy or a report is running. Update when it has finished.");
+            return;
+        }
         _installing = true;
         try
         {
             if (await Updates.DownloadAndRunInstallerAsync(u))
-                Toasts.ShowInfo("The installer is launching. The app will close to finish updating.");
+            {
+                // Out of the installer's way: without this it stops at "Files in use" and waits for the app.
+                Toasts.ShowInfo("The installer is starting. The app closes now and opens again from the Start menu.");
+                await Task.Delay(1500);
+                Environment.Exit(0);
+            }
             else
                 Browser.Open(u.ReleaseUrl ?? "https://github.com/Zerg00s/CleverPoint-Migrator/releases");
         }
