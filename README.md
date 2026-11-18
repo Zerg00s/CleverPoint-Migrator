@@ -11,7 +11,17 @@ CleverPoint Migrator is a tool that can be used by office workers and power user
 
 ![CleverPoint Migrator](/IMG/SharePoint_Online_Migrator.png)
 
-See the animation below for a quick demo of how to use the tool.
+## Highlights
+
+- **Copy** lists, libraries, files, folders, pages and permissions between sites and tenants, keeping authors, dates, versions, content types and managed metadata.
+- **Reports** over hundreds of sites at once: inventory, storage, version history limits, permissions, and source against target after a copy. [More below](#reports).
+- **A storage map** that shows where the space goes in a site or a whole set of sites, and how much of it is older versions. [More below](#the-storage-map).
+- **Version history limits**: find the libraries that keep every version forever, and switch them to automatic limits in one action. [More below](#version-history-limits).
+- **A command line** (`cpm`) for scripts and AI agents. [More below](#command-line-and-ai-agents).
+
+![The storage map](/IMG/Report-Storage-Map.png)
+
+See the animation below for a quick demo of copying.
 
 ![Copy Demo](/IMG/CopyDemo.gif)
 
@@ -94,6 +104,8 @@ Signing in still happens in your browser (`cpm connection login`). An agent cann
 
 Reports answer what is in a tenant or a set of sites, before and after a migration. Open **Reports** in the app, pick a report, say which sites, and run it. A report scans several sites at the same time and can cover hundreds of them in one run.
 
+![The Reports page](/IMG/Reports.png)
+
 | Report | What it lists |
 |---|---|
 | Sites | Every site collection of a tenant: owner, template, storage, sharing, hub, group or channel, lock state, last activity |
@@ -121,9 +133,21 @@ Reports answer what is in a tenant or a set of sites, before and after a migrati
 
 ### The storage map
 
+Where did the space go? The Storage report answers with a map, in the spirit of disk tools like WinDirStat, for SharePoint.
+
+![The storage map of a site](/IMG/Report-Storage-Map.png)
+
+In the example above, the headline numbers already tell the story: the site uses 324.7 GB, the recycle bin alone holds 200 GB of it, older versions take another 38.5 GB, and 13 libraries keep every version forever.
+
 The Storage, Sites and OneDrives reports open on a **Map** tab with three linked parts. A tree lists everything largest first, each line with its share of what it is in. A list of the kinds of file (PDF, Office documents, images, video, audio, archives, email, OneNote) says what each kind takes, and is the key to the colors. On the map every box has an area in proportion to its storage and the color of its kind: sites, libraries, folders, the largest files as boxes of their own, and the rest of each folder as one box per kind.
 
-Click a box and the tree opens at that file or folder. Click a line of the tree and the map frames it. Double-click either to look at that part alone; the trail above leads back out. Click a kind to show only that kind on the map. **Older versions** recolors the map by how much of each box is older versions, from green for none to red for all.
+Click a box and the tree opens at that file or folder. Click a line of the tree and the map frames it. Double-click either to look at that part alone; the trail above leads back out. Click a kind to show only that kind on the map. Right-click to open anything in SharePoint.
+
+![Zoomed into one library](/IMG/Report-Storage-Zoom.png)
+
+**Older versions** recolors the map by how much of each box is older versions, from green for none to red for all. Libraries where older versions take half the space stand out at once.
+
+![The map colored by older versions](/IMG/Report-Storage-Older-Versions.png)
 
 The Storage report also has a **File kinds** tab: the same view by kind, then file type, then the sites that hold files of that type. Tables show sizes in KB, MB and GB, and sort by any column with a click on its heading; exports keep exact bytes.
 
@@ -147,9 +171,19 @@ cpm report resume <runId>
 
 Runs started either way show up in both places.
 
+### After a copy: did everything arrive?
+
+The compare reports put a source site next to its target. Document compare goes file by file and lists what is missing, what is extra, files that came out empty or smaller, and paths that are too long. List compare checks item counts per list, with a tolerance if you want one. Navigation and permissions compare do the same for links and access.
+
+![Document compare](/IMG/Report-Document-Compare.png)
+
+The Permissions report lists the site's permissions and every list, folder, file and item with permissions of its own, plus sharing links.
+
+![Permissions](/IMG/Report-Permissions.png)
+
 ### Actions
 
-Four entries on the Reports page change sites instead of only reading them:
+Five entries on the Reports page change sites instead of only reading them:
 
 | Action | What it does |
 |---|---|
@@ -163,7 +197,13 @@ An action always runs as a preview first. The preview changes nothing and lists 
 
 ### Version history limits
 
-A tenant can be on automatic version limits while most of its libraries still keep 500 versions forever: the tenant's setting only reaches libraries made after it was switched on. The Storage report says so where it matters. Each library shows the limits it works by, and the results flag how many libraries keep versions forever and how much their older versions take. The Version history limits report answers the same question without scanning files, which makes it quick over a whole tenant.
+A tenant can be on automatic version limits while most of its libraries still keep 500 versions forever: the tenant's setting only reaches libraries made after it was switched on. The Storage report says so where it matters. Each library shows the limits it works by, and the results flag how many libraries keep versions forever and how much their older versions take. The Version history limits report answers the same question without scanning files, which makes it quick over a whole tenant: a tenant of 244 sites takes about 20 seconds.
+
+![Version history limits by site](/IMG/Report-Version-Limits.png)
+
+**Set version limits** on the results takes the sites that need it straight to the action. Its preview lists every library with its limits now and after, and changes nothing until you apply it.
+
+![The preview of Set version history limits](/IMG/Action-Set-Version-Limits.png)
 
 Set version history limits changes a site's setting and, as a background job SharePoint runs, the libraries the site already has. Changing limits deletes nothing. Deleting existing versions is a separate choice (`trim`), off unless asked for: it queues SharePoint's own job, which can run for days, and the versions it deletes do not go to the recycle bin. Versions under a retention policy or a hold are kept.
 
